@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1215`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1239`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -225,6 +225,12 @@ with runtime 0.87.0 or earlier, in either direction: v5 replaces v4 and there is
 TCT does not verify under this SDK and a 0.88.0 TCT does not verify under SDK 0.87.x. It ships in SDK
 0.88.1.
 
+**Commitment digest v6 is verify-only here** (Flows W2; spec `seam-runtime/docs/specs/seam-commitment-digest.v6.md`,
+reference-only in runtime 0.110.0, seam-runtime#1846). The SDK selects v5 or v6 from the TCT's statement
+and recomputes under that version only, so it verifies every v5 TCT exactly as before and v6 TCTs once a
+runtime writes them. A runtime release that switches the writer to v6 needs an SDK carrying this change;
+pin at or after the SDK version whose CHANGELOG lists "commitment digest v6".
+
 **SDK v0.88.1 pairs with runtime 0.88.0.** SDK v0.88.0 was tagged at `e7e9780` and never published: the
 runtime's 0.88.0 release dispatch (seam-runtime#1740) tagged it before this repo had merged commitment digest
 v5 (#357), so CI on that commit failed against the v5 runtime and `publish.yml` refused. A public tag is not
@@ -290,7 +296,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2231-2253`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2255-2277`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was

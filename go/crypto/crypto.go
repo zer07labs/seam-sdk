@@ -113,6 +113,12 @@ type Commitment struct {
 	// it and SelectionDigest is refused. When set, VerifyTCT also recomputes the winner from Explanation
 	// (VerifySelection) and fails closed when Explanation is nil.
 	Selection *SelectionBlock `json:"-"`
+	// Trailers is the raw `0x05` (Gate block) / `0x06` (governing) trailer bytes the sealed commitment
+	// appends (seam-commitment-digest.v6.md; "" when it has neither). nil = not held, and VerifyTCT then
+	// behaves exactly as before. When set, VerifyTCT derives fields 10-12 from these bytes only, under the
+	// scheme the TCT statement selects (DecodeCommitmentTrailers); a GoverningDocSha256 / CertificateDigest
+	// set beside them must agree with them.
+	Trailers []byte `json:"-"`
 }
 
 // ExplanationEntry is one sealed explanation entry, in the order the runtime accepted it. Kind is the
@@ -515,7 +521,9 @@ func hasDuplicateKey(raw []byte) bool {
 // `grants` is exactly ["aitp.attestation"], and `ext` is exactly
 // {"com.zer07labs.seam": {"type": "seam:commitment", "commitment_digest": "<64 lowercase hex>"}},
 // whose digest must equal `seam-commitment-digest:v5` of this exact commitment — the decided content,
-// the committer, and the sealed explanation. A repeated JSON key anywhere in the header or payload
+// the committer, and the sealed explanation. A statement that also carries
+// "commitment_digest_domain": "seam-commitment-digest:v6" selects v6 instead (SelectCommitmentVersion),
+// and the digest is recomputed under v6 only, with fields 10-12 from c.Trailers. A repeated JSON key anywhere in the header or payload
 // refuses the token, and a digest carried in `grants` (the retired v2 shape) does not verify.
 // Explanation entries that disagree with a published ExplanationDigest, an unknown kind, or a
 // non-canonical confidence verify false. When c.Selection is set, the winner is recomputed from
@@ -587,10 +595,6 @@ func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 	if nowS >= int64(exp) {
 		return false
 	}
-	digest, err := seamCommitmentDigest(c)
-	if err != nil {
-		return false
-	}
 	grants, ok := payload["grants"].([]any)
 	if !ok || len(grants) != 1 || grants[0] != AttestationGrant {
 		return false
@@ -599,12 +603,20 @@ func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 	if !ok || len(ext) != 1 {
 		return false
 	}
-	stmt, ok := ext[CommitmentExtNamespace].(map[string]any)
-	if !ok || len(stmt) != 2 || stmt["type"] != CommitmentStatement {
+	// v5 or v6 is chosen by the statement's exact member set, read from the raw ext text
+	// (SelectCommitmentVersion), and the digest is recomputed under that version only: never both, never
+	// a fallback. A 2-member statement is v5, exactly as before; Trailers (if held) are checked under that
+	// version's scheme rules.
+	var rawPayload map[string]json.RawMessage
+	if json.Unmarshal(payloadBytes, &rawPayload) != nil {
 		return false
 	}
-	got, ok := stmt["commitment_digest"].(string)
-	if !ok || got != digest {
+	version, got, err := selectFromExt(rawPayload["ext"])
+	if err != nil {
+		return false
+	}
+	digest, err := expectedCommitmentDigest(version, c)
+	if err != nil || got != digest {
 		return false
 	}
 	// Option selection (runtime 0.90.0, selection-rule.v1 §5 steps 6-9). No block means "not a selection

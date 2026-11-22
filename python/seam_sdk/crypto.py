@@ -368,10 +368,10 @@ def verify_tct(
 
     The TCT is an RFC-AITP-0005 self-attestation. Verifies the EdDSA JWS against the issuer's key
     (recovered from its AID), the self-issued claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`),
-    that `grants` is exactly `["aitp.attestation"]`, and that `ext` is exactly
-    `{"com.zer07labs.seam": {"type": "seam:commitment", "commitment_digest": <hex>}}` whose digest is
-    `seam-commitment-digest:v5` of this exact commitment (tamper-evidence over the decided content,
-    the committer, and the sealed explanation). A duplicate JSON key anywhere in the header or
+    that `grants` is exactly `["aitp.attestation"]`, and that `ext` is exactly `{"com.zer07labs.seam":
+    <statement>}`. The statement's exact member set picks v5 or v6 (:func:`select_commitment_version`)
+    and the digest is recomputed under that version only, over this exact commitment (a v6 one carries
+    its raw ``trailers``; :func:`commitment_digest_v6`). A duplicate JSON key anywhere in the header or
     payload, a statement carried in `grants` (the retired v2 shape), or an extra grant verifies
     ``False``. ``commitment`` carries ``committer`` and the ``explanation`` entries and/or the published
     ``explanation_digest``; entries that disagree with the published digest, an unknown kind, or a
@@ -439,10 +439,10 @@ def verify_tct(
         if not isinstance(ext, dict) or list(ext) != [COMMITMENT_EXT_KEY]:
             return False
         stmt = ext[COMMITMENT_EXT_KEY]
-        if not isinstance(stmt, dict) or set(stmt) != {"type", "commitment_digest"}:
-            return False
-        if stmt["type"] != "seam:commitment":
-            return False
+        # v6 statement selection: the exact member set picks v5 or v6 (or refuses, raising), then the
+        # digest is recomputed under that version only, with its trailer rules; never both, no fallback.
+        version = _select_statement_version(stmt)
+        expected = _tct_commitment_digest(version, commitment)
         # Exact string compare: the runtime emits lowercase hex, and an uppercase spelling is a
         # different statement, not a normalization opportunity.
         entries = commitment.get("explanation")
@@ -450,7 +450,7 @@ def verify_tct(
             entries, issuer_aid, decision
         ):
             return False
-        if stmt["commitment_digest"] != _seam_commitment_digest(commitment):
+        if stmt["commitment_digest"] != expected:
             return False
         # Option selection (runtime 0.90.0, selection-rule.v1 §5 steps 4, 6-9). No block means "not a
         # selection decision" and nothing more. A block without the entries cannot be checked, so it
@@ -2510,3 +2510,514 @@ def verify_selection(record, entries, action: str) -> SelectionResult:
     return SelectionResult(
         "verified", winner_proposal_id=d["winner_proposal_id"], votes_linked=linked
     )
+
+
+# ── seam-commitment-digest:v6 and the Gate block v1 (Flows W2: readers only) ─────────────────────────
+# Specs: seam-runtime `docs/specs/seam-commitment-digest.v6.md` and `docs/specs/seam-gate-block.v1.md`.
+# Pinned by `conformance/commitment_digest_v6_vector.json`, `commitment_digest_v6_signed_vector.json`
+# and `gate_block_vector.json` (byte-identical to the runtime's, via its `sdk-digest-parity`).
+#
+# v6 is v5 plus field 12 (the env, `sandbox` or `live`), and it DEFINES field 10 as the Gate digest over
+# the `0x05` body. v5 above is unchanged and stays verify-only until W9. Nothing here writes v6.
+#
+# Every refusal raises :class:`CommitmentRefused` before anything is hashed. Its ``rule`` names the spec
+# rule, but rule names are ADVISORY (v6 §Refusal rules): where an input breaks two rules this reader may
+# name either. Only the refusal is normative.
+
+#: The v5 and v6 commitment digest domain tags (field 0).
+COMMITMENT_DIGEST_V5_DOMAIN = "seam-commitment-digest:v5"
+COMMITMENT_DIGEST_V6_DOMAIN = "seam-commitment-digest:v6"
+#: The Gate digest's domain tag: ``gate_digest = SHA-256(F("seam-gate-digest:v1") ‖ gate_body)``.
+GATE_DIGEST_DOMAIN = b"seam-gate-digest:v1"
+#: The Gate trailer (``0x05``) and the governing trailer (``0x06``): ``marker ‖ u32le(len) ‖ body``.
+GATE_TRAILER_MARKER = 0x05
+GOVERNING_TRAILER_MARKER = 0x06
+#: The Gate body's version byte (inside the hashed body, unlike ``0x04``'s).
+GATE_BODY_V1 = 0x01
+#: The ``0x06`` body versions: v1 ``0x01 ‖ doc`` (v5's), v2 ``0x02 ‖ doc ‖ env slot`` (v6's).
+GOVERNING_BODY_V1 = 0x01
+GOVERNING_BODY_V2 = 0x02
+#: The only env values: exactly these ASCII bytes, case-sensitive, compared byte for byte.
+FLOW_ENVS = ("sandbox", "live")
+
+_GATE_STATUS = {1: "answered", 2: "unavailable"}
+_GATE_ON_OUTAGE = {1: "refuse_seal", 2: "seal_gate_unavailable"}
+# 4 (invalid_response) is reserved and refused: an unverifiable answer is never sealed.
+_GATE_REASON = {
+    1: "timeout",
+    2: "connect",
+    3: "http_5xx",
+    5: "circuit_open",
+    6: "token_mint",
+}
+_GATE_REASON_RESERVED = 4
+_GATE_SIGNATURE_LEN = 64
+# Legal trailer markers of a sealed commitment that are NOT part of the `0x05`/`0x06` run this reader
+# takes (the selection `0x04` is read by :func:`decode_selection_trailer`, as v5 already does).
+_OTHER_TRAILER_MARKERS = frozenset({0x01, 0x02, 0x03, 0x04, 0x07})
+_HEX64 = frozenset("0123456789abcdef")
+_STATEMENT_TYPE = "seam:commitment"
+_V5_MEMBERS = frozenset({"type", "commitment_digest"})
+_V6_MEMBERS = frozenset({"type", "commitment_digest", "commitment_digest_domain"})
+
+
+class CommitmentRefused(ValueError):
+    """A v6 / Gate-block refusal. ``rule`` is the spec's rule name, which is advisory: only the
+    refusal itself is normative (v6 §Refusal rules)."""
+
+    def __init__(self, rule: str, detail: str = "") -> None:
+        super().__init__(f"{rule}: {detail}" if detail else rule)
+        self.rule = rule
+
+
+class _FrameReader:
+    """Strict reader over one body: every overrun refuses as ``truncated``, never wraps. A ``be64``
+    frame length is a Python int compared with what remains, so ``2**64 - 1`` refuses."""
+
+    def __init__(self, b: bytes, truncated: str) -> None:
+        self.b, self.i, self.truncated = b, 0, truncated
+
+    def take(self, n: int) -> bytes:
+        if n > len(self.b) - self.i:
+            raise CommitmentRefused(self.truncated)
+        out = self.b[self.i : self.i + n]
+        self.i += n
+        return out
+
+    def u8(self) -> int:
+        return self.take(1)[0]
+
+    def be64(self) -> int:
+        return struct.unpack(">Q", self.take(8))[0]
+
+    def framed(self) -> bytes:
+        return self.take(self.be64())
+
+    def at_end(self) -> bool:
+        return self.i == len(self.b)
+
+    def done(self, rule: str) -> None:
+        if not self.at_end():
+            raise CommitmentRefused(rule)
+
+    def gate_text(self, *, allow_empty: bool = False) -> str:
+        raw = self.framed()
+        try:
+            out = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise CommitmentRefused("gate_text_not_utf8") from None
+        if not out and not allow_empty:
+            raise CommitmentRefused("gate_text_empty")
+        return out
+
+
+def _env_of(raw: bytes) -> str:
+    """The env rule on raw bytes: exactly ``b"sandbox"`` or ``b"live"``. A byte match, never a text
+    decode, so the empty string, another case, padding and non-ASCII / non-UTF-8 bytes all refuse."""
+    if raw not in (b"sandbox", b"live"):
+        raise CommitmentRefused("env_not_sandbox_or_live", repr(raw))
+    return raw.decode("ascii")
+
+
+def decode_gate_body(body: bytes) -> dict:
+    """Strictly decode a Gate body v1 (the ``0x05`` trailer's body, version byte included).
+
+    Returns ``status`` (``"answered"`` / ``"unavailable"``), ``attempt_id``, ``domain``, ``flow_id``,
+    ``env``, ``timeout_ms``, ``on_outage`` (``"refuse_seal"`` / ``"seal_gate_unavailable"``) and
+    ``requested_at_ms``; then, answered: ``receipt_jcs``, ``key_id``, ``signature`` (64 raw bytes) and
+    ``certificate_jcs`` (``None`` iff the frame is empty, a route answer); unavailable: ``reason`` and
+    ``given_up_at_ms``. The ``be64`` fields are ints (0..2**64-1). The receipt is framed, never parsed,
+    and the policy ranges (``timeout_ms``, VG7) are verifier checks, not decode rules.
+
+    Raises :class:`CommitmentRefused` on every ``gate_*`` rule the body alone can check (seam-gate-block.v1
+    §Refusal rules). The binding to the commitment's env is :func:`decode_commitment_trailers`'s."""
+    b = bytes(body)
+    if not b:
+        raise CommitmentRefused("gate_body_empty")
+    r = _FrameReader(b, "gate_body_truncated")
+    if r.u8() != GATE_BODY_V1:
+        raise CommitmentRefused("gate_body_unknown_version")
+    status = r.u8()
+    if status not in _GATE_STATUS:
+        raise CommitmentRefused("gate_status_invalid")
+    blk: dict = {"status": _GATE_STATUS[status]}
+    blk["attempt_id"] = r.gate_text()
+    blk["domain"] = r.gate_text()
+    blk["flow_id"] = r.gate_text()
+    blk["env"] = _env_of(r.framed())
+    blk["timeout_ms"] = r.be64()
+    on_outage = r.u8()
+    if on_outage not in _GATE_ON_OUTAGE:
+        raise CommitmentRefused("gate_on_outage_invalid")
+    blk["on_outage"] = _GATE_ON_OUTAGE[on_outage]
+    blk["requested_at_ms"] = r.be64()
+    if status == 1:
+        blk["receipt_jcs"] = r.gate_text()
+        blk["key_id"] = r.gate_text()
+        sig = r.framed()
+        if len(sig) != _GATE_SIGNATURE_LEN:
+            raise CommitmentRefused("gate_signature_length")
+        blk["signature"] = sig
+        blk["certificate_jcs"] = r.gate_text(allow_empty=True) or None
+    else:
+        # Under refuse_seal an outage is a typed refusal and nothing is sealed: such a body is a forgery.
+        if on_outage == 1:
+            raise CommitmentRefused("gate_unavailable_under_refuse_seal")
+        reason = r.u8()
+        if reason == _GATE_REASON_RESERVED:
+            raise CommitmentRefused("gate_reason_reserved")
+        if reason not in _GATE_REASON:
+            raise CommitmentRefused("gate_reason_invalid")
+        blk["reason"] = _GATE_REASON[reason]
+        blk["given_up_at_ms"] = r.be64()
+    r.done("gate_body_trailing_bytes")
+    return blk
+
+
+def gate_digest(body: bytes) -> bytes:
+    """``seam-gate-digest:v1`` (32 raw bytes): ``SHA-256(be64(19) ‖ "seam-gate-digest:v1" ‖ gate_body)``,
+    the body hashed whole, version byte included. The body is strictly decoded first
+    (:func:`decode_gate_body`), so a body the runtime could not have sealed is refused, never hashed."""
+    b = bytes(body)
+    decode_gate_body(b)
+    return hashlib.sha256(_be64_frame(GATE_DIGEST_DOMAIN) + b).digest()
+
+
+def _read_trailer(t: bytes, pos: int, truncated: str) -> tuple[bytes, int]:
+    """``marker ‖ u32le(len) ‖ body`` at ``pos`` -> (body, next position)."""
+    if len(t) - pos < 5:
+        raise CommitmentRefused(truncated)
+    n = struct.unpack("<I", t[pos + 1 : pos + 5])[0]
+    if len(t) - pos - 5 < n:
+        raise CommitmentRefused(truncated)
+    return t[pos + 5 : pos + 5 + n], pos + 5 + n
+
+
+def _decode_governing_body(
+    body: bytes, scheme: Optional[str]
+) -> tuple[int, bytes, Optional[str]]:
+    """The ``0x06`` body -> (body version, doc_sha256, env). ``scheme=None`` accepts both versions."""
+    if not body:
+        raise CommitmentRefused("governing_body_empty")
+    version = body[0]
+    if version not in (GOVERNING_BODY_V1, GOVERNING_BODY_V2):
+        raise CommitmentRefused("governing_body_unknown_version")
+    if scheme == "v5" and version == GOVERNING_BODY_V2:
+        raise CommitmentRefused("v5_refuses_governing_body_v2")
+    if scheme == "v6" and version == GOVERNING_BODY_V1:
+        raise CommitmentRefused("v6_refuses_governing_body_v1")
+    if version == GOVERNING_BODY_V1:
+        if len(body) != 33:
+            raise CommitmentRefused("governing_body_length")
+        return version, body[1:], None
+    r = _FrameReader(body[1:], "governing_body_truncated")
+    doc = r.take(32)
+    if r.at_end():
+        raise CommitmentRefused("env_presence_missing")
+    presence = r.u8()
+    env = None
+    if presence == 0x01:
+        env = _env_of(r.framed())
+    elif presence != 0x00:
+        raise CommitmentRefused("env_presence_invalid")
+    r.done("governing_body_trailing_bytes")
+    return version, doc, env
+
+
+def _slot32(d: Optional[bytes]) -> bytes:
+    """Fields 9/10/11: ``0x00`` absent, else ``0x01 ‖ F(d)`` over exactly 32 bytes."""
+    if d is None:
+        return b"\x00"
+    if len(d) != 32:
+        raise CommitmentRefused("slot_length_not_32", f"got {len(d)} bytes")
+    return b"\x01" + _be64_frame(d)
+
+
+def _env_slot(env: Optional[bytes]) -> bytes:
+    """Field 12: ``0x00`` absent, else ``0x01 ‖ F(env)`` (the env already checked)."""
+    return b"\x00" if env is None else b"\x01" + _be64_frame(env)
+
+
+class CommitmentTrailers(_NamedTuple):
+    """A decoded ``0x05`` / ``0x06`` trailer run (:func:`decode_commitment_trailers`).
+
+    ``field_10`` / ``field_11`` / ``field_12`` are the digest encodings, presence byte included.
+    ``field_12`` is ``None`` where the reading has no field 12: under v5, and scheme-free unless a body
+    v2 was read. ``governing_body_version`` is the ``0x06`` body version read (``None`` with no ``0x06``).
+    """
+
+    field_10: bytes
+    field_11: bytes
+    field_12: Optional[bytes]
+    governing_body_version: Optional[int]
+    gate_block: Optional[dict]
+    gate_digest: Optional[bytes]
+    governing_doc_sha256: Optional[bytes]
+    env: Optional[str]
+
+
+def _bytes_or_hex(v) -> bytes:
+    return bytes.fromhex(v) if isinstance(v, str) else bytes(v)
+
+
+def decode_commitment_trailers(trailers, scheme: Optional[str]) -> CommitmentTrailers:
+    """Decode a commitment's ``0x05`` / ``0x06`` trailer run (raw bytes, or hex) under ``scheme``.
+
+    ``scheme`` is ``"v5"``, ``"v6"`` or ``None``. A verifier takes it from statement selection
+    (:func:`select_commitment_version`); ``None`` is the scheme-free decode (v6 §Where the scheme comes
+    from), which accepts both ``0x06`` body versions, reports which it read, and leaves the scheme rules
+    (``v5_refuses_*``, ``v6_refuses_governing_body_v1``) to the caller.
+
+    Rules: markers strictly increase (a repeated or misordered ``0x05`` is ``marker_order``), a marker
+    outside ``0x01``-``0x07`` is ``unknown_marker``, nothing follows the last trailer; ``0x05`` is decoded
+    strictly (:func:`decode_gate_body`) and frames field 10 from this reader's own
+    ``seam-gate-digest:v1`` over it (VG1); ``0x06`` v1/v2 frames fields 11 and 12; and a ``0x05`` is
+    legal only beside a ``0x06`` body v2 carrying the same env (``gate_env_binding``). Under v5 any
+    ``0x05`` refuses. The other legal markers (``0x01``-``0x04``, ``0x07``) are not part of this input
+    and refuse: the selection trailer stays with :func:`decode_selection_trailer`, as in v5.
+
+    Raises :class:`CommitmentRefused`; any refusal refuses the whole commitment."""
+    if scheme not in ("v5", "v6", None):
+        raise ValueError(f"scheme must be 'v5', 'v6' or None, got {scheme!r}")
+    t = _bytes_or_hex(trailers)
+    pos, last = 0, 0
+    gate_body: Optional[bytes] = None
+    version: Optional[int] = None
+    doc: Optional[bytes] = None
+    env: Optional[str] = None
+    while pos < len(t):
+        marker = t[pos]
+        if marker <= last:
+            raise CommitmentRefused("marker_order", f"{marker:#04x} after {last:#04x}")
+        last = marker
+        if marker == GATE_TRAILER_MARKER:
+            if scheme == "v5":
+                raise CommitmentRefused("v5_refuses_gate_block")
+            gate_body, pos = _read_trailer(t, pos, "gate_trailer_truncated")
+            decode_gate_body(gate_body)
+        elif marker == GOVERNING_TRAILER_MARKER:
+            body, pos = _read_trailer(t, pos, "governing_trailer_truncated")
+            version, doc, env = _decode_governing_body(body, scheme)
+        elif marker in _OTHER_TRAILER_MARKERS:
+            raise CommitmentRefused(
+                "marker_not_gate_or_governing",
+                f"{marker:#04x} is a legal trailer, but not part of the 0x05/0x06 run",
+            )
+        else:
+            raise CommitmentRefused("unknown_marker", f"{marker:#04x}")
+    gate_block = None
+    gd = None
+    if gate_body is not None:
+        gate_block = decode_gate_body(gate_body)
+        if doc is None or env is None or env != gate_block["env"]:
+            raise CommitmentRefused("gate_env_binding")
+        gd = gate_digest(gate_body)
+    env_b = None if env is None else env.encode("ascii")
+    has_field_12 = scheme == "v6" or (scheme is None and version == GOVERNING_BODY_V2)
+    return CommitmentTrailers(
+        field_10=_slot32(gd),
+        field_11=_slot32(doc),
+        field_12=_env_slot(env_b) if has_field_12 else None,
+        governing_body_version=version,
+        gate_block=gate_block,
+        gate_digest=gd,
+        governing_doc_sha256=doc,
+        env=env,
+    )
+
+
+def _slot_input(commitment: dict, name: str) -> Optional[bytes]:
+    v = commitment.get(name)
+    return None if v is None else _bytes_or_hex(v)
+
+
+def _env_input(v) -> Optional[bytes]:
+    """A caller-supplied env (str or bytes) as checked bytes, or ``None`` when absent. An empty string
+    is a refusal, not absence: absence is ``None``."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        try:
+            raw = v.encode("utf-8")
+        except UnicodeEncodeError:
+            raise CommitmentRefused("env_not_sandbox_or_live") from None
+    else:
+        raw = bytes(v)
+    return _env_of(raw).encode("ascii")
+
+
+def commitment_digest_v6(commitment: dict) -> str:
+    """``seam-commitment-digest:v6`` (hex): v5's fields 0-11 (tag ``:v6``) plus field 12, the env.
+
+    Fields 1-9 are read exactly as v5 reads them (``id`` … ``committer``, the explanation, and field 9
+    from ``selection`` or ``selection_digest``). Fields 10-12 come one of two ways:
+
+    * **from ``trailers``** (raw bytes or hex; the ``0x05`` / ``0x06`` run the sealed commitment carries,
+      ``""`` when it has neither): decoded under v6 (:func:`decode_commitment_trailers`), so field 10 is
+      this reader's own Gate digest and field 12 the ``0x06`` body v2 env. A ``governing_doc_sha256``,
+      ``gate_digest`` or ``env`` given beside must agree with the derived value, or it raises;
+    * **digest-only** (``trailers`` absent or ``None``): ``gate_digest`` (32 bytes), ``governing_doc_sha256``
+      (32 bytes) and ``env`` (``"sandbox"`` / ``"live"``, or absent) are taken as given. This is the
+      vectors' ``digest_only`` path; a verifier uses ``trailers`` (VG1, :func:`verify_tct`).
+
+    Refuses before hashing (:class:`CommitmentRefused`): a present slot that is not 32 bytes, an env that
+    is not exactly ``sandbox`` / ``live`` (the empty string included), and an env without a governing
+    doc. ``certificate_digest`` is v5's field-10 name and raises here: v6 field 10 is the Gate digest.
+    """
+    if commitment.get("certificate_digest") is not None:
+        raise ValueError(
+            "certificate_digest is v5's opaque field 10; v6 field 10 is the gate digest"
+        )
+    trailers = commitment.get("trailers")
+    if trailers is None:
+        gate = _slot_input(commitment, "gate_digest")
+        doc = _slot_input(commitment, "governing_doc_sha256")
+        env = _env_input(commitment.get("env"))
+    else:
+        dec = decode_commitment_trailers(trailers, "v6")
+        gate, doc = dec.gate_digest, dec.governing_doc_sha256
+        env = None if dec.env is None else dec.env.encode("ascii")
+        beside = (
+            ("gate_digest", _slot_input(commitment, "gate_digest"), gate),
+            (
+                "governing_doc_sha256",
+                _slot_input(commitment, "governing_doc_sha256"),
+                doc,
+            ),
+            ("env", _env_input(commitment.get("env")), env),
+        )
+        for name, given, derived in beside:
+            if given is not None and given != derived:
+                raise ValueError(f"{name} does not match the commitment's trailers")
+    field_10, field_11 = _slot32(gate), _slot32(doc)
+    if env is not None and doc is None:
+        raise CommitmentRefused("env_without_governing_doc")
+    if commitment.get("selection") is None:
+        field_9 = _slot32(_slot_input(commitment, "selection_digest"))
+    else:
+        field_9 = _selection_slot(commitment)
+    supersedes = commitment.get("supersedes")
+    out = [
+        _be64_frame(COMMITMENT_DIGEST_V6_DOMAIN.encode()),
+        _be64_frame(commitment["id"].encode()),
+        _be64_frame(commitment["action"].encode()),
+        _be64_frame(commitment["authority"].encode()),
+        b"\x00" if supersedes is None else b"\x01" + _be64_frame(supersedes.encode()),
+        _be64_frame(commitment["auth_method"].encode()),
+        _be64_frame(commitment["trust_basis"].encode()),
+        _be64_frame((commitment.get("committer") or "").encode()),
+        _be64_frame(_commitment_explanation_digest(commitment)),
+        field_9,
+        field_10,
+        field_11,
+        _env_slot(env),
+    ]
+    return hashlib.sha256(b"".join(out)).hexdigest()
+
+
+def _refuse_duplicate_members(pairs: list) -> dict:
+    """``json.loads`` hook, called for EVERY object at every depth with all its members, before any map
+    keeps one of two: a repeated name refuses. Names arrive unescaped, so ``"type"`` and
+    ``"\\u0074ype"`` are the same name (AITP's raw-bytes duplicate-key guard, RFC-AITP-0001 §5.4.5)."""
+    out: dict = {}
+    for k, v in pairs:
+        if k in out:
+            raise CommitmentRefused("statement_duplicate_member", repr(k))
+        out[k] = v
+    return out
+
+
+def _refuse_constant(name: str):
+    # NaN / Infinity are not JSON; Python's parser accepts them unless told otherwise.
+    raise CommitmentRefused("statement_not_json", name)
+
+
+def _select_statement_version(stmt) -> str:
+    """Selection by exact member set over the (strictly parsed) statement object: ``"v5"`` or ``"v6"``."""
+    if not isinstance(stmt, dict):
+        raise CommitmentRefused("statement_not_object")
+    members = set(stmt)
+    if members == _V5_MEMBERS:
+        version = "v5"
+    elif members == _V6_MEMBERS:
+        domain = stmt["commitment_digest_domain"]
+        if not isinstance(domain, str) or domain != COMMITMENT_DIGEST_V6_DOMAIN:
+            raise CommitmentRefused("statement_domain_not_v6", repr(domain))
+        version = "v6"
+    else:
+        raise CommitmentRefused("statement_member_set", repr(sorted(members)))
+    if stmt["type"] != _STATEMENT_TYPE:
+        raise CommitmentRefused("statement_type")
+    d = stmt["commitment_digest"]
+    if not isinstance(d, str) or len(d) != 64 or not set(d) <= _HEX64:
+        raise CommitmentRefused("statement_digest_not_lowercase_hex")
+    return version
+
+
+def select_commitment_version(ext_raw) -> str:
+    """Pick the commitment digest version from a TCT's raw ``ext`` JSON text (str or UTF-8 bytes).
+
+    v6 §Verifiers, by exact member set of the ``com.zer07labs.seam`` statement: ``{type,
+    commitment_digest}`` is ``"v5"``; ``{type, commitment_digest, commitment_digest_domain}`` with the
+    domain exactly ``"seam-commitment-digest:v6"`` is ``"v6"``. Member order is not significant.
+    Everything else raises :class:`CommitmentRefused`: not JSON, not an object, no statement, a
+    duplicate member name ANYWHERE in ``ext`` (compared after JSON unescaping, detected before any map
+    keeps one of the two), another member set, another domain value (``:v5``, ``:v7``, a non-string),
+    another ``type``, or a digest that is not exactly 64 lowercase hex characters.
+
+    The caller then recomputes under the selected version ONLY. It never tries both and never falls
+    back: a 2-member statement over a v6 commitment selects v5, the v5 digest differs, and it is refused.
+    """
+    if isinstance(ext_raw, (bytes, bytearray, memoryview)):
+        try:
+            ext_raw = bytes(ext_raw).decode("utf-8")
+        except UnicodeDecodeError:
+            raise CommitmentRefused("statement_not_json") from None
+    try:
+        ext = json.loads(
+            ext_raw,
+            object_pairs_hook=_refuse_duplicate_members,
+            parse_constant=_refuse_constant,
+        )
+    except CommitmentRefused:
+        raise
+    except (ValueError, RecursionError):
+        raise CommitmentRefused("statement_not_json") from None
+    if not isinstance(ext, dict):
+        raise CommitmentRefused("statement_not_object")
+    if COMMITMENT_EXT_KEY not in ext:
+        raise CommitmentRefused("statement_missing")
+    return _select_statement_version(ext[COMMITMENT_EXT_KEY])
+
+
+def _v5_commitment_input(commitment: dict) -> dict:
+    """The commitment as the v5 digest reads it, with v5's scheme rules applied first: no env
+    (``v5_refuses_env``), no Gate (``v5_refuses_gate_block``), and, when it carries its raw
+    ``trailers``, only a ``0x06`` body v1, which then frames field 11 (a ``governing_doc_sha256`` given
+    beside must agree). Without ``trailers`` and without an env or Gate, it is returned unchanged, so
+    every pre-v6 v5 input digests byte-for-byte as before."""
+    if commitment.get("env") is not None:
+        raise CommitmentRefused("v5_refuses_env")
+    if commitment.get("gate_digest") is not None:
+        raise CommitmentRefused("v5_refuses_gate_block")
+    trailers = commitment.get("trailers")
+    if trailers is None:
+        return commitment
+    dec = decode_commitment_trailers(trailers, "v5")
+    given = _slot_input(commitment, "governing_doc_sha256")
+    if given is not None and given != dec.governing_doc_sha256:
+        raise ValueError(
+            "governing_doc_sha256 does not match the commitment's trailers"
+        )
+    return {**commitment, "governing_doc_sha256": dec.governing_doc_sha256}
+
+
+def _tct_commitment_digest(version: str, commitment: dict) -> str:
+    """The digest :func:`verify_tct` compares, under the selected ``version`` only. Under v6 fields 10-12
+    come from the raw ``trailers`` only, never from values beside them (VG1): absent trailers mean a record
+    with neither trailer, and a gate digest, doc digest or env given beside must agree with them."""
+    if version == "v6":
+        if commitment.get("trailers") is None:
+            commitment = {**commitment, "trailers": b""}
+        return commitment_digest_v6(commitment)
+    return _seam_commitment_digest(_v5_commitment_input(commitment))

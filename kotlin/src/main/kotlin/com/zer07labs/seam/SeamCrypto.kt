@@ -90,6 +90,10 @@ data class ExplanationEntry(
  * when the commitment carries none (the default, and today's behaviour). Given, field 9 is framed from
  * this verifier's own [SeamCrypto.selectionDigest] over it (a [selectionDigest] given beside it must
  * agree), and [SeamCrypto.verifyTct] additionally recomputes the winner (selection-rule.v1 §5 steps 6-9).
+ * [trailers] (Flows W2) is the raw `0x05` (Gate block) and `0x06` (governing document) trailer bytes the
+ * sealed commitment appends, in order and nothing else; `null` when not given. [SeamCrypto.verifyTct]
+ * derives fields 10-12 from them under the version the TCT's statement selects
+ * ([SeamCrypto.decodeCommitmentTrailers]); with `null` a v5 verification is exactly what it was before.
  */
 data class Commitment(
     val id: String,
@@ -105,6 +109,7 @@ data class Commitment(
     val certificateDigest: ByteArray? = null,
     val governingDocSha256: ByteArray? = null,
     val selection: SelectionBlock? = null,
+    val trailers: ByteArray? = null,
 )
 
 /** One weight override of a [SelectionBlock]. */
@@ -721,7 +726,11 @@ object SeamCrypto {
      * `["aitp.attestation"]`; and that `ext` is exactly
      * `{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":<hex>}}` with the hex equal
      * to the recomputed `seam-commitment-digest:v5` of this exact commitment (the decided content, the
-     * committer, and the sealed explanation). A header or payload whose JSON repeats an object key at
+     * committer, and the sealed explanation). Since Flows W2 the statement may instead carry
+     * `"commitment_digest_domain":"seam-commitment-digest:v6"`: the exact member set selects the version
+     * ([selectCommitmentVersion]), that version's trailer rules apply to [Commitment.trailers], and the
+     * digest is recomputed under it alone (v6 spec §Verifiers). A v5 statement with no trailers verifies
+     * exactly as before. A header or payload whose JSON repeats an object key at
      * any depth is refused: Gson would keep one of the two, and another parser might keep the other. Any malformed/forged input fails closed (returns false),
      * never throws — including explanation entries that disagree with the published
      * `explanationDigest`, an unknown kind, or a non-canonical confidence.
@@ -754,10 +763,12 @@ object SeamCrypto {
             if (grants.size != 1 || grants[0] != ATTESTATION_GRANT) return false
             val ext = payload["ext"] as? Map<*, *> ?: return false
             if (ext.size != 1) return false
-            val stmt = ext[COMMITMENT_EXT_NAMESPACE] as? Map<*, *> ?: return false
-            if (stmt.size != 2 || stmt["type"] != COMMITMENT_STATEMENT) return false
-            val digest = stmt["commitment_digest"] as? String ?: return false
-            if (digest != seamCommitmentDigest(commitment)) return false
+            // Flows W2: the statement's exact member set selects v5 or v6 (the duplicate-member guard
+            // ran over the raw payload above, so it covers every depth of ext). Recompute under that
+            // version only: never both, never a fallback.
+            val version = selectFromExtObject(ext)
+            val digest = (ext[COMMITMENT_EXT_NAMESPACE] as Map<*, *>)["commitment_digest"]
+            if (digest != recomputeCommitmentDigest(version, commitment)) return false
             // Option selection (selection-rule.v1 §5 steps 6-9). No block means "not a selection
             // decision" and nothing more. A block without the entries cannot be checked, so it fails
             // closed rather than passing as if the winner had been recomputed.
@@ -805,6 +816,404 @@ object SeamCrypto {
             else -> r.skipValue()
         }
         return false
+    }
+
+    // ── seam-commitment-digest:v6 + the Gate block v1 (Flows W2, readers only) ──────────────────
+    //
+    // Normative: seam-runtime docs/specs/seam-commitment-digest.v6.md and seam-gate-block.v1.md.
+    // Pinned by conformance/commitment_digest_v6_vector.json, commitment_digest_v6_signed_vector.json
+    // and gate_block_vector.json. Every be64 is read as a ULong, never a signed Long.
+
+    /** Domain tag of the v6 commitment digest. v5 ([COMMITMENT_DIGEST_DOMAIN]) is unchanged. */
+    const val COMMITMENT_DIGEST_DOMAIN_V6 = "seam-commitment-digest:v6"
+
+    /** Domain tag of the Gate digest v6 field 10 frames: SHA-256(F(tag) ‖ gate_body). */
+    const val GATE_DIGEST_DOMAIN = "seam-gate-digest:v1"
+
+    /** The `ext` statement member that selects v6. */
+    const val COMMITMENT_DIGEST_DOMAIN_MEMBER = "commitment_digest_domain"
+
+    private const val GATE_TRAILER = 0x05
+    private const val GOVERNING_TRAILER = 0x06
+    private val ENV_SANDBOX = "sandbox".toByteArray(Charsets.US_ASCII)
+    private val ENV_LIVE = "live".toByteArray(Charsets.US_ASCII)
+    private val V5_MEMBERS = setOf("type", "commitment_digest")
+    private val V6_MEMBERS = setOf("type", "commitment_digest", COMMITMENT_DIGEST_DOMAIN_MEMBER)
+
+    /** A strict reader over one body; every overrun refuses with [truncated]. */
+    private class Reader(private val b: ByteArray, private var p: Int, private val truncated: String) {
+        /** [n] is unsigned: a be64 length of 2^64-1 refuses as truncated, never wraps. */
+        fun take(n: ULong): ByteArray {
+            if (n > (b.size - p).toULong()) throw CommitmentRefusal(truncated)
+            val out = b.copyOfRange(p, p + n.toInt())
+            p += n.toInt()
+            return out
+        }
+
+        fun u8(): Int = take(1u)[0].toInt() and 0xff
+
+        fun be64(): ULong = ByteBuffer.wrap(take(8u)).long.toULong()
+
+        fun framed(): ByteArray = take(be64())
+
+        val atEnd: Boolean get() = p == b.size
+
+        fun done(rule: String) {
+            if (!atEnd) throw CommitmentRefusal(rule)
+        }
+    }
+
+    private fun strictUtf8(raw: ByteArray, rule: String): String =
+        try {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(raw))
+                .toString()
+        } catch (e: java.nio.charset.CharacterCodingException) {
+            throw CommitmentRefusal(rule)
+        }
+
+    /** A Gate text field: valid UTF-8 and non-empty. */
+    private fun gateText(r: Reader): String {
+        val out = strictUtf8(r.framed(), "gate_text_not_utf8")
+        if (out.isEmpty()) throw CommitmentRefusal("gate_text_empty")
+        return out
+    }
+
+    /** The env rule on raw bytes: exactly `sandbox` or `live`, compared byte for byte. */
+    private fun envOf(raw: ByteArray): String = when {
+        raw.contentEquals(ENV_SANDBOX) -> "sandbox"
+        raw.contentEquals(ENV_LIVE) -> "live"
+        else -> throw CommitmentRefusal("env_not_sandbox_or_live")
+    }
+
+    /**
+     * Decode a Gate block v1 (`0x05` body, after `marker ‖ u32le(len)`) strictly: every `gate_*` rule of
+     * `seam-gate-block.v1.md`. The receipt, key id, signature and certificate are framed bytes and are
+     * never parsed. Throws [CommitmentRefusal] on any refusal.
+     */
+    fun decodeGateBody(body: ByteArray): GateBlock {
+        if (body.isEmpty()) throw CommitmentRefusal("gate_body_empty")
+        val r = Reader(body, 0, "gate_body_truncated")
+        if (r.u8() != 0x01) throw CommitmentRefusal("gate_body_unknown_version")
+        val status = r.u8()
+        if (status != 1 && status != 2) throw CommitmentRefusal("gate_status_invalid")
+        val attemptId = gateText(r)
+        val domain = gateText(r)
+        val flowId = gateText(r)
+        val env = envOf(r.framed())
+        val timeoutMs = r.be64()
+        val onOutage = r.u8()
+        if (onOutage != 1 && onOutage != 2) throw CommitmentRefusal("gate_on_outage_invalid")
+        val requestedAtMs = r.be64()
+        val outage = if (onOutage == 1) "refuse_seal" else "seal_gate_unavailable"
+        val out = if (status == 1) {
+            val receipt = gateText(r)
+            val keyId = gateText(r)
+            val sig = r.framed()
+            if (sig.size != 64) throw CommitmentRefusal("gate_signature_length")
+            val cert = r.framed()
+            GateBlock(
+                status = "answered", attemptId = attemptId, domain = domain, flowId = flowId, env = env,
+                timeoutMs = timeoutMs, onOutage = outage, requestedAtMs = requestedAtMs,
+                receiptJcs = receipt, keyId = keyId, signature = sig,
+                certificateJcs = if (cert.isEmpty()) null else strictUtf8(cert, "gate_text_not_utf8"),
+            )
+        } else {
+            if (onOutage == 1) throw CommitmentRefusal("gate_unavailable_under_refuse_seal")
+            val reason = when (r.u8()) {
+                1 -> "timeout"
+                2 -> "connect"
+                3 -> "http_5xx"
+                4 -> throw CommitmentRefusal("gate_reason_reserved")
+                5 -> "circuit_open"
+                6 -> "token_mint"
+                else -> throw CommitmentRefusal("gate_reason_invalid")
+            }
+            GateBlock(
+                status = "unavailable", attemptId = attemptId, domain = domain, flowId = flowId, env = env,
+                timeoutMs = timeoutMs, onOutage = outage, requestedAtMs = requestedAtMs,
+                reason = reason, givenUpAtMs = r.be64(),
+            )
+        }
+        r.done("gate_body_trailing_bytes")
+        return out
+    }
+
+    /**
+     * `seam-gate-digest:v1`: SHA-256(`be64(19) ‖ "seam-gate-digest:v1" ‖ gate_body`), the body hashed
+     * whole, version byte included. The body is decoded strictly first ([decodeGateBody]), so a body the
+     * decoder refuses never yields a digest.
+     */
+    fun gateDigest(body: ByteArray): ByteArray {
+        decodeGateBody(body)
+        val h = ByteArrayOutputStream()
+        h.frame(GATE_DIGEST_DOMAIN.toByteArray(Charsets.US_ASCII))
+        h.writeBytes(body)
+        return sha256(h.toByteArray())
+    }
+
+    /** `0x00`, or `0x01 ‖ F(d)`. */
+    private fun slotBytes(d: ByteArray?): ByteArray {
+        val h = ByteArrayOutputStream()
+        if (d == null) {
+            h.write(0x00)
+        } else {
+            h.write(0x01)
+            h.frame(d)
+        }
+        return h.toByteArray()
+    }
+
+    private fun envSlotBytes(env: String?): ByteArray = slotBytes(env?.toByteArray(Charsets.US_ASCII))
+
+    /**
+     * Decode the `0x05` / `0x06` trailers a sealed commitment appends into digest fields 10-12. [scheme]
+     * is [CommitmentVersion.V5], [CommitmentVersion.V6], or `null` for the scheme-free decode (both `0x06`
+     * body versions accepted, the version reported; the caller applies the scheme rules).
+     *
+     * Markers strictly increase, an unknown marker refuses, nothing may follow the last trailer. `0x05` is
+     * decoded by [decodeGateBody], and field 10 frames this decoder's own [gateDigest] over it (VG1); a
+     * `0x05` needs a `0x06` body v2 whose env equals the Gate env (`gate_env_binding`). Under v5 a `0x05`
+     * or a body v2 refuses; under v6 a body v1 refuses. [trailers] carries only these two trailers: any
+     * other commitment trailer marker (`0x01`-`0x04`, `0x07`) is refused as not a digest input; field 9
+     * comes from [Commitment.selectionDigest] or [Commitment.selection], as for v5.
+     *
+     * Throws [CommitmentRefusal] (or [IllegalArgumentException]) on any refusal.
+     */
+    fun decodeCommitmentTrailers(trailers: ByteArray, scheme: CommitmentVersion?): CommitmentTrailers {
+        var pos = 0
+        var last = 0
+        var gateBody: ByteArray? = null
+        var gate: GateBlock? = null
+        var doc: ByteArray? = null
+        var env: String? = null
+        var version: Int? = null
+        while (pos < trailers.size) {
+            val marker = trailers[pos].toInt() and 0xff
+            if (marker < 0x01 || marker > 0x07) throw CommitmentRefusal("unknown_marker")
+            if (marker <= last) throw CommitmentRefusal("marker_order")
+            last = marker
+            val truncated = when (marker) {
+                GATE_TRAILER -> {
+                    if (scheme == CommitmentVersion.V5) throw CommitmentRefusal("v5_refuses_gate_block")
+                    "gate_trailer_truncated"
+                }
+                GOVERNING_TRAILER -> "governing_trailer_truncated"
+                else -> throw IllegalArgumentException(
+                    "trailer marker 0x%02x is not a commitment-digest input: pass only the 0x05/0x06 trailers"
+                        .format(marker),
+                )
+            }
+            if (trailers.size - pos < 5) throw CommitmentRefusal(truncated)
+            val n = ByteBuffer.wrap(trailers, pos + 1, 4).order(ByteOrder.LITTLE_ENDIAN).int.toUInt().toLong()
+            if (n > trailers.size - pos - 5) throw CommitmentRefusal(truncated)
+            val body = trailers.copyOfRange(pos + 5, pos + 5 + n.toInt())
+            pos += 5 + n.toInt()
+            if (marker == GATE_TRAILER) {
+                gate = decodeGateBody(body)
+                gateBody = body
+                continue
+            }
+            if (body.isEmpty()) throw CommitmentRefusal("governing_body_empty")
+            val v = body[0].toInt() and 0xff
+            if (v != 0x01 && v != 0x02) throw CommitmentRefusal("governing_body_unknown_version")
+            if (scheme == CommitmentVersion.V5 && v == 0x02) throw CommitmentRefusal("v5_refuses_governing_body_v2")
+            if (scheme == CommitmentVersion.V6 && v == 0x01) throw CommitmentRefusal("v6_refuses_governing_body_v1")
+            version = v
+            if (v == 0x01) {
+                if (body.size != 33) throw CommitmentRefusal("governing_body_length")
+                doc = body.copyOfRange(1, 33)
+            } else {
+                val r = Reader(body, 1, "governing_body_truncated")
+                doc = r.take(32u)
+                if (r.atEnd) throw CommitmentRefusal("env_presence_missing")
+                when (r.u8()) {
+                    0x01 -> env = envOf(r.framed())
+                    0x00 -> {}
+                    else -> throw CommitmentRefusal("env_presence_invalid")
+                }
+                r.done("governing_body_trailing_bytes")
+            }
+        }
+        if (gate != null && (doc == null || env == null || env != gate.env)) {
+            throw CommitmentRefusal("gate_env_binding")
+        }
+        val gd = gateBody?.let { gateDigest(it) }
+        val hasField12 = scheme == CommitmentVersion.V6 || (scheme == null && version == 2)
+        return CommitmentTrailers(
+            field10 = slotBytes(gd),
+            field11 = slotBytes(doc),
+            field12 = if (hasField12) envSlotBytes(env) else null,
+            governingBodyVersion = version,
+            gateDigest = gd,
+            gate = gate,
+            governingDocSha256 = doc,
+            env = env,
+        )
+    }
+
+    private fun requireAgree(name: String, beside: ByteArray?, field: ByteArray?) {
+        require(beside == null || beside.contentEquals(field)) {
+            "$name given on the commitment disagrees with the field"
+        }
+    }
+
+    /**
+     * The commitment digest (hex) under [version]: fields 0-8 from [c], fields 9-12 from [f] (the
+     * digest-only path; a field-9/10/11 slot also set on [c], or the digest of its [Commitment.selection],
+     * must equal [f]'s). Every refusal is checked before anything is hashed: a present slot that is not 32
+     * bytes (`slot_length_not_32`), an env that is not exactly `sandbox`/`live`
+     * (`env_not_sandbox_or_live`), an env without the governing doc (`env_without_governing_doc`), and any
+     * env under v5 (`v5_refuses_env`). [CommitmentVersion.V5] with no env is byte-for-byte
+     * `seam-commitment-digest:v5`; [CommitmentVersion.V6] is `seam-commitment-digest:v6` (v5's framing plus
+     * field 12, `0x00` or `0x01 ‖ F(env)`).
+     *
+     * Throws [IllegalArgumentException] ([CommitmentRefusal] for a spec rule) on any refusal.
+     */
+    fun commitmentDigest(version: CommitmentVersion, c: Commitment, f: CommitmentDigestFields): String {
+        if (listOf(f.selectionDigest, f.gateDigest, f.governingDocSha256).any { it != null && it.size != 32 }) {
+            throw CommitmentRefusal("slot_length_not_32")
+        }
+        if (f.env != null) {
+            if (version == CommitmentVersion.V5) throw CommitmentRefusal("v5_refuses_env")
+            if (f.env != "sandbox" && f.env != "live") throw CommitmentRefusal("env_not_sandbox_or_live")
+            if (f.governingDocSha256 == null) throw CommitmentRefusal("env_without_governing_doc")
+        }
+        val besideSelection = c.selection?.let { blk ->
+            val d = selectionDigest(selectionBody(blk))
+            require(c.selectionDigest == null || c.selectionDigest.contentEquals(d)) {
+                "selection_digest does not match the selection block"
+            }
+            d
+        } ?: c.selectionDigest
+        requireAgree("selection_digest", besideSelection, f.selectionDigest)
+        requireAgree("certificate_digest", c.certificateDigest, f.gateDigest)
+        requireAgree("governing_doc_sha256", c.governingDocSha256, f.governingDocSha256)
+        val framed = c.copy(
+            selectionDigest = f.selectionDigest,
+            certificateDigest = f.gateDigest,
+            governingDocSha256 = f.governingDocSha256,
+            selection = null,
+            trailers = null,
+        )
+        if (version == CommitmentVersion.V5) return seamCommitmentDigest(framed)
+        val explanation = commitmentExplanationDigest(framed)
+        val h = ByteArrayOutputStream()
+        h.frame(COMMITMENT_DIGEST_DOMAIN_V6.toByteArray(Charsets.UTF_8))
+        h.frame(c.id.toByteArray(Charsets.UTF_8))
+        h.frame(c.action.toByteArray(Charsets.UTF_8))
+        h.frame(c.authority.toByteArray(Charsets.UTF_8))
+        val supersedes = c.supersedes
+        if (supersedes == null) {
+            h.write(0x00)
+        } else {
+            h.write(0x01)
+            h.frame(supersedes.toByteArray(Charsets.UTF_8))
+        }
+        h.frame(c.authMethod.toByteArray(Charsets.UTF_8))
+        h.frame(c.trustBasis.toByteArray(Charsets.UTF_8))
+        h.frame(c.committer.toByteArray(Charsets.UTF_8))
+        h.frame(explanation)
+        h.writeBytes(slotBytes(f.selectionDigest))
+        h.writeBytes(slotBytes(f.gateDigest))
+        h.writeBytes(slotBytes(f.governingDocSha256))
+        h.writeBytes(envSlotBytes(f.env))
+        return sha256(h.toByteArray()).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    }
+
+    /**
+     * The digest [verifyTct] compares, under the selected version only. v5 with no trailers is exactly
+     * [seamCommitmentDigest]. Otherwise fields 10-12 come from this decoder's reading of
+     * [Commitment.trailers] under that scheme (v6 field 10 never from a value carried beside it), and a
+     * slot also set on the commitment must agree with the trailers.
+     */
+    private fun recomputeCommitmentDigest(version: CommitmentVersion, c: Commitment): String {
+        val selection = c.selection?.let { selectionDigest(selectionBody(it)) } ?: c.selectionDigest
+        if (version == CommitmentVersion.V5) {
+            val raw = c.trailers ?: return seamCommitmentDigest(c)
+            val t = decodeCommitmentTrailers(raw, CommitmentVersion.V5)
+            return commitmentDigest(
+                version, c, CommitmentDigestFields(selection, c.certificateDigest, t.governingDocSha256, null),
+            )
+        }
+        val t = decodeCommitmentTrailers(c.trailers ?: ByteArray(0), CommitmentVersion.V6)
+        return commitmentDigest(
+            version, c, CommitmentDigestFields(selection, t.gateDigest, t.governingDocSha256, t.env),
+        )
+    }
+
+    /**
+     * Statement selection (v6 spec §Verifiers) over the raw `ext` JSON text of a commitment TCT. A
+     * duplicate member name at ANY depth of `ext` refuses, found on the raw text with names compared after
+     * JSON unescaping (`"type"` and `"type"` are one name). The `com.zer07labs.seam` member must
+     * exist; members exactly `{type, commitment_digest}` select v5, exactly
+     * `{type, commitment_digest, commitment_digest_domain}` with the domain the string
+     * `seam-commitment-digest:v6` select v6; any other set, domain, `type`, or a `commitment_digest` that
+     * is not 64 lowercase hex refuses. Member order is not significant. Throws [CommitmentRefusal].
+     */
+    fun selectCommitmentVersion(extRaw: String): CommitmentVersion {
+        val ext = parseStatementJson(extRaw) as? Map<*, *> ?: throw CommitmentRefusal("statement_not_object")
+        return selectFromExtObject(ext)
+    }
+
+    /**
+     * [selectCommitmentVersion] entered from the raw statement object itself (the value of
+     * `com.zer07labs.seam`), with the same duplicate-member guard over it. Throws [CommitmentRefusal].
+     */
+    fun selectStatementVersion(statementRaw: String): CommitmentVersion =
+        selectFromStatement(parseStatementJson(statementRaw))
+
+    /** Selection from an `ext` map already cleared of duplicates. */
+    private fun selectFromExtObject(ext: Map<*, *>): CommitmentVersion {
+        if (!ext.containsKey(COMMITMENT_EXT_NAMESPACE)) throw CommitmentRefusal("statement_missing")
+        return selectFromStatement(ext[COMMITMENT_EXT_NAMESPACE])
+    }
+
+    private fun selectFromStatement(statement: Any?): CommitmentVersion {
+        val stmt = statement as? Map<*, *> ?: throw CommitmentRefusal("statement_not_object")
+        val keys = stmt.keys.toSet()
+        val version = when (keys) {
+            V5_MEMBERS -> CommitmentVersion.V5
+            V6_MEMBERS -> {
+                if (stmt[COMMITMENT_DIGEST_DOMAIN_MEMBER] != COMMITMENT_DIGEST_DOMAIN_V6) {
+                    throw CommitmentRefusal("statement_domain_not_v6")
+                }
+                CommitmentVersion.V6
+            }
+            else -> throw CommitmentRefusal("statement_member_set")
+        }
+        if (stmt["type"] != COMMITMENT_STATEMENT) throw CommitmentRefusal("statement_type")
+        val d = stmt["commitment_digest"] as? String
+        if (d == null || d.length != 64 || !d.all { it in '0'..'9' || it in 'a'..'f' }) {
+            throw CommitmentRefusal("statement_digest_not_lowercase_hex")
+        }
+        return version
+    }
+
+    /**
+     * Parse statement JSON strictly: not one well-formed JSON value refuses `statement_not_json`; a
+     * repeated member name at any depth refuses `statement_duplicate_member`, detected on the raw text
+     * (Gson's streaming reader unescapes each name) before any map parse could keep one of the two.
+     */
+    private fun parseStatementJson(raw: String): Any? {
+        val duplicate = try {
+            JsonReader(StringReader(raw)).use { r ->
+                r.strictness = Strictness.STRICT
+                val dup = scanForDuplicate(r)
+                if (!dup && r.peek() != JsonToken.END_DOCUMENT) throw CommitmentRefusal("statement_not_json")
+                dup
+            }
+        } catch (e: CommitmentRefusal) {
+            throw e
+        } catch (e: IOException) {
+            throw CommitmentRefusal("statement_not_json")
+        } catch (e: RuntimeException) {
+            throw CommitmentRefusal("statement_not_json")
+        }
+        if (duplicate) throw CommitmentRefusal("statement_duplicate_member")
+        return gson.fromJson(raw, Any::class.java)
     }
 
     /**
@@ -1468,3 +1877,66 @@ class VoterPopProof(val voterAid: String, val issuedAtMs: ULong, val expiresAtMs
     override fun toString(): String =
         "VoterPopProof(voterAid=$voterAid, issuedAtMs=$issuedAtMs, expiresAtMs=$expiresAtMs, signature=$signatureB64url)"
 }
+
+/** The commitment digest version a statement selects, or the scheme a trailer decode applies. */
+enum class CommitmentVersion { V5, V6 }
+
+/**
+ * A v6 / Gate-block refusal. [rule] names the spec rule. The name is ADVISORY (spec §Refusal rules):
+ * where an input breaks more than one rule any applicable one may be named, so a caller must branch on
+ * the refusal, never on the name.
+ */
+class CommitmentRefusal(val rule: String) : IllegalArgumentException(rule)
+
+/**
+ * The digest-function inputs for fields 9-12 ([SeamCrypto.commitmentDigest]). Each digest is `null` when
+ * absent, else exactly 32 bytes; [env] is `null` when absent, else exactly `"sandbox"` or `"live"`.
+ * Under v5 [gateDigest] is v5's opaque field-10 slot.
+ */
+data class CommitmentDigestFields(
+    val selectionDigest: ByteArray? = null,
+    val gateDigest: ByteArray? = null,
+    val governingDocSha256: ByteArray? = null,
+    val env: String? = null,
+)
+
+/**
+ * A decoded Gate block v1 (`0x05` body). [status] is `answered` or `unavailable`; [onOutage] is
+ * `refuse_seal` or `seal_gate_unavailable`. The be64 fields are unsigned ([ULong]). Answered only:
+ * [receiptJcs], [keyId], [signature] (64 raw bytes) and [certificateJcs] (`null` for a route answer).
+ * Unavailable only: [reason] (`timeout`, `connect`, `http_5xx`, `circuit_open`, `token_mint`) and
+ * [givenUpAtMs]. Absent fields are `null`.
+ */
+data class GateBlock(
+    val status: String,
+    val attemptId: String,
+    val domain: String,
+    val flowId: String,
+    val env: String,
+    val timeoutMs: ULong,
+    val onOutage: String,
+    val requestedAtMs: ULong,
+    val receiptJcs: String? = null,
+    val keyId: String? = null,
+    val signature: ByteArray? = null,
+    val certificateJcs: String? = null,
+    val reason: String? = null,
+    val givenUpAtMs: ULong? = null,
+)
+
+/**
+ * The `0x05` / `0x06` trailers decoded ([SeamCrypto.decodeCommitmentTrailers]). [field10]/[field11]/
+ * [field12] are the encoded digest fields (`0x00`, or `0x01 ‖ F(x)`); [field12] is `null` when the scheme
+ * has no field 12 (v5, or a scheme-free decode without a body v2). [governingBodyVersion] is the `0x06`
+ * body version (1 or 2), `null` with no `0x06`. The decoded values beside them are `null` when absent.
+ */
+data class CommitmentTrailers(
+    val field10: ByteArray,
+    val field11: ByteArray,
+    val field12: ByteArray?,
+    val governingBodyVersion: Int?,
+    val gateDigest: ByteArray?,
+    val gate: GateBlock?,
+    val governingDocSha256: ByteArray?,
+    val env: String?,
+)

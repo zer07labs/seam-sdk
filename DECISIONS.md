@@ -370,8 +370,8 @@ architecture as the accidental arbiter — a normative rule that is not one. All
 outside `[-2^63, 2^63)` explicitly. Python and TypeScript need no such bound alone; they carry Go's
 constraint so the five agree, which is the same trade this whole decision is made of.
 3. **It is the only one with a written rationale.** The type assertion that *is* the rule
-   (`exp, ok := payload["exp"].(float64)`, `go/crypto/crypto.go:570`) and the truncation semantics
-   below it (`go/crypto/crypto.go:581-588`) are both argued in comments at the code; the other two
+   (`exp, ok := payload["exp"].(float64)`, `go/crypto/crypto.go:578`) and the truncation semantics
+   below it (`go/crypto/crypto.go:589-596`) are both argued in comments at the code; the other two
    rules were the shortest expression that worked in that language.
 
 The alternative considered and rejected was **union semantics** — accept anything any SDK accepts,
@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:2232-2254` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:2256-2278` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:2260` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:2284` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3319,3 +3319,33 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
   01a09caf, verbatim, so the `spec-pin` job stays green.
 - **Decided by:** Opus (reversible tier: additive, unsealed, writerless fields; the decode work is already planned in
   client-surfaces A7/A9). **Verdict:** ADOPT. **Status:** ADOPTED.
+
+## 2026-11-22 — Flows W2 readers: commitment digest v6 + Gate block v1 in six ports, flow attribution, keyed chains (plans/flows-w2-clients.md)
+
+- **Scope:** CL A18 (v6 in Python, TS, Go, Java, Kotlin, `verify/`), S4/A7 (`flow_ref_of`), S5/A9 and RTC C4
+  readers in `verify/`. Readers only: the runtime writes v5 and no event carries tags 28/29 until W4.
+- **One cross-port rule for absent trailers (decided at integration):** the five ports first differed —
+  Go/TS framed field 11 from a `governing_doc_sha256` given beside absent trailers, Python refused absent
+  trailers, Java/Kotlin/Rust read them as none. Settled on the last: under v6, fields 10-12 come from the
+  trailers only, absent trailers are a record with neither trailer, and any value beside them must agree.
+  It is the spec's VG1 ("never framed from a value beside the body") applied uniformly, and it is the
+  strict side: relaxing later is additive, tightening later would break callers. Pinned in each port's
+  signed-vector test.
+- **Same strictness in every port, beyond the spec text:** `trailers` carries only `0x05`/`0x06` (other
+  markers refuse; field 9 still comes from the selection block as in v5); under v6 a stated
+  `certificate_digest` refuses (field 10 is only a recomputed Gate digest); `verify_tct` keeps v5's
+  one-namespace `ext` rule, while selection on its own tolerates other namespaces (the vector's
+  `ext_v6_beside_other_namespace` row).
+- **Deferred, with the blocker:**
+  - A7 in Go, Java and Kotlin: none of those modules compiles against generated stubs (their CI jobs run
+    no codegen), so there is no `SeamEvent` type to take — CL A17 (generated stubs per language).
+  - A7's record overload and the proto-to-v6 mapping: `seam.api.v1` has no `flow_ref`, `Commitment.gate`
+    or `Commitment.env` yet.
+  - S5 (v), `flow_ref.env` against the v6-sealed env: the event stream does not carry the record's env
+    (S13/S16).
+  - C5 (attestation v3, manifest helpers), tag 30, keyed-chain anchors and the full V-checks: chain_bundle
+    v2 and W5.
+  - The signed v6 vector carries no sealed voter records, so its cases verify over the published
+    explanation digest; each port pins that passing the entries fails closed.
+- **Decided by:** Opus (reversible tier: additive verify-side code, v5 byte-unchanged, no contract change).
+

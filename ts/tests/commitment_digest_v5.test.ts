@@ -6,9 +6,9 @@
 // an implementation is conforming iff it reproduces EVERY digest in that file and verifies its
 // `signed_artifact` against its `issuer_aid`. `conformance/commitment_digest_v5_vector.json` is the
 // independent stdlib-only generator's field-9/10/11 slot cases (byte fields hex); its
-// `governing_trailer_refusals` pin the runtime's `0x06` trailer DECODER, which the SDK does not have
-// (the trailer is sealed in the record ciphertext and reaches a client only as the proto field), so they
-// are not exercised here. The `commitment` objects are the REST projection:
+// `governing_trailer_refusals` pin the `0x06` trailer decoder. The SDK has one since Flows W2
+// (`decodeCommitmentTrailers`), exercised against the v6 file's rows, v5 scheme included, in
+// `commitment_digest_v6.test.ts`, so they are not re-run here. The `commitment` objects are the REST projection:
 // snake_case, byte fields as JSON number arrays, absent `supersedes` / `confidence` / `rationale_ref`
 // as `null`. v4 adds the sealed voter verification record on every vote / ballot / objection (`VV`, byte
 // fields as number arrays) and the always-framed slots 9 (selection) and 10 (Gate certificate), given

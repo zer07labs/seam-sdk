@@ -743,8 +743,8 @@ function isJsonObject(v: unknown): v is Record<string, unknown> {
  * The TCT is an RFC-AITP-0005 self-attestation. Checks the EdDSA JWS against the issuer AID's key, the
  * self-issued claims (`typ`, `iss==sub==aud==issuerAid`, `exp`), that `grants` is exactly
  * `["aitp.attestation"]`, and that `ext` is exactly
- * `{"com.zer07labs.seam": {"type": "seam:commitment", "commitment_digest": <hex>}}` whose digest is
- * `seam-commitment-digest:v5` of this exact commitment — its decided content, its committer and its
+ * `{"com.zer07labs.seam": <statement>}`, whose exact member set selects v5 or v6 ({@link selectCommitmentVersion}),
+ * and whose digest is that one version's digest ({@link commitmentDigestUnder}) of this exact commitment — its decided content, its committer and its
  * sealed explanation. A duplicate JSON key anywhere in the header or payload, a statement carried in
  * `grants` (the retired v2 shape), or an extra grant verifies `false`. Explanation entries that disagree
  * with the published digest, an unknown kind, or a non-canonical confidence verify `false`. When the
@@ -805,17 +805,17 @@ export function verifyTct(
     if (extKeys.length !== 1 || extKeys[0] !== COMMITMENT_EXT_KEY) return false;
     const stmt = ext[COMMITMENT_EXT_KEY];
     if (!isJsonObject(stmt)) return false;
-    const stmtKeys = Object.keys(stmt);
-    if (stmtKeys.length !== 2 || !stmtKeys.includes("type") || !stmtKeys.includes("commitment_digest"))
-      return false;
-    if (stmt.type !== "seam:commitment") return false;
+    // Flows W2 (A18): the exact member set selects ONE version (v6 spec §Verifiers: choosing v5 or v6).
+    // A refusal throws, so it fails closed. The digest is recomputed under that version only, never both
+    const version = selectFromStatementObject(stmt);
+    // and never as a fallback. A v5 statement over a commitment without `trailers` verifies as before.
     // #1687: with the entries given, every sealed voter record is re-checked (verifyCommitmentVoters).
     const entries = commitment.explanation;
     if (entries !== undefined && entries !== null && !verifyCommitmentVoters(entries, issuerAid, opts?.decision))
       return false;
     // Exact string compare: the runtime emits lowercase hex, and an uppercase spelling is a different
     // statement, not a normalization opportunity.
-    if (stmt.commitment_digest !== seamCommitmentDigest(commitment)) return false;
+    if (stmt.commitment_digest !== commitmentDigestUnder(version, version === "v6" && commitment.trailers == null ? { ...commitment, trailers: "" } : commitment)) return false;
     // Option selection (runtime 0.90.0, selection-rule.v1 §5 steps 4, 6-9). No block means "not a
     // selection decision" and nothing more. A block without the entries cannot be checked, so it fails
     // closed rather than passing as if the winner had been recomputed.
@@ -2367,4 +2367,482 @@ export function contextDigestV4(bindings: readonly ContextProvenanceBinding[]): 
     );
   });
   return sha256(concat(...parts));
+}
+
+// ── seam-commitment-digest:v6 + the Gate block v1 (Flows W2, A18) ─────────────────────────────────────
+// Readers only. Normative: seam-runtime `docs/specs/seam-commitment-digest.v6.md` and
+// `docs/specs/seam-gate-block.v1.md`; pinned by `conformance/commitment_digest_v6_vector.json`,
+// `commitment_digest_v6_signed_vector.json` and `gate_block_vector.json`. v5 above is byte-unchanged and
+// stays verify-only until W9: nothing here touches its framing.
+//
+// Every `be64` (a frame length, `timeout_ms`, `requested_at_ms`, `given_up_at_ms`) is read and compared as a
+// `bigint`, never a `number`: they range over 0..2^64-1, past `Number.MAX_SAFE_INTEGER`, and a frame length
+// of 2^64-1 must refuse as truncated rather than wrap or round.
+
+/** Domain tag of `seam-commitment-digest:v6` (field 0). */
+export const COMMITMENT_DIGEST_DOMAIN_V6 = "seam-commitment-digest:v6";
+/** Domain tag of the Gate digest, v6 field 10: `SHA-256(be64(19) ‖ "seam-gate-digest:v1" ‖ gate_body)`. */
+export const GATE_DIGEST_DOMAIN = "seam-gate-digest:v1";
+/** The statement member that names the digest version, REQUIRED from v6 on. */
+export const COMMITMENT_DIGEST_DOMAIN_MEMBER = "commitment_digest_domain";
+/** The Gate block's trailer marker. */
+export const GATE_TRAILER = 0x05;
+/** The governing-document trailer's marker (field 11, and under v6 field 12). */
+export const GOVERNING_TRAILER = 0x06;
+/** The two envs a v6 record may be sealed in, matched byte for byte (case-sensitive, ASCII). */
+export const FLOW_ENVS = ["sandbox", "live"] as const;
+export type FlowEnv = (typeof FLOW_ENVS)[number];
+
+/** Which commitment digest a record is recomputed under. */
+export type CommitmentDigestVersion = "v5" | "v6";
+/** The scheme a trailer reader applies: a version, or `null` for the scheme-free decode (both `0x06` body
+ * versions accepted and reported; the caller applies the scheme rules once it knows the scheme). */
+export type TrailerScheme = CommitmentDigestVersion | null;
+
+/** A refusal under the v6 / Gate-block specs. It refuses the whole commitment, before anything is hashed.
+ * `rule` names the spec rule this implementation hit first; it is ADVISORY (spec §Refusal rules): where an
+ * input breaks several rules, another conforming port may name a different one. Only the refusal is
+ * normative. */
+export class CommitmentRefusedError extends Error {
+  readonly rule: string;
+  constructor(rule: string, detail?: string) {
+    super(detail ? `${rule}: ${detail}` : rule);
+    this.name = "CommitmentRefusedError";
+    this.rule = rule;
+  }
+}
+
+// Interface merging (same module): a commitment may now carry its raw trailers. Declared here, beside the
+// v6 code, rather than in the interface above, so the v5 half of this file keeps its line numbers.
+export interface Commitment {
+  /** The raw `0x05` (Gate block) and `0x06` (governing document) trailer bytes the sealed commitment
+   * appends, in sequence order — bytes, a number array or hex. When present, a verifier derives fields
+   * 10-12 from these bytes only (VG1), under the scheme statement selection chose; `""` means a record with
+   * neither trailer. Absent (`undefined` or `null`) keeps the pre-W2 behaviour: v5 frames fields 10 and 11
+   * from `certificate_digest` / `governing_doc_sha256`; the v6 digest functions take field 11 from
+   * `governing_doc_sha256` (the digest-only path), but `verifyTct` reads absent as `""` under v6, so fields
+   * 10-12 come from the trailers only. No other marker is carried: `0x01`-`0x04` and `0x07` are refused. */
+  trailers?: DigestBytes | null;
+}
+
+function refuse(rule: string, detail?: string): never {
+  throw new CommitmentRefusedError(rule, detail);
+}
+
+const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+/** A strict cursor over one body; every overrun refuses with `truncated`. */
+class StrictReader {
+  pos = 0;
+  constructor(
+    private readonly b: Uint8Array,
+    private readonly truncated: string,
+  ) {}
+  get remaining(): number {
+    return this.b.length - this.pos;
+  }
+  take(n: bigint | number): Uint8Array {
+    // Compared as bigint: a be64 length of 2^64-1 is past the body, never a wrapped small number.
+    if (BigInt(n) > BigInt(this.remaining)) refuse(this.truncated);
+    const k = Number(n);
+    const out = this.b.subarray(this.pos, this.pos + k);
+    this.pos += k;
+    return out;
+  }
+  u8(): number {
+    return this.take(1)[0];
+  }
+  be64(): bigint {
+    const b = this.take(8);
+    return new DataView(b.buffer, b.byteOffset, 8).getBigUint64(0, false);
+  }
+  framed(): Uint8Array {
+    return this.take(this.be64());
+  }
+  done(rule: string): void {
+    if (this.remaining !== 0) refuse(rule);
+  }
+}
+
+/** The env rule on raw bytes: exactly `sandbox` or `live`. Non-ASCII and non-UTF-8 bytes fail it too. */
+function envOfBytes(raw: Uint8Array): FlowEnv {
+  for (const e of FLOW_ENVS) if (raw.length === e.length && Buffer.from(raw).toString("latin1") === e) return e;
+  return refuse("env_not_sandbox_or_live");
+}
+
+function envOfString(env: unknown): FlowEnv {
+  if (typeof env === "string" && (FLOW_ENVS as readonly string[]).includes(env)) return env as FlowEnv;
+  return refuse("env_not_sandbox_or_live", JSON.stringify(env));
+}
+
+/** `0x00` when absent, else `0x01 ‖ be64(32) ‖ 32 bytes`; a present length other than 32 refuses. */
+function slot32(v: DigestBytes | null | undefined, what: string): Uint8Array {
+  if (v === undefined || v === null) return new Uint8Array([0]);
+  const b = digestBytes(v, what);
+  if (b.length !== 32) refuse("slot_length_not_32", `${what} is ${b.length} bytes`);
+  return concat(new Uint8Array([1]), frame(b));
+}
+
+function envSlot(env: FlowEnv | null): Uint8Array {
+  return env === null ? new Uint8Array([0]) : concat(new Uint8Array([1]), frame(enc.encode(env)));
+}
+
+// ── The Gate block v1 (`0x05`) ──
+
+export type GateStatus = "answered" | "unavailable";
+export type GateOnOutage = "refuse_seal" | "seal_gate_unavailable";
+/** Byte 4 (`invalid_response`) is reserved and refused: an unverifiable answer is never sealed. */
+export type GateUnavailableReason = "timeout" | "connect" | "http_5xx" | "circuit_open" | "token_mint";
+
+const GATE_STATUS: Record<number, GateStatus> = { 1: "answered", 2: "unavailable" };
+const GATE_ON_OUTAGE: Record<number, GateOnOutage> = { 1: "refuse_seal", 2: "seal_gate_unavailable" };
+const GATE_REASON: Record<number, GateUnavailableReason> = {
+  1: "timeout",
+  2: "connect",
+  3: "http_5xx",
+  5: "circuit_open",
+  6: "token_mint",
+};
+
+interface GateBlockCommon {
+  attempt_id: string;
+  domain: string;
+  flow_id: string;
+  env: FlowEnv;
+  timeout_ms: bigint;
+  on_outage: GateOnOutage;
+  requested_at_ms: bigint;
+}
+/** decision-api answered: its signed receipt, verbatim. `certificate_jcs` is `null` iff the sealed
+ * certificate frame is empty (route). The receipt is framed, never parsed (VG2 is a W5 check). */
+export interface GateBlockAnswered extends GateBlockCommon {
+  status: "answered";
+  receipt_jcs: string;
+  key_id: string;
+  /** The raw 64-byte Ed25519 signature, never the base64url text. */
+  signature: Uint8Array;
+  certificate_jcs: string | null;
+}
+/** Gate was unavailable, under the `seal_gate_unavailable` policy. */
+export interface GateBlockUnavailable extends GateBlockCommon {
+  status: "unavailable";
+  reason: GateUnavailableReason;
+  given_up_at_ms: bigint;
+}
+/** A decoded Gate body v1. Every `be64` field is a `bigint`. */
+export type GateBlock = GateBlockAnswered | GateBlockUnavailable;
+
+function gateText(r: StrictReader): string {
+  const raw = r.framed();
+  let out: string;
+  try {
+    out = STRICT_UTF8.decode(raw);
+  } catch {
+    return refuse("gate_text_not_utf8");
+  }
+  if (out.length === 0) refuse("gate_text_empty");
+  return out;
+}
+
+/** Strictly decode a Gate body v1 (the `0x05` trailer's body), applying every `gate_*` rule of
+ * `seam-gate-block.v1.md`. Throws {@link CommitmentRefusedError}; never returns a partial block. */
+export function decodeGateBody(body: DigestBytes): GateBlock {
+  const b = digestBytes(body, "gate_body");
+  if (b.length === 0) refuse("gate_body_empty");
+  const r = new StrictReader(b, "gate_body_truncated");
+  if (r.u8() !== 0x01) refuse("gate_body_unknown_version");
+  const status = GATE_STATUS[r.u8()] ?? refuse("gate_status_invalid");
+  const attempt_id = gateText(r);
+  const domain = gateText(r);
+  const flow_id = gateText(r);
+  const env = envOfBytes(r.framed());
+  const timeout_ms = r.be64();
+  const onOutageByte = r.u8();
+  const on_outage = GATE_ON_OUTAGE[onOutageByte] ?? refuse("gate_on_outage_invalid");
+  const requested_at_ms = r.be64();
+  const common: GateBlockCommon = { attempt_id, domain, flow_id, env, timeout_ms, on_outage, requested_at_ms };
+  let block: GateBlock;
+  if (status === "answered") {
+    const receipt_jcs = gateText(r);
+    const key_id = gateText(r);
+    const signature = r.framed();
+    if (signature.length !== 64) refuse("gate_signature_length", `${signature.length} bytes`);
+    const cert = r.framed();
+    let certificate_jcs: string | null = null;
+    if (cert.length > 0) {
+      try {
+        certificate_jcs = STRICT_UTF8.decode(cert);
+      } catch {
+        refuse("gate_text_not_utf8");
+      }
+    }
+    block = { ...common, status, receipt_jcs, key_id, signature: Uint8Array.from(signature), certificate_jcs };
+  } else {
+    if (onOutageByte === 1) refuse("gate_unavailable_under_refuse_seal");
+    const reasonByte = r.u8();
+    if (reasonByte === 4) refuse("gate_reason_reserved");
+    const reason = GATE_REASON[reasonByte] ?? refuse("gate_reason_invalid");
+    block = { ...common, status, reason, given_up_at_ms: r.be64() };
+  }
+  r.done("gate_body_trailing_bytes");
+  return block;
+}
+
+/** `seam-gate-digest:v1` — `SHA-256(be64(19) ‖ "seam-gate-digest:v1" ‖ gate_body)`, the body hashed whole
+ * (its version byte included; the trailer's marker and `u32le` length are not). It hashes, it does not
+ * decode: a verifier decodes the body first ({@link decodeGateBody}, which {@link decodeCommitmentTrailers}
+ * does) and frames field 10 only from this recomputation (VG1). */
+export function gateDigest(body: DigestBytes): Uint8Array {
+  return sha256(concat(frame(enc.encode(GATE_DIGEST_DOMAIN)), digestBytes(body, "gate_body")));
+}
+
+// ── The `0x06` body and the trailer sequence ──
+
+/** The `0x05` / `0x06` part of a commitment's trailer sequence, decoded. `field_10`/`field_11`/`field_12`
+ * are the encoded digest fields (`0x00`, or `0x01 ‖ F(value)`). `field_12` is present under v6, and in a
+ * scheme-free decode of a `0x06` body v2; v5 has no field 12. */
+export interface CommitmentTrailers {
+  field_10: Uint8Array;
+  field_11: Uint8Array;
+  field_12?: Uint8Array;
+  /** The `0x06` body version read (`1` or `2`), `null` with no `0x06` trailer. */
+  governing_body_version: 1 | 2 | null;
+  gate_block: GateBlock | null;
+  /** `seam-gate-digest:v1` recomputed over the `0x05` body; `null` with no Gate block. */
+  gate_digest: Uint8Array | null;
+  governing_doc_sha256: Uint8Array | null;
+  env: FlowEnv | null;
+}
+
+function decodeGoverningBody(
+  body: Uint8Array,
+  scheme: TrailerScheme,
+): { version: 1 | 2; doc: Uint8Array; env: FlowEnv | null } {
+  if (body.length === 0) refuse("governing_body_empty");
+  const version = body[0];
+  if (version !== 1 && version !== 2) refuse("governing_body_unknown_version", `0x${version.toString(16)}`);
+  if (scheme === "v5" && version === 2) refuse("v5_refuses_governing_body_v2");
+  if (scheme === "v6" && version === 1) refuse("v6_refuses_governing_body_v1");
+  if (version === 1) {
+    if (body.length !== 33) refuse("governing_body_length", `${body.length} bytes`);
+    return { version, doc: Uint8Array.from(body.subarray(1)), env: null };
+  }
+  const r = new StrictReader(body.subarray(1), "governing_body_truncated");
+  const doc = Uint8Array.from(r.take(32));
+  if (r.remaining === 0) refuse("env_presence_missing");
+  const presence = r.u8();
+  let env: FlowEnv | null = null;
+  if (presence === 0x01) env = envOfBytes(r.framed());
+  else if (presence !== 0x00) refuse("env_presence_invalid");
+  r.done("governing_body_trailing_bytes");
+  return { version, doc, env };
+}
+
+/** Decode the `0x05` / `0x06` trailer run of a commitment under `scheme`.
+ *
+ * Applies the trailer-sequence rules (markers strictly increasing, an unknown marker refused, nothing after
+ * the last trailer), the strict Gate decoder ({@link decodeGateBody}) for `0x05`, the `0x06` body v1/v2
+ * rules, and `gate_env_binding` (a `0x05` only beside a `0x06` v2 env equal to the Gate body's env). On top
+ * come the scheme's rules: `v5` refuses a `0x05` and a body v2; `v6` refuses a body v1; `null` is the
+ * scheme-free decode, which accepts both body versions and reports which it read. `0x01`-`0x04` and `0x07`
+ * are legal commitment trailers but are not carried in this input, so they refuse here
+ * (`marker_not_carried`); the selection trailer stays the `selection` / `selection_digest` input, as in v5.
+ * Throws {@link CommitmentRefusedError}. */
+export function decodeCommitmentTrailers(trailers: DigestBytes, scheme: TrailerScheme): CommitmentTrailers {
+  if (scheme !== "v5" && scheme !== "v6" && scheme !== null) throw new TypeError(`unknown scheme ${String(scheme)}`);
+  const tail = digestBytes(trailers, "trailers");
+  let pos = 0;
+  let last = 0;
+  let gateBody: Uint8Array | null = null;
+  let gate_block: GateBlock | null = null;
+  let governing: { version: 1 | 2; doc: Uint8Array; env: FlowEnv | null } | null = null;
+  while (pos < tail.length) {
+    const marker = tail[pos];
+    if (marker <= last) refuse("marker_order", `0x${marker.toString(16)} after 0x${last.toString(16)}`);
+    last = marker;
+    if (marker !== GATE_TRAILER && marker !== GOVERNING_TRAILER) {
+      if (marker >= 0x01 && marker <= 0x07) refuse("marker_not_carried", `0x0${marker}`);
+      refuse("unknown_marker", `0x${marker.toString(16)}`);
+    }
+    if (marker === GATE_TRAILER && scheme === "v5") refuse("v5_refuses_gate_block");
+    const truncated = marker === GATE_TRAILER ? "gate_trailer_truncated" : "governing_trailer_truncated";
+    if (pos + 5 > tail.length) refuse(truncated);
+    const n = new DataView(tail.buffer, tail.byteOffset + pos + 1, 4).getUint32(0, true);
+    if (pos + 5 + n > tail.length) refuse(truncated);
+    const body = tail.subarray(pos + 5, pos + 5 + n);
+    pos += 5 + n;
+    if (marker === GATE_TRAILER) {
+      gateBody = Uint8Array.from(body);
+      gate_block = decodeGateBody(gateBody);
+    } else {
+      governing = decodeGoverningBody(body, scheme);
+    }
+  }
+  if (gate_block !== null && (governing === null || governing.env === null || governing.env !== gate_block.env))
+    refuse("gate_env_binding");
+  const gate_digest = gateBody === null ? null : gateDigest(gateBody);
+  const out: CommitmentTrailers = {
+    field_10: slot32(gate_digest, "gate_digest"),
+    field_11: slot32(governing?.doc ?? null, "governing_doc_sha256"),
+    governing_body_version: governing?.version ?? null,
+    gate_block,
+    gate_digest,
+    governing_doc_sha256: governing?.doc ?? null,
+    env: governing?.env ?? null,
+  };
+  if (scheme === "v6" || (scheme === null && governing?.version === 2)) out.field_12 = envSlot(out.env);
+  return out;
+}
+
+// ── The digest ──
+
+/** Fields 10 and 12 of a v6 digest, given directly (the digest-only path, for a caller that already holds
+ * them; a verifier derives them from {@link Commitment.trailers} instead). */
+export interface CommitmentDigestV6Fields {
+  /** Field 10: `seam-gate-digest:v1` of the `0x05` body (32 bytes), or absent for no Gate. */
+  gate_digest?: DigestBytes | null;
+  /** Field 12: exactly `"sandbox"` or `"live"`, or absent. The empty string is a refusal, not absence. */
+  env?: string | null;
+}
+
+/** `seam-commitment-digest:v6` (hex): v5's fields 0-11 under the `:v6` tag, field 10 defined as the Gate
+ * digest, plus field 12, the env: `ENC(12) = 0x00 | 0x01 ‖ F(env)`.
+ *
+ * Fields 0-9 and 11 come from `c` exactly as {@link seamCommitmentDigest} frames them (field 9 from
+ * `selection` / `selection_digest`, field 11 from `governing_doc_sha256`); fields 10 and 12 come from
+ * `fields`. Refuses before hashing ({@link CommitmentRefusedError}): a present slot that is not 32 bytes
+ * (`slot_length_not_32`), an env other than exactly `sandbox`/`live` (`env_not_sandbox_or_live`), an env
+ * without a governing doc (`env_without_governing_doc`), a `certificate_digest` (v5's opaque field 10,
+ * which v6 replaces with `gate_digest`), and a commitment carrying `trailers` (derive those with
+ * {@link commitmentDigestUnder}, never beside them). */
+export function seamCommitmentDigestV6(c: Commitment, fields: CommitmentDigestV6Fields = {}): string {
+  if (c.trailers !== undefined && c.trailers !== null)
+    throw new TypeError("a commitment carrying trailers is digested by commitmentDigestUnder, which derives fields 10-12 from them");
+  if (c.certificate_digest !== undefined && c.certificate_digest !== null)
+    refuse("certificate_digest_under_v6", "v6 field 10 is the Gate digest: pass fields.gate_digest");
+  const env = fields.env === undefined || fields.env === null ? null : envOfString(fields.env);
+  if (env !== null && (c.governing_doc_sha256 === undefined || c.governing_doc_sha256 === null))
+    refuse("env_without_governing_doc");
+  // Slots first, so every refusal lands before anything is hashed.
+  const f9 = c.selection === undefined || c.selection === null ? slot32(c.selection_digest, "selection_digest") : selectionSlot(c);
+  const f10 = slot32(fields.gate_digest, "gate_digest");
+  const f11 = slot32(c.governing_doc_sha256, "governing_doc_sha256");
+  const supersedes = c.supersedes;
+  const parts = [
+    frame(enc.encode(COMMITMENT_DIGEST_DOMAIN_V6)),
+    frame(utf8Field(c.id, "id")),
+    frame(utf8Field(c.action, "action")),
+    frame(utf8Field(c.authority, "authority")),
+    supersedes === undefined || supersedes === null
+      ? new Uint8Array([0])
+      : concat(new Uint8Array([1]), frame(utf8Field(supersedes, "supersedes"))),
+    frame(utf8Field(c.auth_method, "auth_method")),
+    frame(utf8Field(c.trust_basis, "trust_basis")),
+    frame(utf8Field(c.committer || "", "committer")),
+    frame(commitmentExplanationDigest(c)),
+    f9,
+    f10,
+    f11,
+    envSlot(env),
+  ];
+  return Buffer.from(sha256(concat(...parts))).toString("hex");
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && Buffer.compare(Buffer.from(a), Buffer.from(b)) === 0;
+}
+
+/** The commitment digest (hex) under ONE selected version — never both, never a fallback.
+ *
+ * With `c.trailers` present, fields 10-12 are derived from those bytes only, under that version's trailer
+ * rules ({@link decodeCommitmentTrailers}); a `governing_doc_sha256` given beside them must equal the
+ * trailer's (or it refuses), and `certificate_digest` must be absent under v6. Without trailers, `fields`
+ * may give fields 10 and 12 directly (the digest-only path). Under v5, an env refuses (`v5_refuses_env`) and
+ * so does a Gate digest (`v5_refuses_gate_block`); a v5 commitment without trailers is exactly
+ * {@link seamCommitmentDigest}. Throws {@link CommitmentRefusedError}. */
+export function commitmentDigestUnder(
+  version: CommitmentDigestVersion,
+  c: Commitment,
+  fields: CommitmentDigestV6Fields = {},
+): string {
+  if (version !== "v5" && version !== "v6") throw new TypeError(`unknown commitment digest version ${String(version)}`);
+  const hasFields =
+    (fields.env !== undefined && fields.env !== null) || (fields.gate_digest !== undefined && fields.gate_digest !== null);
+  if (c.trailers === undefined || c.trailers === null) {
+    if (version === "v6") return seamCommitmentDigestV6(c, fields);
+    if (fields.env !== undefined && fields.env !== null) refuse("v5_refuses_env");
+    if (fields.gate_digest !== undefined && fields.gate_digest !== null) refuse("v5_refuses_gate_block");
+    return seamCommitmentDigest(c);
+  }
+  if (hasFields) throw new TypeError("fields 10 and 12 come from trailers when the commitment carries them, never beside them");
+  const t = decodeCommitmentTrailers(c.trailers, version);
+  const given = c.governing_doc_sha256;
+  if (given !== undefined && given !== null) {
+    const b = digestBytes(given, "governing_doc_sha256");
+    if (t.governing_doc_sha256 === null || !sameBytes(b, t.governing_doc_sha256))
+      refuse("governing_doc_mismatch", "governing_doc_sha256 differs from the 0x06 trailer's");
+  }
+  const { trailers: _trailers, ...rest } = c;
+  const base: Commitment = { ...rest, governing_doc_sha256: t.governing_doc_sha256 };
+  if (version === "v5") return seamCommitmentDigest(base);
+  return seamCommitmentDigestV6(base, {
+    gate_digest: t.gate_digest,
+    env: t.env,
+  });
+}
+
+// ── Statement selection ──
+
+const LOWER_HEX_64 = /^[0-9a-f]{64}$/;
+
+/** The statement object (already parsed, duplicates already refused) → v5 or v6, by exact member set. */
+function selectFromStatementObject(stmt: unknown): CommitmentDigestVersion {
+  if (!isJsonObject(stmt)) refuse("statement_not_object");
+  const keys = Object.keys(stmt);
+  const has = (k: string) => Object.prototype.hasOwnProperty.call(stmt, k);
+  let version: CommitmentDigestVersion;
+  if (keys.length === 2 && has("type") && has("commitment_digest")) {
+    version = "v5";
+  } else if (keys.length === 3 && has("type") && has("commitment_digest") && has(COMMITMENT_DIGEST_DOMAIN_MEMBER)) {
+    if (stmt[COMMITMENT_DIGEST_DOMAIN_MEMBER] !== COMMITMENT_DIGEST_DOMAIN_V6) refuse("statement_domain_not_v6");
+    version = "v6";
+  } else {
+    return refuse("statement_member_set", keys.join(","));
+  }
+  if (stmt.type !== "seam:commitment") refuse("statement_type");
+  const d = stmt.commitment_digest;
+  if (typeof d !== "string" || !LOWER_HEX_64.test(d)) refuse("statement_digest_not_lowercase_hex");
+  return version;
+}
+
+/** Parse raw JSON, refusing malformed text and a duplicate member name at ANY depth. Duplicates are found
+ * on the raw text (`JSON.parse` keeps the last of two), names compared after unescaping. */
+function parseStatementJson(raw: string): unknown {
+  if (typeof raw !== "string") throw new TypeError("the statement must be raw JSON text");
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return refuse("statement_not_json");
+  }
+  if (jsonHasDuplicateKey(raw)) refuse("statement_duplicate_member");
+  return value;
+}
+
+/** Select the commitment digest version from a TCT's raw `ext` JSON text (v6 spec §Verifiers: choosing v5
+ * or v6). The statement is `ext["com.zer07labs.seam"]`; members exactly `{type, commitment_digest}` select
+ * v5, exactly `{type, commitment_digest, commitment_digest_domain}` with the domain the string
+ * `seam-commitment-digest:v6` select v6. A duplicate member anywhere in `ext` (found on the raw text,
+ * compared after unescaping), any other member set or domain value, a `type` other than `seam:commitment`,
+ * or a digest that is not 64 lowercase hex refuses ({@link CommitmentRefusedError}). */
+export function selectCommitmentVersion(extRawJson: string): CommitmentDigestVersion {
+  const ext = parseStatementJson(extRawJson);
+  if (!isJsonObject(ext)) refuse("statement_not_object");
+  if (!Object.prototype.hasOwnProperty.call(ext, COMMITMENT_EXT_KEY)) refuse("statement_missing");
+  return selectFromStatementObject(ext[COMMITMENT_EXT_KEY]);
+}
+
+/** {@link selectCommitmentVersion} entered from the raw statement object text itself. */
+export function selectCommitmentVersionFromStatement(statementRawJson: string): CommitmentDigestVersion {
+  return selectFromStatementObject(parseStatementJson(statementRawJson));
 }

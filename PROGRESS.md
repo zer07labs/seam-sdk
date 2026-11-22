@@ -4069,7 +4069,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2260`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2284`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4556,12 +4556,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:135` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:2010-2027` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:2012-2029`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:2034-2051` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:2036-2053`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1912` and `PROGRESS.md:3981` cites `CHANGELOG.md:1797`, both already ~130-250
+  `CHANGELOG.md:1936` and `PROGRESS.md:3981` cites `CHANGELOG.md:1821`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4571,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:2012-2029`) to `CHANGELOG.md:2028-2045` — verified against the exact
+  (`CHANGELOG.md:2036-2053`) to `CHANGELOG.md:2052-2069` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -5430,3 +5430,13 @@ PR strategy: one PR. Risk tiers: P1 simple · P2 simple (batched gate). No Fable
 - 2026-11-21 P2 (docs): CHANGELOG Unreleased, COMPATIBILITY pairing (no SDK 0.105.0; 0.106.0 pairs with runtime 0.105.0/0.106.0). CHANGELOG citations shifted +18 via scripts/shift_changelog_citations.py. Gates: py 3014 pass/42 skip, ruff, ts 707/0, go, cargo test+clippy+fmt, java, kotlin, contract 0. Next: batched Opus verify (P1+P2) + final verify.
 - 2026-11-21 Batched verify P1+P2 (fresh Opus): GAPS round 1 — COMPATIBILITY:47 0.33.2 citation (wrong since base) → :1190; DECISIONS:2054/PROGRESS:4072 :2237 → :2235; plan archived. Fixed; re-ran gates.
 - PR #402 merged 1c1dde4 (CI 21 pass / 1 skip). Runtime 0.107.0 (seam-runtime#1837, no proto change) shipped during CI; its dispatch released SDK v0.107.0 (993f120) carrying #399. release-refire refused #400/#401 as superseded. Docs said 0.106.0 → corrected in docs/399-release-is-0107.
+
+## flows-w2-clients (waves flows W2, 2026-11-22)
+
+Plan: `plans/flows-w2-clients.md`. Five port branches built in parallel worktrees, merged into
+`flows-w2/clients`, then one integration fix (0e1a2a2: absent trailers mean none under v6 in every port).
+Local gates on the merged tree: Python 3207 passed / 73 skipped; TS 729 passed / 0 failed; Go, Java,
+Kotlin green; `verify/` cargo 286 passed, clippy and fmt clean; ruff clean;
+`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exit 0. seam-mcp CI-cost pass shipped separately as
+seam-mcp#161 (acfe00d3). Deferred items and their blockers: DECISIONS 2026-11-22 Flows W2 entry.
+

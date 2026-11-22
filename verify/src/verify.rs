@@ -4,8 +4,15 @@ use std::collections::BTreeMap;
 
 use sha2::{Digest, Sha256};
 
+use crate::chain_key::ChainKey;
 use crate::entry;
 use crate::wire::{Attestation, Cert, Decision, Event};
+
+/// The warning code for a flow-attribution disagreement (client-surfaces A9, spec §Flow attribution):
+/// two copies of one event that differ only in `flow_ref` (tag 28), or an event whose `flow_ref` and
+/// flow-kind `chain` (tag 29) name a different `flow_id`/`env`. A **warning, exit 0**: `flow_ref` is
+/// unsealed, so this discloses an attribution disagreement; it is not a seal failure.
+pub const FLOW_REF_CONFLICT: &str = "FLOW_REF_CONFLICT";
 
 /// The chain's genesis head: 32 zero bytes (`seam-event.v1.md` §Ordering & integrity).
 pub const GENESIS: [u8; 32] = [0u8; 32];
@@ -87,6 +94,12 @@ pub struct ChainReport {
     /// division of labour genesis-vs-anchored validation already has between [`verify_anchor`] and
     /// [`chain_anchored`]). Maps tenant name to the anchor's `attested_len`, for the refusal message.
     pub unconsumed_anchors: BTreeMap<String, u64>,
+    /// **Chain-keyed chains (`chain_bundle` v1, RTC C4).** One entry per [`ChainKey`] for every chained
+    /// event that carries tag 29 — kept apart from [`ChainReport::tenants`], which holds only the
+    /// legacy (`tenant`-scheme, no tag 29) chains. Each starts at `genesis(K)`, never at an anchor: an
+    /// anchored keyed chain needs attestation v3 (`chain_bundle` v2, W5). Empty on every stream written
+    /// today, since no producer emits tag 29 before W4.
+    pub chains: BTreeMap<ChainKey, TenantChain>,
 }
 
 /// One tenant's independent hash-chain state within a [`ChainReport`] — the per-tenant analogue of
@@ -220,16 +233,66 @@ pub fn check_kind_payload(e: &Event) -> Result<(), String> {
 /// The impostor check — two *different* events wearing one identity — therefore applies **only to chained
 /// events**, where uniqueness is real and a substitution would be a genuine attack.
 pub fn dedup(events: Vec<Event>) -> Result<(Vec<Event>, usize), String> {
-    use std::collections::{HashMap, HashSet};
-    let mut seen: HashSet<Vec<u8>> = HashSet::new();
+    let d = dedup_with_warnings(events)?;
+    Ok((d.events, d.duplicates))
+}
+
+/// [`dedup_with_warnings`]'s result.
+pub struct Dedup {
+    pub events: Vec<Event>,
+    pub duplicates: usize,
+    /// [`FLOW_REF_CONFLICT`] warnings, in arrival order. Never a failure.
+    pub warnings: Vec<String>,
+}
+
+/// [`dedup`], plus the flow-attribution comparison (client-surfaces A9).
+///
+/// `flow_ref` (tag 28) is outside the canonical identity, so two copies differing only in it are ONE
+/// event: the copy is collapsed and counted once (as a duplicate), never as a second link and never as
+/// the impostor error. Their stamps are then compared separately, and a difference is a
+/// [`FLOW_REF_CONFLICT`] warning. Identical stamps (both absent included) warn nothing. A kept event
+/// whose `flow_ref` disagrees with its flow-kind `chain` on `flow_id`/`env` warns the same way (the
+/// spec's consistency rule). A copy differing in anything that IS identity — `stream_id`, `chain`, a
+/// payload byte — is untouched by this and still fails as before.
+pub fn dedup_with_warnings(events: Vec<Event>) -> Result<Dedup, String> {
+    use std::collections::HashMap;
+    let mut seen: HashMap<Vec<u8>, Option<crate::wire::FlowRefPb>> = HashMap::new();
     let mut chained: HashMap<String, Vec<u8>> = HashMap::new();
     let mut out = Vec::with_capacity(events.len());
     let mut duplicates = 0;
+    let mut warnings = Vec::new();
+    let show = |f: &Option<crate::wire::FlowRefPb>| match f {
+        None => "absent".to_string(),
+        Some(f) => format!(
+            "{{flow_id {:?}, rev {}, env {:?}}}",
+            f.flow_id, f.rev, f.env
+        ),
+    };
 
     for e in events {
-        if seen.contains(&e.bytes) {
+        if let Some(first) = seen.get(&e.bytes) {
             duplicates += 1;
+            if *first != e.flow_ref {
+                warnings.push(format!(
+                    "{FLOW_REF_CONFLICT} — event_id {} (seq {}) arrived twice with different flow_ref \
+                     stamps: {} then {}. flow_ref is unsealed attribution, so the copy was counted \
+                     once; which flow it belongs to is not established by the seal.",
+                    e.event_id,
+                    e.seq,
+                    show(first),
+                    show(&e.flow_ref)
+                ));
+            }
             continue;
+        }
+        if let (Some(f), Some(c)) = (&e.flow_ref, &e.chain) {
+            if c.kind == 2 && (f.flow_id != c.flow_id || f.env != c.env) {
+                warnings.push(format!(
+                    "{FLOW_REF_CONFLICT} — event_id {} (seq {}): flow_ref names flow {:?} env {:?}, \
+                     but its flow chain (tag 29) is flow {:?} env {:?}.",
+                    e.event_id, e.seq, f.flow_id, f.env, c.flow_id, c.env
+                ));
+            }
         }
         if e.is_link() {
             if let Some(first) = chained.get(&e.event_id) {
@@ -245,10 +308,14 @@ pub fn dedup(events: Vec<Event>) -> Result<(Vec<Event>, usize), String> {
             }
             chained.insert(e.event_id.clone(), e.bytes.clone());
         }
-        seen.insert(e.bytes.clone());
+        seen.insert(e.bytes.clone(), e.flow_ref.clone());
         out.push(e);
     }
-    Ok((out, duplicates))
+    Ok(Dedup {
+        events: out,
+        duplicates,
+        warnings,
+    })
 }
 
 /// Verify the hash chain from the stream alone, **one running head per tenant** (spec §Ordering &
@@ -305,7 +372,9 @@ pub fn chain_by_tenant(
         base_len: 0,
         tenants: BTreeMap::new(),
         unconsumed_anchors: BTreeMap::new(),
+        chains: BTreeMap::new(),
     };
+    let mut keyed: BTreeMap<ChainKey, TenantChain> = BTreeMap::new();
 
     for e in events {
         // First, before the link/advisory split and before any `unverifiable` counting — as the runtime
@@ -324,6 +393,72 @@ pub fn chain_by_tenant(
             }
             continue;
         };
+
+        // `chain_bundle` v1 (RTC C4): a chained event carrying tag 29 is on the chain its key names, from
+        // `genesis(K)`. Without tag 29 it is `tenant`-scheme and falls through to the legacy walk below.
+        if let Some(cref) = &e.chain {
+            let key = ChainKey::new(cref.kind, &e.stream_id, &e.tenant, &cref.flow_id, &cref.env)
+                .map_err(|rule| {
+                format!(
+                    "seq {}: INVALID CHAIN KEY — tag 29 (kind {}, flow {:?}, env {:?}) with \
+                         stream_id {:?} and tenant {:?} names no chain ({rule}).",
+                    e.seq, cref.kind, cref.flow_id, cref.env, e.stream_id, e.tenant
+                )
+            })?;
+            let genesis = key.genesis().to_vec();
+            let chain = keyed.entry(key.clone()).or_insert_with(|| TenantChain {
+                head: genesis.clone(),
+                links: 0,
+                heads: vec![genesis],
+                max_schema_by_link: vec![0],
+                base_len: 0,
+            });
+            if cref.seq != chain.links as u64 {
+                return Err(format!(
+                    "seq {}: CHAIN POSITION MISMATCH — tag 29 says position {} on {key}, but it is \
+                     entry {} of that chain in this window.",
+                    e.seq, cref.seq, chain.links
+                ));
+            }
+            if e.prev_checksum != chain.head {
+                let what = if chain.links == 0 {
+                    "NOT GENESIS — the first entry of a chain-keyed chain must link to genesis(K)"
+                } else {
+                    "BROKEN CHAIN — prev_checksum does not match the chain's running head"
+                };
+                return Err(format!(
+                    "seq {}: {what} on {key}.\n  expected {}\n  got      {}\n  \
+                     An entry relabelled into a sibling chain, re-stamped onto another stream, \
+                     forged, inserted, reordered or dropped fails here.",
+                    e.seq,
+                    hex(&chain.head),
+                    hex(&e.prev_checksum)
+                ));
+            }
+            let expect = link(&e.prev_checksum, digest);
+            if checksum != &expect {
+                return Err(format!(
+                    "seq {}: FORGED LINK — checksum != H(prev_checksum ‖ digest) on {key}.\n  \
+                     expected {}\n  got      {}",
+                    e.seq,
+                    hex(&expect),
+                    hex(checksum)
+                ));
+            }
+            chain.head = checksum.clone();
+            chain.links += 1;
+            chain.heads.push(chain.head.clone());
+            if !e.is_modelled() {
+                r.unmodelled.push((e.seq, e.kind.clone()));
+            }
+            let prev = *chain.max_schema_by_link.last().unwrap_or(&0);
+            chain.max_schema_by_link.push(
+                e.decision
+                    .as_ref()
+                    .map_or(prev, |d| prev.max(d.schema_version)),
+            );
+            continue;
+        }
 
         let is_fresh_partition = !tenants.contains_key(&e.tenant);
         let chain = tenants.entry(e.tenant.clone()).or_insert_with(|| {
@@ -403,14 +538,20 @@ pub fn chain_by_tenant(
 
     r.tenants = tenants;
     r.unconsumed_anchors = unconsumed_anchors;
+    r.chains = keyed;
     // Single-tenant mirror (§0): every window this crate verified before U-RT-1/U-RT-3, and any
     // genuinely single-tenant window today, hits exactly one entry here — and the top-level scalar
     // fields below reproduce that one entry's values byte-for-byte, so this is NOT a behaviour change
     // for any existing caller. A window spanning more than one tenant has no single honest value for
     // these fields; they fall back to the genesis sentinel and the caller is expected to read
     // `r.tenants` instead.
-    if r.tenants.len() == 1 {
-        let only = r.tenants.values().next().expect("len == 1");
+    // A window whose only chain is one chain-keyed chain mirrors it the same way.
+    let sole = match (r.tenants.len(), r.chains.len()) {
+        (1, 0) => r.tenants.values().next(),
+        (0, 1) => r.chains.values().next(),
+        _ => None,
+    };
+    if let Some(only) = sole {
         r.head = only.head.clone();
         r.heads = only.heads.clone();
         r.links = only.links;

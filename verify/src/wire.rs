@@ -111,6 +111,63 @@ pub struct SeamEventPb {
     /// field carries.
     #[prost(string, tag = "27")]
     pub stream_id: String,
+    /// tag 28 — flow attribution (Flows W1, spec §Flow attribution). UNSEALED, and deliberately **not**
+    /// part of the event's canonical identity ([`Event::with_identity`] leaves it out), unlike tags 25
+    /// and 27: a restamp after a flow revision must not turn every redriven chained event into a
+    /// "forgery". Two copies differing only here dedup into one and raise `FLOW_REF_CONFLICT`
+    /// ([`crate::verify::dedup_with_warnings`]), a warning.
+    #[prost(message, optional, tag = "28")]
+    pub flow_ref: Option<FlowRefPb>,
+    /// tag 29 — the chain this CHAINED event belongs to (`chain_bundle` v1). **Presence is the signal**: a
+    /// present-but-empty message (`EA 01 00`) is a cell `ChainRef`, never absent, which prost's
+    /// `Option<message>` gives for free. Part of the identity: it names the chain key, so two copies
+    /// differing here are on different chains.
+    #[prost(message, optional, tag = "29")]
+    pub chain: Option<ChainRefPb>,
+}
+
+/// `FlowRef` (envelope tag 28): `{flow_id = 1, rev = 2, env = 3}`.
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct FlowRefPb {
+    #[prost(string, tag = "1")]
+    pub flow_id: String,
+    #[prost(uint64, tag = "2")]
+    pub rev: u64,
+    #[prost(string, tag = "3")]
+    pub env: String,
+}
+
+/// `ChainRef` (envelope tag 29): `{flow_id = 1, env = 2, seq = 3, kind = 4}`; `kind` 0 cell, 1 tenant,
+/// 2 flow.
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct ChainRefPb {
+    #[prost(string, tag = "1")]
+    pub flow_id: String,
+    #[prost(string, tag = "2")]
+    pub env: String,
+    #[prost(uint64, tag = "3")]
+    pub seq: u64,
+    #[prost(uint32, tag = "4")]
+    pub kind: u32,
+}
+
+/// The JSON projection of tag 28. Every member is REQUIRED (no `serde(default)`): a reader refuses an
+/// object missing one. Unknown members are tolerated, as everywhere in the projection.
+#[derive(Deserialize)]
+pub struct FlowRefJson {
+    pub flow_id: String,
+    pub rev: u64,
+    pub env: String,
+}
+
+/// The JSON projection of tag 29. All four members REQUIRED, `"kind": 0` included: a missing `kind`
+/// would otherwise alias the cell chain.
+#[derive(Deserialize)]
+pub struct ChainRefJson {
+    pub flow_id: String,
+    pub env: String,
+    pub seq: u64,
+    pub kind: u32,
 }
 
 /// The `CHAIN_HEAD_ATTESTATION` payload (tag 22), transcribed from `seam-event.v1.md` §CHAIN_HEAD_ATTESTATION.
@@ -335,6 +392,12 @@ pub struct SeamEventJson {
     pub tenant_seq: Option<u64>,
     #[serde(default)]
     pub stream_id: String,
+    /// Tag 28; omitted when absent.
+    #[serde(default)]
+    pub flow_ref: Option<FlowRefJson>,
+    /// Tag 29; omitted when absent.
+    #[serde(default)]
+    pub chain: Option<ChainRefJson>,
     /// The five payloads this crate does not model (tags 14, 15, 17, 21, 26). **Presence only**, as on
     /// the protobuf side: [`OpaqueObject`] consumes the value without modelling it, and `Option` makes
     /// `null` read as absent — the same reading serde's `Option` gives it on the runtime side.
@@ -546,7 +609,12 @@ pub struct Event {
     /// The per-tenant outbox counter — unsealed; carried only for the dedup identity.
     pub tenant_seq: Option<u64>,
     /// The delivery stream (k8s P7) — unsealed; carried only for the dedup identity, as `tenant_seq` is.
+    /// Since `chain_bundle` v1 it is also part of a tag-29 event's chain key.
     pub stream_id: String,
+    /// Tag 28, flow attribution — unsealed and OUTSIDE the dedup identity (see [`SeamEventPb::flow_ref`]).
+    pub flow_ref: Option<FlowRefPb>,
+    /// Tag 29, the chain key's (kind, flow_id, env) and the entry's position — inside the identity.
+    pub chain: Option<ChainRefPb>,
     pub cert: Option<Cert>,
     /// The `CHAIN_HEAD_ATTESTATION` payload, when this event is one. `None` otherwise.
     pub attestation: Option<Attestation>,
@@ -879,6 +947,17 @@ impl Event {
                 }),
                 tenant_seq: j.tenant_seq,
                 stream_id: j.stream_id,
+                flow_ref: j.flow_ref.map(|f| FlowRefPb {
+                    flow_id: f.flow_id,
+                    rev: f.rev,
+                    env: f.env,
+                }),
+                chain: j.chain.map(|c| ChainRefPb {
+                    flow_id: c.flow_id,
+                    env: c.env,
+                    seq: c.seq,
+                    kind: c.kind,
+                }),
                 cert: cert.transpose()?,
                 attestation: attestation.transpose()?,
                 decision: decision.transpose()?,
@@ -930,6 +1009,8 @@ impl Event {
             denial: pb.policy_denied,
             tenant_seq: pb.tenant_seq,
             stream_id: pb.stream_id,
+            flow_ref: pb.flow_ref,
+            chain: pb.chain,
             cert: pb.erasure_certificate.map(|c| Cert {
                 subject: c.subject,
                 erased: c.erased,
@@ -1041,6 +1122,14 @@ impl Event {
             policy_denied: self.denial.clone(),
             tenant_seq: self.tenant_seq,
             stream_id: self.stream_id.clone(),
+            // Tag 28 is deliberately NOT identity (client-surfaces A9): it is an unsealed attribution
+            // stamp, and a restamp after a flow revision would otherwise make a redriven chained event
+            // a "forgery" at `dedup`. Copies differing only here collapse into one, and `dedup`
+            // compares the stamps separately (FLOW_REF_CONFLICT, a warning). Contrast tags 25/27.
+            flow_ref: None,
+            // Tag 29 IS identity: it names the chain key, so a copy relabelled into another chain is
+            // an impostor, not a duplicate.
+            chain: self.chain.clone(),
             // Presence is identity: each present unmodelled slot re-encodes as an EMPTY sub-message,
             // whichever transport delivered it, so one event has one identity over JSON and protobuf
             // alike. Left out, a copy carrying a foreign payload and a clean copy of the same event
@@ -1436,6 +1525,8 @@ mod tests {
                 }),
                 tenant_seq: None,
                 stream_id: String::new(),
+                flow_ref: None,
+                chain: None,
                 cert: None,
                 attestation: None,
                 decision: None,
