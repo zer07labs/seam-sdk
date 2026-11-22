@@ -92,7 +92,7 @@ message DecisionSealed {
   string auth_method = 17;
   // D6 (0.70.0) — the governing config the session was opened under, captured ONCE at session open
   // (the governing load that admitted the session and bound its policies), never re-read at seal.
-  // OUTSIDE record digest v4 and commitment digest v3: it is NOT tamper-evident, and a consumer MUST
+  // OUTSIDE record digest v4 and commitment digest v5: it is NOT tamper-evident, and a consumer MUST
   // NOT treat it as evidence. When present, `tenant_snapshot_id` is non-empty.
   // ABSENT means any of: a row sealed before 0.70.0; a session parked or touched by a pre-0.70.0
   // replica; a replayed record; or a row SERVED by a pre-0.70.0 replica during a rollout or after a
@@ -101,6 +101,30 @@ message DecisionSealed {
   // `config:root:<id>` system audit plus the `seam.security` `session_governing_root` log line, joined
   // on `session_id` and `SESSION_LIFECYCLE.opened_at_millis`. Mirrors `DecisionSealedPb.governing_config`.
   GoverningConfig governing_config = 18;
+  // cert-ref (#1638 part 1, 0.91.0) — the decision certificate the sealed evaluations name. SET iff
+  // the seal is RESOLVED and its accepted EVALUATIONs carry exactly one distinct typed
+  // `rationale_ref = "decision-cert:sha256:<64 lowercase hex>"` (with a selection block, only the
+  // committed proposal's evaluations count). A pure function of the sealed commitment bytes: a
+  // verifier holding the decrypted commitment re-derives it exactly. OUTSIDE record digest v4 and
+  // commitment digest v5: the sealed binding is the evaluation's `rationale_ref` (explanation digest
+  // v2, inside the TCT), never this field, so a consumer MUST NOT treat it as evidence. ABSENT
+  // otherwise, and on every row sealed before 0.91.0. The runtime never dereferences or verifies
+  // the certificate. Typed refs are accepted only under the CP flag `cert_ref`, pinned at open.
+  CertificateRef certificate = 19;
+}
+
+// cert-ref — the certificate named on `DecisionSealed.certificate` (tag 19).
+message CertificateRef {
+  // The certificate id: the suffix after `decision-cert:` in the sealed `rationale_ref`, always
+  // `sha256:<64 lowercase hex>`.
+  string id = 1;
+  // Who vouches for the reference — a CLOSED set, carried as `int32` (this file's descriptor encoding
+  // has no enum form; the wire bytes are those of a proto3 enum):
+  //   0 = UNSPECIFIED     unknown or unset: the least trusted reading;
+  //   1 = AGENT_ASSERTED  the evaluating agent asserted it; the runtime checked only its shape.
+  // Any other value MUST read as UNSPECIFIED. Additive values may follow (a runtime-evaluated
+  // provenance arrives with Gate).
+  int32 provenance = 2;
 }
 
 // D6 — the governing config named on `DecisionSealed.governing_config` (tag 18). Carries the tenant
@@ -170,6 +194,81 @@ message SeamEvent {
   // UNSEALED like `tenant_seq` (tag 25): in no digest, checksum or signature. A relay binds to one stream
   // by `StreamEventsRequest.stream_id`, which is where a wrong-cell relay is refused.
   string stream_id = 27;
+  // Flows W1 (tag 28) — attribution: the flow this event's session (or namespace) belongs to. UNSEALED like
+  // tags 25/27: in no digest, checksum or signature; `rev` never enters any byte. NO WRITER YET: no producer
+  // sets it in W1, so it is absent on every emitted event; readers decode it. Absent = unattributed.
+  FlowRef flow_ref = 28;
+  // Flows W1 (tag 29) — the chain this CHAINED event belongs to (`chain_bundle` v2). UNSEALED, but bound
+  // transitively through the chain genesis. NO WRITER YET (the `tenant` chain scheme never emits it); absent
+  // on advisory kinds. If an event carries both 28 and a flow-kind 29, their `flow_id` and `env` must agree,
+  // and on `sandbox` their `version` too.
+  ChainRef chain = 29;
+  // Flows train 1 (tag 30, `chain_bundle` v2) — the CHAIN_MANIFEST payload: the signed, tenant-chained list
+  // of every flow chain this cell holds for the tenant (completeness evidence). NO WRITER YET (the attest
+  // worker, W4). Signed and chained.
+  ChainManifest chain_manifest = 30;
+}
+
+// Flows W1 — the flow attribution on `SeamEvent.flow_ref` (tag 28). UNSEALED. Mirrors `FlowRefPb`.
+message FlowRef {
+  string flow_id = 1;  // the flow's stable id (immutable per namespace)
+  uint64 rev = 2;      // the published flow revision; attribution only, never in any byte
+  string env = 3;      // "sandbox" | "live"
+  uint32 version = 4;  // the CP flow version the session ran on: >= 1 exactly when env = "sandbox"; on live 0 (before Promote) or >= 1; attribution only, never in any byte
+}
+
+// Flows W1 — the chain key position on `SeamEvent.chain` (tag 29). UNSEALED; the presence of the message
+// is the signal (kind 0 = cell is the proto3 default, so a cell `ChainRef` may carry no field bytes).
+// Mirrors `ChainRefPb`.
+message ChainRef {
+  string flow_id = 1;  // empty unless kind = 2 (flow)
+  string env = 2;      // empty unless kind = 2 (flow): "sandbox" | "live"
+  uint64 seq = 3;      // the 0-based position in its chain (convenience; verifiers recompute it)
+  uint32 kind = 4;     // 0 = cell, 1 = tenant, 2 = flow
+  uint32 version = 5;  // the chain key's version part: >= 1 exactly when kind = 2 and env = "sandbox", else 0
+}
+
+// Flows train 1 — the CHAIN_MANIFEST payload (`SeamEvent.chain_manifest`, tag 30; `chain_bundle` v2).
+// Appended to the TENANT chain. `signature` is Ed25519 by the issuer key over SHA-256 of the framed fields
+// 1-8 under domain "seam.audit.chain-manifest.v1" (`docs/specs/seam-event.v1.md` §CHAIN_MANIFEST).
+message ChainManifest {
+  string stream_id = 1;
+  string tenant = 2;
+  bytes governing_doc_sha256 = 3;           // the installed tenant doc this manifest was built against
+  uint64 governing_generated_at = 4;
+  uint64 manifest_at = 5;
+  repeated ChainManifestEntry chains = 6;   // strictly ascending by (flow_id, env, version)
+  string issuer_aid = 7;
+  uint32 digest_schema = 8;
+  bytes signature = 9;
+}
+
+// One flow chain in a `ChainManifest`. `(flow_id, env, version)` is the chain key's flow part.
+message ChainManifestEntry {
+  string flow_id = 1;
+  string env = 2;      // "sandbox" | "live"
+  uint64 len = 3;      // 0 for a declared-but-empty chain
+  bytes head = 4;      // genesis(K) when len = 0
+  uint32 state = 5;    // 1 active, 2 retired, 3 moved_out, 4 destroyed
+  uint32 version = 6;  // the chain key's version part: >= 1 on sandbox, 0 on live
+}
+
+// Flows train 1 — one chain's head in an erasure certificate v2: the checksum that chain's own append
+// returned. `flow_id`/`env` empty and `version` 0 name the tenant chain.
+message ChainHead {
+  string flow_id = 1;
+  string env = 2;
+  uint32 version = 3;
+  uint64 len = 4;      // the chain length after that append (= the head's 1-based position)
+  bytes head = 5;
+}
+
+// Flows train 1 — one decision an erasure certificate v2 names, with the flow chain its seal entry is in.
+message ErasureItem {
+  string decision_id = 1;
+  string flow_id = 2;
+  string env = 3;
+  uint32 version = 4;
 }
 
 // EVENT_REDRIVEN payload (advisory, UNCHAINED, tag 26; #1176) — DLQ retry option C. An operator named an
@@ -386,6 +485,12 @@ message ErasureCertificate {
   bytes chain_head = 5;
   string issuer_aid = 6;
   bytes signature = 7;
+  // Flows train 1 — v2 (domain "seam.erasure-certificate.v2"). A v2 certificate carries 8-11 and leaves
+  // 2, 3 and 5 empty; 2, 3 and 5 are v1-only and become `reserved` with the wire deletions (train 2).
+  string stream_id = 8;
+  repeated ChainHead heads = 9;
+  repeated ErasureItem erased_items = 10;
+  repeated ErasureItem held_items = 11;
 }
 
 // A counterparty's signed chain-head attestation (A14 network mode). Mirrors
@@ -400,4 +505,10 @@ message ChainHeadAttestation {
   uint32 digest_schema = 5;
   bytes signature = 6;
   string tenant = 7;
+  // Flows train 1 — v3 (domain "seam.audit.chain-head-attestation.v3"): the attested chain's full key.
+  string stream_id = 8;
+  string flow_id = 9;
+  string env = 10;
+  uint32 chain_kind = 11;  // 0 = cell, 1 = tenant, 2 = flow
+  uint32 version = 12;     // the chain key's version part (>= 1 on a sandbox flow chain, else 0)
 }
