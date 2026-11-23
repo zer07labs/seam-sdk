@@ -22,6 +22,8 @@ from pathlib import Path
 import pytest
 
 from seam_sdk import (
+    gate_digest,
+    served_commitment_trailers,
     CommitmentRefused,
     commitment_digest_v6,
     decode_commitment_trailers,
@@ -336,25 +338,93 @@ def test_signed_case_verifies(case):
     assert verify_tct(SIGNED["issuer_aid"], case["signed_artifact"], c, now_s=0)
 
 
+def _served_projection(trailers_hex: str) -> dict:
+    """What a served ``seam.api.v1.Commitment`` carries instead of raw trailers (#420): ``gate = 13``
+    (the exact ``0x05`` body), ``governing_doc_sha256 = 11`` and ``env = 14``."""
+    raw = bytes.fromhex(trailers_hex)
+    gate_body = None
+    if raw[:1] == b"\x05":
+        n = int.from_bytes(raw[1:5], "little")
+        gate_body = raw[5 : 5 + n]
+    t = decode_commitment_trailers(raw, "v6")
+    return {
+        "gate_body": gate_body,
+        "governing_doc_sha256": t.governing_doc_sha256,
+        "env": t.env,
+    }
+
+
 @pytest.mark.parametrize("case", SIGNED["cases"], ids=lambda c: c["name"])
-def test_signed_case_needs_its_trailers(case):
-    """VG1, the same rule in every port: under v6 fields 10-12 come from the trailers only. Absent
-    trailers read as a record with neither trailer, so a governed case without them fails (its doc digest
-    beside them is refused, never framed), an ungoverned one still verifies, and a different trailer run
-    is a different digest."""
+def test_served_projection_rebuilds_the_trailers_exactly(case):
+    """The served projection is lossless under v6: it rebuilds the sealed trailer run byte for byte."""
+    p = _served_projection(case["trailers"])
+    got = served_commitment_trailers(
+        p["gate_body"], p["governing_doc_sha256"], p["env"]
+    )
+    assert got.hex() == case["trailers"]
+
+
+@pytest.mark.parametrize("case", SIGNED["cases"], ids=lambda c: c["name"])
+def test_a_served_commitment_verifies(case):
+    """#420: a commitment as ``GetCommitmentProof`` serves it (no raw trailers, the projection beside)
+    verifies. Before the fix absent trailers read as ``b""`` and every governed record failed."""
+    c = {
+        **_signed_commitment(case),
+        "trailers": None,
+        **_served_projection(case["trailers"]),
+    }
+    assert verify_tct(SIGNED["issuer_aid"], case["signed_artifact"], c, now_s=0)
+
+
+@pytest.mark.parametrize("case", SIGNED["cases"], ids=lambda c: c["name"])
+def test_a_wrong_served_projection_fails(case):
+    """Nothing served is trusted: each projected value is hashed into the digest the TCT signs."""
+    c = {
+        **_signed_commitment(case),
+        "trailers": None,
+        **_served_projection(case["trailers"]),
+    }
+    aid, jws = SIGNED["issuer_aid"], case["signed_artifact"]
+    if c["governing_doc_sha256"] is None:
+        assert not verify_tct(
+            aid, jws, {**c, "governing_doc_sha256": "11" * 32}, now_s=0
+        )
+        return
+    assert not verify_tct(aid, jws, {**c, "governing_doc_sha256": "11" * 32}, now_s=0)
+    assert not verify_tct(
+        aid,
+        jws,
+        {**c, "governing_doc_sha256": None, "env": None, "gate_body": None},
+        now_s=0,
+    )
+    flipped = {"live": "sandbox", "sandbox": "live", None: "live"}[c["env"]]
+    assert not verify_tct(aid, jws, {**c, "env": flipped}, now_s=0)
+    if c["gate_body"] is not None:
+        # A Gate digest is never taken from beside: without the body, a stated digest refuses.
+        assert not verify_tct(
+            aid,
+            jws,
+            {**c, "gate_body": None, "gate_digest": gate_digest(c["gate_body"])},
+            now_s=0,
+        )
+        assert not verify_tct(aid, jws, {**c, "gate_body": None}, now_s=0)
+
+
+@pytest.mark.parametrize("case", SIGNED["cases"], ids=lambda c: c["name"])
+def test_signed_case_trailers_rule(case):
+    """VG1, the same rule in every port: with raw trailers, fields 10-12 come from them only, so a
+    different trailer run is a different digest and a value beside must agree; with neither trailers nor
+    a projection, the record reads as having neither trailer."""
     c = _signed_commitment(case)
     assert verify_tct(SIGNED["issuer_aid"], case["signed_artifact"], c, now_s=0)
-    c["trailers"] = None
-    absent_ok = verify_tct(SIGNED["issuer_aid"], case["signed_artifact"], c, now_s=0)
-    assert absent_ok is (case["trailers"] == "")
+    bare = {**c, "trailers": None, "governing_doc_sha256": None, "env": None}
+    assert verify_tct(SIGNED["issuer_aid"], case["signed_artifact"], bare, now_s=0) is (
+        case["trailers"] == ""
+    )
     assert not verify_tct(
         SIGNED["issuer_aid"],
         case["signed_artifact"],
-        {
-            **c,
-            "governing_doc_sha256": case["commitment"]["governing_doc_sha256"]
-            or "11" * 32,
-        },
+        {**c, "governing_doc_sha256": "11" * 32},
         now_s=0,
     )
     other = "" if case["trailers"] else "0622000000" + "02" + bytes(32).hex() + "00"
@@ -364,6 +434,45 @@ def test_signed_case_needs_its_trailers(case):
         {**c, "trailers": other, "governing_doc_sha256": None},
         now_s=0,
     )
+
+
+@pytest.mark.parametrize(
+    "args,rule",
+    [
+        ((None, None, "live"), "env_without_governing_doc"),
+        ((None, b"\x01" * 31, None), "slot_length_not_32"),
+        ((None, b"\x01" * 32, ""), "env_not_sandbox_or_live"),
+        ((None, b"\x01" * 32, "Live"), "env_not_sandbox_or_live"),
+    ],
+)
+def test_served_commitment_trailers_refusals(args, rule):
+    with pytest.raises(CommitmentRefused) as e:
+        served_commitment_trailers(*args)
+    assert e.value.rule == rule
+
+
+def test_a_served_gate_body_on_a_v5_statement_refuses():
+    c = dict(V5_SIGNED["cases"][0]["commitment"])
+    with pytest.raises(CommitmentRefused):
+        _tct_commitment_digest("v5", {**c, "gate_body": b"\x01"})
+    with pytest.raises(CommitmentRefused):
+        _tct_commitment_digest("v5", {**c, "env": "live"})
+
+
+@pytest.mark.parametrize("over", ["gate_body", "env"])
+def test_a_served_projection_beside_raw_trailers_refuses(over):
+    """The raw trailers are the only source: a projection beside them refuses under the same rule
+    name as Go, Java and Kotlin, even when it agrees."""
+    case = next(
+        c
+        for c in SIGNED["cases"]
+        if c["trailers"].startswith("05") and "06" in c["trailers"]
+    )
+    raw = _signed_commitment(case)
+    value = b"\x00" if over == "gate_body" else "live"
+    with pytest.raises(CommitmentRefused) as e:
+        _tct_commitment_digest("v6", {**raw, over: value})
+    assert e.value.rule == "served_projection_beside_trailers"
 
 
 @pytest.mark.parametrize("row", SIGNED["negatives"], ids=lambda r: r["name"])
@@ -392,3 +501,41 @@ def test_signed_negatives_fail_where_the_spec_says():
         )
     ungoverned = _signed_commitment(SIGNED_CASES["v6_ungoverned"])
     assert _tct_commitment_digest("v5", ungoverned) != commitment_digest_v6(ungoverned)
+
+
+@pytest.mark.parametrize("case", SIGNED["cases"], ids=lambda c: c["name"])
+def test_commitment_view_of_a_served_proto_verifies(case):
+    """#420 end to end: the ``pb.Commitment`` ``GetCommitmentProof`` serves, read by ``commitment_view``."""
+    from seam_sdk._gen.seam.api.v1 import seam_pb2 as pb
+    from seam_sdk.client import commitment_view
+
+    cm = case["commitment"]
+    p = _served_projection(case["trailers"])
+    msg = pb.Commitment(
+        id=cm["id"],
+        action=cm["action"],
+        authority=cm["authority"],
+        auth_method=cm["auth_method"],
+        trust_basis=cm["trust_basis"],
+        committer=cm.get("committer") or "",
+        explanation_digest=bytes(cm["explanation_digest"]),
+    )
+    if cm.get("supersedes") is not None:
+        msg.supersedes = cm["supersedes"]
+    if p["governing_doc_sha256"] is not None:
+        msg.governing_doc_sha256 = p["governing_doc_sha256"]
+    if p["env"] is not None:
+        msg.env = p["env"]
+    if p["gate_body"] is not None:
+        msg.gate.body = p["gate_body"]
+    view = {**commitment_view(msg), "explanation": None}
+    if case.get("selection_digest"):
+        view["selection_digest"] = case["selection_digest"]
+    assert verify_tct(SIGNED["issuer_aid"], case["signed_artifact"], view, now_s=0)
+    msg.ClearField("env") if msg.HasField("env") else setattr(msg, "env", "live")
+    assert not verify_tct(
+        SIGNED["issuer_aid"],
+        case["signed_artifact"],
+        {**commitment_view(msg), "explanation": None},
+        now_s=0,
+    )

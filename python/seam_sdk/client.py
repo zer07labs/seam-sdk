@@ -1589,7 +1589,9 @@ def commitment_view(c: "pb.Commitment") -> dict:
     Explicit presence is preserved: an absent ``confidence`` / ``rationale_ref`` stays ``None``, and
     so does an absent ``governing_doc_sha256`` (an ungoverned decision, v5 field 11 = ``0x00``). A
     present one is passed through as served, so a wrong length fails the digest closed rather than
-    reading as ungoverned."""
+    reading as ungoverned. Flows (#420): ``gate_body`` (the served ``gate.body``, the exact ``0x05``
+    body) and ``env`` keep explicit presence too; under v6 the verifier rebuilds the raw trailers from
+    them and ``governing_doc_sha256`` (:func:`~seam_sdk.crypto.served_commitment_trailers`)."""
     return {
         "id": c.id,
         "action": c.action,
@@ -1610,6 +1612,11 @@ def commitment_view(c: "pb.Commitment") -> dict:
         "selection": selection_block_of(c.selection)
         if c.HasField("selection")
         else None,
+        # Flows (#420): the Gate block's exact `0x05` body and the governed env, both explicit presence.
+        # Under v6 the verifier rebuilds the raw trailers from these and `governing_doc_sha256`
+        # (crypto.served_commitment_trailers); v5 refuses either.
+        "gate_body": bytes(c.gate.body) if c.HasField("gate") else None,
+        "env": c.env if c.HasField("env") else None,
         # proto3 bytes cannot say "absent": empty means not published, and the entries decide.
         "explanation_digest": bytes(c.explanation_digest) or None,
         "explanation": [

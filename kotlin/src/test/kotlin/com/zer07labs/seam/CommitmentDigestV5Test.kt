@@ -231,6 +231,9 @@ class CommitmentDigestV5Test {
         val jws = signedArtifact(case("populated_signed"))
         assertTrue(SeamCrypto.verifyTct(issuer, jws, governed, 1_700_000_001L))
         assertFalse(SeamCrypto.verifyTct(issuer, jws, governed.copy(governingDocSha256 = null), 1_700_000_001L))
+        // #420: a served Gate block or env has no v5 meaning, so the same valid v5 TCT refuses.
+        assertFalse(SeamCrypto.verifyTct(issuer, jws, governed.copy(gateBody = byteArrayOf(1)), 1_700_000_001L))
+        assertFalse(SeamCrypto.verifyTct(issuer, jws, governed.copy(env = "live"), 1_700_000_001L))
     }
 
     /** A voter record with an unknown method, or a content digest that is not 32 bytes, is refused. */

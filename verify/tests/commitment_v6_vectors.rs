@@ -14,8 +14,8 @@
 
 use seam_verify::commitment::{
     commitment_digest_under, decode_commitment_trailers, encode_slot, explanation_digest,
-    select_commitment_version, select_commitment_version_in_ext, verify_commitment_tct, Commitment,
-    CommitmentDigestVersion as V, ExplanationEntry,
+    select_commitment_version, select_commitment_version_in_ext, served_commitment_trailers,
+    verify_commitment_tct, Commitment, CommitmentDigestVersion as V, ExplanationEntry,
 };
 use seam_verify::gate::{decode_gate_body, gate_digest, GateResult};
 use serde_json::Value;
@@ -529,4 +529,61 @@ fn the_writer_side_sections_are_present_and_not_ported() {
     let v = load("gate_block_vector.json");
     assert!(!rows(&v, "outage_classification").is_empty());
     assert!(!rows(&v, "writer_refusals").is_empty());
+}
+
+/// seam-sdk#420: a served `Commitment` carries no raw trailers, only the projection (`gate.body`,
+/// `governing_doc_sha256`, `env`). It is lossless under v6: it rebuilds each signed case's trailer run byte
+/// for byte, so a served record verifies; a wrong projected value fails the TCT.
+#[test]
+fn a_served_projection_rebuilds_the_trailers_and_verifies() {
+    let v = load("commitment_digest_v6_signed_vector.json");
+    let issuer = v["issuer_aid"].as_str().unwrap();
+    for row in rows(&v, "cases") {
+        let name = row["name"].as_str().unwrap();
+        let mut c = commitment(&row["commitment"]);
+        c.signed_artifact = row["signed_artifact"].as_str().unwrap().into();
+        let raw = unhex(row["trailers"].as_str().unwrap());
+        let gate = (raw.first() == Some(&0x05)).then(|| {
+            let n = u32::from_le_bytes(raw[1..5].try_into().unwrap()) as usize;
+            raw[5..5 + n].to_vec()
+        });
+        let t = decode_commitment_trailers(&raw, Some(V::V6)).unwrap();
+        let doc = t.governing_doc_sha256().copied();
+        let env = t.env().map(str::to_owned);
+        let rebuilt =
+            served_commitment_trailers(gate.as_deref(), doc.as_ref(), env.as_deref()).unwrap();
+        assert_eq!(hex(&rebuilt), hex(&raw), "{name}: rebuild");
+        assert_eq!(
+            verify_commitment_tct(issuer, &c, &rebuilt, NOW),
+            Ok(V::V6),
+            "{name}"
+        );
+        if let Some(d) = doc {
+            let flipped = if env.as_deref() == Some("live") {
+                "sandbox"
+            } else {
+                "live"
+            };
+            let wrong = served_commitment_trailers(gate.as_deref(), Some(&d), Some(flipped));
+            if let Ok(w) = wrong {
+                assert!(
+                    verify_commitment_tct(issuer, &c, &w, NOW).is_err(),
+                    "{name}: flipped env"
+                );
+            }
+        }
+    }
+    for (gate, doc, env, rule) in [
+        (None, None, Some("live"), "env_without_governing_doc"),
+        (None, Some([1u8; 32]), Some(""), "env_not_sandbox_or_live"),
+        (
+            None,
+            Some([1u8; 32]),
+            Some("Live"),
+            "env_not_sandbox_or_live",
+        ),
+    ] {
+        let r = served_commitment_trailers(gate, doc.as_ref(), env).unwrap_err();
+        assert_eq!(r.rule, rule);
+    }
 }

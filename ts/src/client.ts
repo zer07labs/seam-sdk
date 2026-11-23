@@ -2276,8 +2276,9 @@ const EXPLANATION_KIND_WORDS: Partial<Record<ExplanationKind, string>> = {
  * from the served `selection` (runtime 0.90.0, option selection) with explicit presence: absent is "not a
  * selection decision" (`0x00`), and a present block is projected field for field and re-encoded, so a
  * block the runtime could not have sealed fails verification closed; `verifyTct` then recomputes the
- * winner from the sealed entries (`verifySelection`) and refuses a tampered selection. Field 10 (Gate certificate) is
- * not on the served `Commitment` and is absent. Field 11, `governingDocSha256` (#1711, `optional bytes`), keeps its explicit
+ * winner from the sealed entries (`verifySelection`) and refuses a tampered selection. Field 10 comes from the served
+ * Gate block (`gate.body`, the exact `0x05` body) and field 12 from `env`; under v6 `verifyTct` rebuilds the
+ * raw trailers from them. Field 11, `governingDocSha256` (#1711, `optional bytes`), keeps its explicit
  * presence: `undefined` (ungoverned) stays absent, and a present value — even an empty one — is passed
  * through as served, so a wrong length fails closed rather than reading as ungoverned.
  */
@@ -2294,6 +2295,10 @@ export function commitmentView(c: Commitment): CommitmentView {
     supersedes: c.supersedes,
     committer: c.committer,
     governing_doc_sha256: c.governingDocSha256 ?? null,
+    // Flows (#420): the Gate block's exact `0x05` body and the governed env, explicit presence. Under v6
+    // verifyTct rebuilds the raw trailers from these and field 11 (servedCommitmentTrailers); v5 refuses either.
+    gate_body: c.gate === undefined ? null : c.gate.body,
+    env: c.env ?? null,
     selection:
       c.selection === undefined
         ? null

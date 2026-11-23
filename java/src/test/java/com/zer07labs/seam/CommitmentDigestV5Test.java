@@ -229,6 +229,20 @@ class CommitmentDigestV5Test {
             signedArtifact(caseNamed("populated_signed")),
             stripped,
             NOW_S));
+    // #420: a served Gate block or env has no v5 meaning, so the same valid v5 TCT refuses.
+    String iss = (String) vector().get("issuer_aid");
+    String jws = signedArtifact(caseNamed("populated_signed"));
+    for (SeamCrypto.Commitment bad :
+        List.of(withServed(governed, new byte[] {1}, null), withServed(governed, null, "live"))) {
+      assertFalse(SeamCrypto.verifyTct(iss, jws, bad, NOW_S));
+    }
+  }
+
+  private static SeamCrypto.Commitment withServed(SeamCrypto.Commitment b, byte[] gateBody, String env) {
+    return new SeamCrypto.Commitment(
+        b.id(), b.action(), b.authority(), b.supersedes(), b.authMethod(), b.trustBasis(),
+        b.committer(), b.explanationDigest(), b.explanation(), b.selectionDigest(),
+        b.certificateDigest(), b.governingDocSha256(), b.trailers(), gateBody, env);
   }
 
   /** A voter record with an unknown method, or a content digest that is not 32 bytes, is refused. */

@@ -16,6 +16,33 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Fixed — a governed v6 record served by `GetCommitmentProof` now verifies (#420, all six ports)
+
+- `verify_decision` / `verifyTct` returned `False` for every governed v6 commitment fetched from the
+  runtime (found in CK1 on partner, runtime 0.115.0). `seam.api.v1.Commitment` carries no raw trailers.
+  It carries `gate = 13` (the exact `0x05` body), `governing_doc_sha256 = 11` and `env = 14`, and the
+  verifier read the missing trailers as `""`, so the served doc then disagreed with them.
+- The served projection is lossless under v6 (the `0x06` body v2 is exactly `0x02 ‖ doc ‖ env slot`). So
+  with no raw trailers, the verifier now rebuilds the trailer run from it and decodes that run under every
+  v6 rule. Field 10 is still the verifier's own Gate digest over the body, a bare `gate_digest` beside it
+  is never a source, and a served value that disagrees fails the TCT.
+- New: Python `served_commitment_trailers`, TS `servedCommitmentTrailers`, Go `ServedCommitmentTrailers`,
+  Java/Kotlin `SeamCrypto.servedCommitmentTrailers`, Rust `commitment::served_commitment_trailers`.
+  `commitment_view` / `commitmentView` now carry `gate_body` and `env`. The Go/Java/Kotlin `Commitment`
+  gains `GateBody`/`gateBody` and `Env`/`env`. The Java record keeps its 13-argument constructor as an
+  overload, and Kotlin's new parameters default to `null`.
+- v5 is unchanged, and refuses a served Gate block or env.
+
+### Added — `seam-verify` 0.6.0: chain_bundle v2 released, and one chain alone (#421, Flows W5)
+
+- 0.6.0 is the first published build that reads chain_bundle v2 (chain-key version, genesis v2). 0.5.0
+  refuses a flow-env stream at seq 0 with `NON-GENESIS FIRST LINK`.
+- `chain --chain <SELECTOR>` (`cell` | `tenant:<T>` | `flow:<T>:<FLOW>:live` |
+  `flow:<T>:<FLOW>:sandbox:<N>`) verifies one keyed chain of a stream alone. Only under `--chain`, the
+  JSON gains `selected_chain` and `skipped_other_chains`.
+- Attestation v3 is still carried, not verified, so `--issuer` still refuses a window with a keyed chain.
+- The vendored `seam-event.v1.md` is re-pinned to runtime main `ddbfa6ff`. The body is unchanged.
+
 ## 0.115.0 — 2026-11-23
 
 ## 0.114.0 — 2026-11-23

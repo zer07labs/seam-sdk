@@ -119,6 +119,13 @@ type Commitment struct {
 	// scheme the TCT statement selects (DecodeCommitmentTrailers); a GoverningDocSha256 / CertificateDigest
 	// set beside them must agree with them.
 	Trailers []byte `json:"-"`
+	// GateBody and Env are the served projection (#420): `seam.api.v1.Commitment` carries no raw trailers,
+	// only `gate = 13` (GateRecord.body, the exact `0x05` body) beside GoverningDocSha256 and `env = 14`.
+	// With nil Trailers, VerifyTCT under v6 rebuilds the trailer run from GateBody, GoverningDocSha256 and
+	// Env (ServedCommitmentTrailers) and decodes it under every v6 rule, so field 10 is still its own Gate
+	// digest over the body. v5 refuses either. nil = absent. Setting either beside Trailers is refused.
+	GateBody []byte  `json:"-"`
+	Env      *string `json:"-"`
 }
 
 // ExplanationEntry is one sealed explanation entry, in the order the runtime accepted it. Kind is the

@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1277`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1304`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -262,6 +262,15 @@ the 0.106.0 one, before writing anything (#400, #401). Runtime 0.106.0 and 0.107
 superseded (`scripts/release_pending.py`), and the catch-up shipped under the 0.107.0 dispatch. Pin `seam-sdk
 0.107.0` beside seamd 0.107.0.
 
+**SDK v0.115.1 pairs with runtime 0.115.0.** It is dispatched directly, with no runtime release, as v0.54.3
+was (D91). It ships the #420 fix: a governed v6 commitment served by `GetCommitmentProof` verifies in every
+port. Every SDK from 0.112.0 to 0.115.0 returns `False` for such a record. The fix is client-side only and
+no contract changed. Runtime checkpoint CK1 needs it on a published client. 0.115.1 is taken here, so the
+runtime's next release should be 0.115.2 or later. If the runtime still cuts 0.115.1, that dispatch's tag
+push refuses because the tag already exists, and nothing else is written. Pin `seam-sdk 0.115.1` beside
+seamd 0.115.0. `seam-verify` 0.6.0, published separately (its version is its own), is the first build
+that reads chain_bundle v2 (#421).
+
 **Option selection pairs with runtime 0.90.0 or later.** It is additive: a commitment with no `selection`
 block is "not a selection decision", field 9 stays `0x00`, and every earlier record verifies as before. An
 SDK below 0.90.1 cannot verify a selection decision's TCT, because it frames field 9 as `0x00`, and it
@@ -296,7 +305,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2293-2315`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2320-2342`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was

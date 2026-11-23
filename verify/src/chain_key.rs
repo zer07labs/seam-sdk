@@ -135,6 +135,106 @@ impl std::fmt::Display for ChainKey {
     }
 }
 
+/// One chain of a stream, named on the command line (`seam-verify chain --chain <SELECTOR>`) so a stream
+/// holding several chains can be verified one chain at a time (Flows W5, D5: a Live chain and a Sandbox
+/// version chain of the same flow each verify alone).
+///
+/// Grammar (no stream id: a stream file is one delivery stream, and a selection spanning two is refused by
+/// the caller):
+///
+/// ```text
+/// cell
+/// tenant:<tenant>
+/// flow:<tenant>:<flow_id>:live
+/// flow:<tenant>:<flow_id>:sandbox:<version>
+/// ```
+///
+/// The tenant may not contain `:`; the flow id may (env and version are read from the right). The shape is
+/// checked with the chain-key table ([`ChainKey::new`]), so a selector that names no chain (a Live version,
+/// a Sandbox without one) is refused with that table's rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainSelector {
+    pub kind: u8,
+    pub tenant: String,
+    pub flow_id: String,
+    pub env: String,
+    pub version: u32,
+}
+
+impl ChainSelector {
+    pub fn parse(s: &str) -> Result<Self, String> {
+        let bad = |why: &str| {
+            format!(
+                "--chain {s:?}: {why} (want cell | tenant:<tenant> | flow:<tenant>:<flow_id>:live | \
+                 flow:<tenant>:<flow_id>:sandbox:<version>)"
+            )
+        };
+        let (kind, tenant, flow_id, env, version) = if s == "cell" {
+            (0, "", "", "", 0)
+        } else if let Some(t) = s.strip_prefix("tenant:") {
+            if t.contains(':') {
+                return Err(bad("a tenant may not contain ':'"));
+            }
+            (1, t, "", "", 0)
+        } else if let Some(rest) = s.strip_prefix("flow:") {
+            let (tenant, rest) = rest.split_once(':').ok_or_else(|| bad("no flow id"))?;
+            let (flow_id, env, version) = if let Some(f) = rest.strip_suffix(":live") {
+                (f, "live", 0)
+            } else {
+                let (head, ver) = rest.rsplit_once(':').ok_or_else(|| bad("no env"))?;
+                let f = head
+                    .strip_suffix(":sandbox")
+                    .ok_or_else(|| bad("env must be live, or sandbox:<version>"))?;
+                let v: u32 = ver
+                    .parse()
+                    .ok()
+                    .filter(|_| {
+                        ver.bytes().all(|b| b.is_ascii_digit())
+                            && !(ver.len() > 1 && ver.starts_with('0'))
+                    })
+                    .ok_or_else(|| bad("a sandbox version is a decimal u32"))?;
+                (f, "sandbox", v)
+            };
+            (2, tenant, flow_id, env, version)
+        } else {
+            return Err(bad("unknown chain kind"));
+        };
+        // The stream id is not part of a selector; any valid one checks the rest of the key's shape.
+        ChainKey::new(kind, "x", tenant, flow_id, env, version).map_err(bad)?;
+        Ok(Self {
+            kind: kind as u8,
+            tenant: tenant.into(),
+            flow_id: flow_id.into(),
+            env: env.into(),
+            version,
+        })
+    }
+
+    /// Whether `key` is this selector's chain, in any stream.
+    pub fn matches(&self, key: &ChainKey) -> bool {
+        key.kind == self.kind
+            && key.tenant == self.tenant
+            && key.flow_id == self.flow_id
+            && key.env == self.env
+            && key.version == self.version
+    }
+}
+
+impl std::fmt::Display for ChainSelector {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match (self.kind, self.env.as_str()) {
+            (0, _) => write!(f, "cell"),
+            (1, _) => write!(f, "tenant:{}", self.tenant),
+            (_, "live") => write!(f, "flow:{}:{}:live", self.tenant, self.flow_id),
+            _ => write!(
+                f,
+                "flow:{}:{}:sandbox:{}",
+                self.tenant, self.flow_id, self.version
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,5 +289,40 @@ mod tests {
         );
         assert!(k(2, "a", "t", "f", "live", 0).is_ok());
         assert!(k(2, "a", "t", "f", "sandbox", 7).is_ok());
+    }
+
+    #[test]
+    fn a_selector_parses_names_one_chain_and_refuses_what_names_none() {
+        let live = ChainSelector::parse("flow:acme:flow-fraud:live").unwrap();
+        let sb1 = ChainSelector::parse("flow:acme:flow-fraud:sandbox:1").unwrap();
+        let k_live = ChainKey::new(2, "cell-a", "acme", "flow-fraud", "live", 0).unwrap();
+        let k_sb1 = ChainKey::new(2, "cell-a", "acme", "flow-fraud", "sandbox", 1).unwrap();
+        let k_sb2 = ChainKey::new(2, "cell-a", "acme", "flow-fraud", "sandbox", 2).unwrap();
+        assert!(live.matches(&k_live) && !live.matches(&k_sb1));
+        assert!(sb1.matches(&k_sb1) && !sb1.matches(&k_sb2) && !sb1.matches(&k_live));
+        assert_eq!(live.to_string(), "flow:acme:flow-fraud:live");
+        assert_eq!(sb1.to_string(), "flow:acme:flow-fraud:sandbox:1");
+        let colon = ChainSelector::parse("flow:acme:a:b:sandbox:7").unwrap();
+        assert_eq!((colon.flow_id.as_str(), colon.version), ("a:b", 7));
+        assert_eq!(ChainSelector::parse("cell").unwrap().kind, 0);
+        let t = ChainSelector::parse("tenant:acme").unwrap();
+        assert!(t.matches(&ChainKey::new(1, "s", "acme", "", "", 0).unwrap()));
+        for (bad, why) in [
+            ("flow:acme:f:live:3", "env must be"),
+            ("flow:acme:f:sandbox:0", "sandbox_version_missing"),
+            ("flow:acme:f:sandbox:x", "decimal"),
+            ("flow:acme:f:sandbox:+1", "decimal"),
+            ("flow:acme:f:sandbox:007", "decimal"),
+            ("flow:acme:f:staging", "env must be"),
+            ("flow:acme:f", "no env"),
+            ("flow::f:live", "tenant_empty"),
+            ("flow:acme::live", "flow_id_empty"),
+            ("tenant:", "tenant_empty"),
+            ("tenant:a:b", "may not contain"),
+            ("system", "unknown chain kind"),
+        ] {
+            let e = ChainSelector::parse(bad).unwrap_err();
+            assert!(e.contains(why), "{bad}: {e}");
+        }
     }
 }

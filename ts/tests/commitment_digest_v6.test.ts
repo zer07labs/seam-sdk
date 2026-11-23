@@ -22,7 +22,12 @@ import {
   selectCommitmentVersion,
   selectCommitmentVersionFromStatement,
   verifyTct,
+  servedCommitmentTrailers,
+  commitmentView,
+  pb,
 } from "../src/index.js";
+import { create } from "@bufbuild/protobuf";
+const { CommitmentSchema, GateRecordSchema } = pb;
 
 const conf = (name: string) => JSON.parse(readFileSync(new URL(`../../conformance/${name}`, import.meta.url), "utf8"));
 const V = conf("commitment_digest_v6_vector.json");
@@ -251,11 +256,78 @@ test("v6 signed: every case verifies, selected v6 from its raw ext and recompute
     const flip = (h: string) => h.slice(0, -2) + (parseInt(h.slice(-2), 16) ^ 0x01).toString(16).padStart(2, "0");
     const bad = { ...cm, trailers: c.trailers === "" ? "00" : flip(c.trailers) };
     assert.equal(verifyTct(S.issuer_aid, c.signed_artifact, bad, NOW_S), false, `${c.name}: tampered`);
-    // The cross-port rule: under v6 absent trailers are a record with neither trailer, so the record's doc
-    // beside them is refused, never framed; an ungoverned case still verifies.
-    const absent = { ...cm, trailers: undefined };
+    // The cross-port rule: with neither raw trailers nor a served projection the record reads as having
+    // neither trailer, so only the ungoverned case verifies.
+    const absent = { ...cm, trailers: undefined, governing_doc_sha256: null };
     assert.equal(verifyTct(S.issuer_aid, c.signed_artifact, absent, NOW_S), c.trailers === "", `${c.name}: absent`);
   }
+});
+
+/** What a served `seam.api.v1.Commitment` carries instead of raw trailers (#420). */
+function servedProjection(trailersHex: string): { gate_body: Uint8Array | null; governing_doc_sha256: Uint8Array | null; env: string | null } {
+  const raw = Buffer.from(trailersHex, "hex");
+  const gate_body = raw.length > 0 && raw[0] === 0x05 ? new Uint8Array(raw.subarray(5, 5 + raw.readUInt32LE(1))) : null;
+  const t = decodeCommitmentTrailers(trailersHex, "v6");
+  return { gate_body, governing_doc_sha256: t.governing_doc_sha256, env: t.env };
+}
+
+test("#420: a served commitment (no raw trailers, the projection beside) verifies, and the projection is lossless", () => {
+  for (const c of S.cases as Row[]) {
+    const p = servedProjection(c.trailers);
+    assert.equal(hex(servedCommitmentTrailers(p.gate_body, p.governing_doc_sha256, p.env)), c.trailers, `${c.name}: rebuild`);
+    const served: Commitment = { ...signedCommitment(c), trailers: undefined, ...p };
+    assert.equal(verifyTct(S.issuer_aid, c.signed_artifact, served, NOW_S), true, `${c.name}: served`);
+    const ok = (over: Partial<Commitment>) => verifyTct(S.issuer_aid, c.signed_artifact, { ...served, ...over }, NOW_S);
+    assert.equal(ok({ governing_doc_sha256: "11".repeat(32) }), false, `${c.name}: wrong doc`);
+    if (p.governing_doc_sha256 === null) continue;
+    assert.equal(ok({ governing_doc_sha256: null, env: null, gate_body: null }), false, `${c.name}: no projection`);
+    assert.equal(ok({ env: p.env === "live" ? "sandbox" : "live" }), false, `${c.name}: flipped env`);
+    if (p.gate_body !== null) assert.equal(ok({ gate_body: null }), false, `${c.name}: gate dropped`);
+    // A projection beside raw trailers is refused (served_projection_beside_trailers), even when it agrees.
+    const raw = signedCommitment(c);
+    assert.equal(verifyTct(S.issuer_aid, c.signed_artifact, raw, NOW_S), true, `${c.name}: raw`);
+    assert.equal(verifyTct(S.issuer_aid, c.signed_artifact, { ...raw, env: p.env }, NOW_S), p.env === null, `${c.name}: env beside`);
+    if (p.gate_body !== null)
+      assert.equal(verifyTct(S.issuer_aid, c.signed_artifact, { ...raw, gate_body: p.gate_body }, NOW_S), false, `${c.name}: gate beside`);
+  }
+});
+
+test("#420: commitmentView of a served proto verifies", () => {
+  for (const c of S.cases as Row[]) {
+    const p = servedProjection(c.trailers);
+    const cm = c.commitment;
+    const msg = create(CommitmentSchema, {
+      id: cm.id,
+      action: cm.action,
+      authority: cm.authority,
+      authMethod: cm.auth_method,
+      trustBasis: cm.trust_basis,
+      committer: cm.committer ?? "",
+      supersedes: cm.supersedes ?? undefined,
+      explanationDigest: Uint8Array.from(cm.explanation_digest),
+      governingDocSha256: p.governing_doc_sha256 ?? undefined,
+      env: p.env ?? undefined,
+      gate: p.gate_body === null ? undefined : create(GateRecordSchema, { body: p.gate_body }),
+    });
+    const view = { ...commitmentView(msg), explanation: undefined };
+    assert.equal(verifyTct(S.issuer_aid, c.signed_artifact, view, NOW_S), true, `${c.name}: view`);
+  }
+});
+
+test("#420: servedCommitmentTrailers refusals, and v5 refuses a served Gate block or env", () => {
+  const rule = (f: () => unknown) => {
+    try {
+      f();
+    } catch (e) {
+      assert.ok(e instanceof CommitmentRefusedError);
+      return e.rule;
+    }
+    return "none";
+  };
+  assert.equal(rule(() => servedCommitmentTrailers(null, null, "live")), "env_without_governing_doc");
+  assert.equal(rule(() => servedCommitmentTrailers(null, new Uint8Array(31), null)), "slot_length_not_32");
+  assert.equal(rule(() => servedCommitmentTrailers(null, new Uint8Array(32), "")), "env_not_sandbox_or_live");
+  assert.equal(rule(() => servedCommitmentTrailers(null, new Uint8Array(32), "Live")), "env_not_sandbox_or_live");
 });
 
 test("v6 signed negatives: every row is refused by verifyTct; selection refuses where the rule is a statement rule", () => {
@@ -300,6 +372,9 @@ test("v6 verifyTct: a v5 statement over a commitment without trailers still veri
     };
     const jws = Buffer.from(r.signed_artifact).toString("utf8");
     assert.equal(verifyTct(v5.issuer_aid, jws, cm, NOW_S), true, c.name);
+    // #420: a served Gate block or env has no v5 meaning — refused on an otherwise valid v5 TCT.
+    assert.equal(verifyTct(v5.issuer_aid, jws, { ...cm, gate_body: new Uint8Array([1]) }, NOW_S), false, `${c.name}: v5 gate`);
+    assert.equal(verifyTct(v5.issuer_aid, jws, { ...cm, env: "live" }, NOW_S), false, `${c.name}: v5 env`);
     // A v5 trailer run (0x06 body v1) carrying the same doc verifies too; a body v2 refuses under v5.
     if (r.governing_doc_sha256 !== null) {
       const doc = Buffer.from(r.governing_doc_sha256).toString("hex");

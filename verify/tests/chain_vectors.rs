@@ -308,3 +308,180 @@ fn issuer_over_a_chain_keyed_window_fails_closed() {
     assert_ne!(code, 0, "{v}");
     assert_eq!(v["verified"], false);
 }
+
+fn case_lines(name: &str) -> Vec<Value> {
+    let v = load("chain_link_vectors.json");
+    let row = v["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == name)
+        .unwrap_or_else(|| panic!("no case {name}"))
+        .clone();
+    row["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| serde_json::from_str(e["json"].as_str().unwrap()).unwrap())
+        .collect()
+}
+
+fn run_cli(lines: &[Value], tag: &str, extra: &[&str]) -> (i32, Value) {
+    let path = std::env::temp_dir().join(format!("multi-{tag}-{}.jsonl", std::process::id()));
+    let body: Vec<String> = lines.iter().map(Value::to_string).collect();
+    std::fs::write(&path, body.join("\n") + "\n").unwrap();
+    let mut a = vec!["chain", path.to_str().unwrap(), "--json"];
+    a.extend_from_slice(extra);
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_seam-verify"))
+        .args(&a)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&path);
+    let v = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+    (out.status.code().unwrap(), v)
+}
+
+/// Flows W5 (D5, replan §9.7 CK3): one stream holding a flow's Live chain and its Sandbox version chains
+/// (plus the tenant and cell chains, interleaved by seq) verifies every chain from its own genesis, and
+/// `--chain` verifies the Live chain and a Sandbox version chain each ALONE. A tamper on one chain fails
+/// that chain only: the other still verifies alone.
+#[test]
+fn a_live_and_a_sandbox_version_chain_of_one_flow_each_verify_alone() {
+    let mut all: Vec<Value> = [
+        "cell",
+        "tenant",
+        "flow_sandbox_v1",
+        "flow_sandbox_v2",
+        "flow_live",
+    ]
+    .iter()
+    .flat_map(|n| case_lines(n))
+    .collect();
+    all.reverse(); // delivery is unordered; the verifier sorts
+    let (code, v) = run_cli(&all, "all", &[]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["chains"].as_array().unwrap().len(), 5, "{v}");
+    assert!(v.get("selected_chain").is_none());
+
+    let live = case_lines("flow_live");
+    let sb1 = case_lines("flow_sandbox_v1");
+    for (sel, want, env, version) in [
+        ("flow:acme:flow-fraud:live", &live, "live", 0),
+        ("flow:acme:flow-fraud:sandbox:1", &sb1, "sandbox", 1),
+    ] {
+        let (code, v) = run_cli(&all, "sel", &["--chain", sel]);
+        assert_eq!(code, 0, "{sel}: {v}");
+        assert_eq!(v["selected_chain"], sel);
+        assert_eq!(v["skipped_other_chains"], all.len() - want.len(), "{sel}");
+        let chains = v["chains"].as_array().unwrap();
+        assert_eq!(chains.len(), 1, "{sel}: {v}");
+        assert_eq!(chains[0]["flow_id"], "flow-fraud");
+        assert_eq!(chains[0]["env"], env);
+        assert_eq!(chains[0]["version"], version);
+        assert_eq!(chains[0]["links"], want.len());
+        // The selection is the same verdict as a stream holding only that chain.
+        let (code_alone, alone) = run_cli(want, "alone", &[]);
+        assert_eq!(code_alone, 0, "{alone}");
+        assert_eq!(alone["chains"][0]["head"], chains[0]["head"], "{sel}");
+    }
+
+    // Tamper the Live chain's middle link: the whole stream and the Live selection fail; the Sandbox
+    // version chain still verifies alone.
+    let mut tampered = all.clone();
+    let mid = tampered
+        .iter_mut()
+        .find(|e| e["seq"] == 41)
+        .expect("live seq 41");
+    let cs = mid["checksum"].as_str().unwrap().to_owned();
+    let flipped = if cs.starts_with('0') { "1" } else { "0" };
+    mid["checksum"] = Value::String(format!("{flipped}{}", &cs[1..]));
+    let (code, v) = run_cli(&tampered, "t-all", &[]);
+    assert_ne!(code, 0, "{v}");
+    let (code, v) = run_cli(
+        &tampered,
+        "t-live",
+        &["--chain", "flow:acme:flow-fraud:live"],
+    );
+    assert_ne!(code, 0, "{v}");
+    let (code, v) = run_cli(
+        &tampered,
+        "t-sb",
+        &["--chain", "flow:acme:flow-fraud:sandbox:1"],
+    );
+    assert_eq!(code, 0, "{v}");
+
+    // A selector naming no chain in the stream is an error, never a green over nothing.
+    let (code, _) = run_cli(&all, "none", &["--chain", "flow:acme:flow-fraud:sandbox:9"]);
+    assert_eq!(
+        code, 1,
+        "no event of the selected chain is an IO error (exit 1)"
+    );
+    // An entry relabelled onto the selected chain is kept and refused by the walk, not dropped.
+    let mut relabel = live.clone();
+    relabel.extend(case_lines("refuse_relabel_sandbox_into_live"));
+    let (code, v) = run_cli(
+        &relabel,
+        "relabel",
+        &["--chain", "flow:acme:flow-fraud:live"],
+    );
+    assert_eq!(code, 2, "{v}");
+
+    // An entry whose tag-29 key the chain-key table refuses fails the run under ANY selection, as it
+    // would without `--chain`: a selection never hides an invalid key (here a live key with version 3,
+    // beside a sandbox:1 selection it does not name).
+    let mut invalid = sb1.clone();
+    invalid.extend(case_lines("refuse_live_entry_with_version"));
+    let (code, v) = run_cli(&invalid, "invalid", &[]);
+    assert_eq!(code, 2, "{v}");
+    let (code, v) = run_cli(
+        &invalid,
+        "invalid-sel",
+        &["--chain", "flow:acme:flow-fraud:sandbox:1"],
+    );
+    assert_eq!(code, 2, "{v}");
+
+    // A selection spanning two delivery streams is refused (exit 1), never walked as one chain.
+    let mut two = live.clone();
+    two.extend(case_lines("refuse_wrong_stream_id"));
+    let (code, v) = run_cli(&two, "two", &["--chain", "flow:acme:flow-fraud:live"]);
+    assert_eq!(code, 1, "{v}");
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("delivery streams"),
+        "{v}"
+    );
+
+    // Usage refusals (exit 1): given twice, paired with an anchor, a bad selector, a non-chain verb.
+    let (code, _) = run_cli(
+        &live,
+        "twice",
+        &["--chain", "flow:acme:flow-fraud:live", "--chain", "cell"],
+    );
+    assert_eq!(code, 1);
+    let (code, _) = run_cli(
+        &live,
+        "anchor",
+        &[
+            "--chain",
+            "flow:acme:flow-fraud:live",
+            "--from-anchor",
+            "/nonexistent",
+        ],
+    );
+    assert_eq!(code, 1);
+    let (code, _) = run_cli(&live, "bad", &["--chain", "flow:acme:flow-fraud:sandbox:0"]);
+    assert_eq!(code, 1);
+    for verb in ["erasure-cert", "bundle"] {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_seam-verify"))
+            .args([verb, "/nonexistent", "--chain", "cell"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{verb}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("chain-only"),
+            "{verb}"
+        );
+    }
+}

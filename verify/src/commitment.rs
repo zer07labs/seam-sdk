@@ -554,6 +554,53 @@ pub fn encode_slot(x: Option<&[u8]>) -> Vec<u8> {
     }
 }
 
+/// The raw v6 `0x05` / `0x06` trailer run a served `seam.api.v1.Commitment` projects (seam-sdk#420):
+/// `gate = 13` (`GateRecord.body`, the exact `0x05` body), `governing_doc_sha256 = 11` and `env = 14`.
+///
+/// The projection is lossless under v6 (the `0x06` body v2 is exactly `0x02 ‖ doc ‖ env slot`), so this
+/// rebuilds the run (empty when the record has neither trailer), to pass as `trailers` to
+/// [`verify_commitment_tct`]. That decodes it under every v6 rule: field 10 is still this reader's own
+/// Gate digest over the body (VG1), and a Gate block must match the governing env. Nothing served is
+/// trusted: each value is hashed into the digest the TCT signs. v6 only. Refuses an env without a doc
+/// (`env_without_governing_doc`) and an env other than exactly `sandbox` / `live`.
+pub fn served_commitment_trailers(
+    gate_body: Option<&[u8]>,
+    governing_doc_sha256: Option<&[u8; 32]>,
+    env: Option<&str>,
+) -> Result<Vec<u8>, CommitmentRefusal> {
+    fn run(out: &mut Vec<u8>, marker: u8, body: &[u8]) {
+        out.push(marker);
+        out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        out.extend_from_slice(body);
+    }
+    if let Some(e) = env {
+        if e != "sandbox" && e != "live" {
+            return Err(CommitmentRefusal::new(
+                "env_not_sandbox_or_live",
+                format!("env {e:?} is not exactly sandbox or live"),
+            ));
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(body) = gate_body {
+        run(&mut out, crate::gate::GATE_TRAILER, body);
+    }
+    match governing_doc_sha256 {
+        None if env.is_some() => Err(CommitmentRefusal::new(
+            "env_without_governing_doc",
+            "a served env needs the governing doc",
+        )),
+        None => Ok(out),
+        Some(doc) => {
+            let mut body = vec![0x02];
+            body.extend_from_slice(doc);
+            body.extend_from_slice(&encode_slot(env.map(str::as_bytes)));
+            run(&mut out, GOVERNING_TRAILER, &body);
+            Ok(out)
+        }
+    }
+}
+
 /// The commitment digest under `version`, with field 8 supplied as the explanation digest and fields 10
 /// and 12 supplied directly (the digest-only path; a verifier derives them from the trailers with
 /// [`decode_commitment_trailers`]). `c.certificate_digest` is **ignored**: field 10 is `field_10`.

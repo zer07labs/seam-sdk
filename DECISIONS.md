@@ -370,8 +370,8 @@ architecture as the accidental arbiter — a normative rule that is not one. All
 outside `[-2^63, 2^63)` explicitly. Python and TypeScript need no such bound alone; they carry Go's
 constraint so the five agree, which is the same trade this whole decision is made of.
 3. **It is the only one with a written rationale.** The type assertion that *is* the rule
-   (`exp, ok := payload["exp"].(float64)`, `go/crypto/crypto.go:578`) and the truncation semantics
-   below it (`go/crypto/crypto.go:589-596`) are both argued in comments at the code; the other two
+   (`exp, ok := payload["exp"].(float64)`, `go/crypto/crypto.go:585`) and the truncation semantics
+   below it (`go/crypto/crypto.go:596-603`) are both argued in comments at the code; the other two
    rules were the shortest expression that worked in that language.
 
 The alternative considered and rejected was **union semantics** — accept anything any SDK accepts,
@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:2294-2316` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:2321-2343` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:2322` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:2349` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3405,3 +3405,39 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
   (df24d05c) and the runtime verifier. The gate's `probe_event_field` stops using `grep -q` under `pipefail`: the
   bigger TS extraction made `sort` die of SIGPIPE, and CI then read `AuditEntryEvent.actor` as ABSENT (exit 2).
 - **Decided by:** owner (flows leader relay, 2026-11-23). **Verdict:** ADOPT, carried-not-verified. **Status:** ADOPTED.
+
+## 2026-11-23 — Flows W5 clients: served v6 commitments verify (#420); seam-verify 0.6.0 with `--chain` (#421) (plans/flows-w5-clients.md)
+
+**#420: the served projection IS the trailers, rebuilt; no runtime contract change.** The issue offered
+two remedies: count the served projection as the trailers, or have the runtime serve raw trailers on
+`Commitment`, which is a published-API change. We took the first, because it is exact rather than an
+approximation. `GateRecord.body` is the `0x05` body byte for byte, and the `0x06` body v2 is fully
+determined by `(doc, env)` (`0x02 ‖ doc ‖ presence ‖ F(env)`). So the rebuilt run is the sealed run, and
+the signed-vector tests assert that byte for byte in every port.
+
+VG1 still holds. Fields 10-12 come only from a trailer run that every v6 decode rule reads:
+- the Gate digest is recomputed over the body;
+- a stated `gate_digest`/`certificate_digest` beside it must agree, so with no body it refuses;
+- `gate_env_binding` holds.
+
+Nothing served is trusted, because each value lands in the digest the TCT signs. Two consequences:
+- The rebuild is v6-only. Under v5 the doc is framed from `governing_doc_sha256` beside, exactly as
+  before, and a served Gate block or env refuses (`v5_refuses_gate_block` / `v5_refuses_env`).
+- A projection beside raw trailers is refused in every port (`served_projection_beside_trailers`;
+  Python and TS fail the TCT), so there is never a second source to reconcile.
+
+Rust has no served-commitment caller (`verify_commitment_tct` takes trailers explicitly; `bundle`
+verifies v5), so it gains the helper only, for parity. Reversible: helpers and fields are additive.
+
+**#421: `--chain` filters on the key's fields as carried, and keeps every entry whose key is invalid.**
+That way an entry with an invalid tag-29 key fails the run under `--chain` exactly as it would without
+it, never silently dropped. A selection with no events, or one that spans two streams, exits 1.
+
+Attestation v3 under `--issuer` stays "carried, not verified". It is about 150-250 lines plus a
+per-chain authenticity fan-out, and matching the runtime's `--issuer` rule also needs `CHAIN_MANIFEST`
+verification. The runtime spec still marks v3 "NO WRITER YET". It was not cheap, so it is not in this
+release.
+
+**v6 voter-vector step 3** was already done in seam-runtime #1859 (`SEAM_SDK_REF` 14cf4ceb,
+`FIXTURE_PAIRS` row for `commitment_digest_v6_voter_vector.json`). The vector is byte-identical on runtime
+main, at that pin, and here. seam-sdk has nothing left to do for it.

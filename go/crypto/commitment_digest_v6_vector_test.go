@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -275,6 +276,21 @@ func digestRefusal(t *testing.T, v v6Vector, r v6Refusal) error {
 	return err
 }
 
+// #420: a served Gate block or env has no v5 meaning; under v5 both refuse by name.
+func TestServedProjectionUnderV5Refuses(t *testing.T) {
+	live := "live"
+	for want, c := range map[string]Commitment{
+		"v5_refuses_gate_block": {GateBody: []byte{1}},
+		"v5_refuses_env":        {Env: &live},
+	} {
+		_, err := expectedCommitmentDigest(CommitmentV5, c)
+		var r *Refusal
+		if !errors.As(err, &r) || r.Rule != want {
+			t.Fatalf("want %s, got %v", want, err)
+		}
+	}
+}
+
 func TestCommitmentDigestV6Refusals(t *testing.T) {
 	v := loadV6(t)
 	sections := map[string][]v6Refusal{
@@ -454,13 +470,53 @@ func TestCommitmentDigestV6SignedVector(t *testing.T) {
 					t.Fatal("a doc disagreeing with the trailer must not verify")
 				}
 			}
-			// The cross-port rule: under v6 nil Trailers is a record with neither trailer, so the record's
-			// doc beside them is refused, never framed; an ungoverned case still verifies.
-			absent := c
-			absent.Trailers = nil
-			absent.GoverningDocSha256 = doc
-			if got := VerifyTCT(v.IssuerAID, tc.SignedArtifact, absent, now); got != (len(c.Trailers) == 0) {
-				t.Fatalf("nil trailers with the record's doc beside: verified=%v", got)
+			// #420: nil Trailers is a served commitment; its projection (GateBody, GoverningDocSha256, Env)
+			// rebuilds the trailer run byte for byte, and verifies. Without the projection only the
+			// ungoverned case verifies.
+			served := c
+			served.Trailers = nil
+			if len(c.Trailers) > 0 && c.Trailers[0] == gateTrailerMarker {
+				n := binary.LittleEndian.Uint32(c.Trailers[1:5])
+				served.GateBody = c.Trailers[5 : 5+n]
+			}
+			served.GoverningDocSha256, served.Env = tr.GoverningDocSha256, tr.Env
+			rebuilt, err := ServedCommitmentTrailers(served.GateBody, served.GoverningDocSha256, served.Env)
+			if err != nil || !bytes.Equal(rebuilt, c.Trailers) {
+				t.Fatalf("served projection rebuilds %x (%v), want %x", rebuilt, err, c.Trailers)
+			}
+			if !VerifyTCT(v.IssuerAID, tc.SignedArtifact, served, now) {
+				t.Fatal("a served commitment must verify (#420)")
+			}
+			bare := served
+			bare.GateBody, bare.GoverningDocSha256, bare.Env = nil, nil, nil
+			if got := VerifyTCT(v.IssuerAID, tc.SignedArtifact, bare, now); got != (len(c.Trailers) == 0) {
+				t.Fatalf("nil trailers with no projection: verified=%v", got)
+			}
+			if served.GoverningDocSha256 != nil {
+				flipped := "live"
+				if served.Env != nil && *served.Env == "live" {
+					flipped = "sandbox"
+				}
+				wrongEnv := served
+				wrongEnv.Env = &flipped
+				if VerifyTCT(v.IssuerAID, tc.SignedArtifact, wrongEnv, now) {
+					t.Fatal("a served env that disagrees with the signed digest must not verify")
+				}
+				if served.GateBody != nil {
+					noGate := served
+					noGate.GateBody = nil
+					gd := GateDigest(served.GateBody)
+					noGate.CertificateDigest = gd[:]
+					if VerifyTCT(v.IssuerAID, tc.SignedArtifact, noGate, now) {
+						t.Fatal("a Gate digest beside, without the body, must not verify")
+					}
+				}
+			}
+			both := c
+			both.Env = served.Env
+			both.GateBody = []byte{}
+			if VerifyTCT(v.IssuerAID, tc.SignedArtifact, both, now) {
+				t.Fatal("a served projection beside raw trailers must be refused")
 			}
 			if VerifyTCT(v.IssuerAID, tc.SignedArtifact, c, 4920825600) {
 				t.Fatal("an expired TCT must not verify")
