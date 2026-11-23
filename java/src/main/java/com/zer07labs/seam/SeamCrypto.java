@@ -121,7 +121,13 @@ public final class SeamCrypto {
    * (Gate block) and {@code 0x06} (governing document) trailer bytes the sealed commitment appends, in
    * order and nothing else; {@code null} when not given. {@link #verifyTct} derives fields 10-12 from
    * them under the version the TCT's statement selects ({@link #decodeCommitmentTrailers}); with
-   * {@code null} a v5 verification is exactly what it was before the field existed.
+   * {@code null} a v5 verification is exactly what it was before the field existed. {@code gateBody}
+   * and {@code env} (#420) are the served projection: {@code seam.api.v1.Commitment} carries no raw
+   * trailers, only {@code gate = 13} ({@code GateRecord.body}, the exact {@code 0x05} body) beside
+   * {@code governing_doc_sha256} and {@code env = 14}. With {@code trailers == null}, {@link
+   * #verifyTct} under v6 rebuilds the trailer run from them ({@link #servedCommitmentTrailers}) and
+   * decodes it under every v6 rule; v5 refuses either. Setting either beside {@code trailers} is
+   * refused.
    */
   public record Commitment(
       String id,
@@ -136,7 +142,45 @@ public final class SeamCrypto {
       byte[] selectionDigest,
       byte[] certificateDigest,
       byte[] governingDocSha256,
-      byte[] trailers) {
+      byte[] trailers,
+      byte[] gateBody,
+      String env) {
+    /**
+     * A commitment with its raw trailers and no served projection ({@code gateBody} and {@code env}
+     * absent): every pre-#420 caller.
+     */
+    public Commitment(
+        String id,
+        String action,
+        String authority,
+        String supersedes,
+        String authMethod,
+        String trustBasis,
+        String committer,
+        byte[] explanationDigest,
+        List<ExplanationEntry> explanation,
+        byte[] selectionDigest,
+        byte[] certificateDigest,
+        byte[] governingDocSha256,
+        byte[] trailers) {
+      this(
+          id,
+          action,
+          authority,
+          supersedes,
+          authMethod,
+          trustBasis,
+          committer,
+          explanationDigest,
+          explanation,
+          selectionDigest,
+          certificateDigest,
+          governingDocSha256,
+          trailers,
+          null,
+          null);
+    }
+
     /** A commitment given without its raw trailers (every pre-W2 caller). */
     public Commitment(
         String id,
@@ -1006,7 +1050,7 @@ public final class SeamCrypto {
           new Commitment(
               c.id(), c.action(), c.authority(), c.supersedes(), c.authMethod(), c.trustBasis(),
               c.committer(), c.explanationDigest(), c.explanation(), field9, c.certificateDigest(),
-              c.governingDocSha256(), c.trailers());
+              c.governingDocSha256(), c.trailers(), c.gateBody(), c.env());
       if (!verifyTct(issuerAid, tctJws, framed, nowS)) return false;
       if (c.explanation() == null) return false;
       return verifySelection(selection, c.explanation(), c.action()).ok();
@@ -1310,6 +1354,45 @@ public final class SeamCrypto {
   }
 
   /**
+   * The raw v6 {@code 0x05} / {@code 0x06} trailer run a served {@code seam.api.v1.Commitment}
+   * projects (#420): {@code gate = 13} ({@code GateRecord.body}, the exact {@code 0x05} body), {@code
+   * governing_doc_sha256 = 11} and {@code env = 14}. The projection is lossless under v6 (the {@code
+   * 0x06} body v2 is exactly {@code 0x02 ‖ doc ‖ env slot}), so this rebuilds the run (empty when the
+   * record has neither trailer) for {@link #decodeCommitmentTrailers} to read under every v6 rule:
+   * field 10 is still the reader's own Gate digest over the body (VG1), and a Gate block must match
+   * the governing env. Nothing served is trusted: each value is hashed into the digest the TCT signs.
+   * v6 only. Throws {@link CommitmentRefusal}: an env without a doc ({@code
+   * env_without_governing_doc}), an env other than {@code sandbox}/{@code live}, a doc that is not 32
+   * bytes ({@code slot_length_not_32}).
+   */
+  public static byte[] servedCommitmentTrailers(byte[] gateBody, byte[] governingDocSha256, String env) {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    if (gateBody != null) writeTrailer(out, GATE_TRAILER, gateBody);
+    if (env != null) envOf(env.getBytes(StandardCharsets.UTF_8));
+    if (governingDocSha256 == null) {
+      if (env != null) throw refused("env_without_governing_doc");
+      return out.toByteArray();
+    }
+    if (governingDocSha256.length != 32) throw refused("slot_length_not_32");
+    ByteArrayOutputStream body = new ByteArrayOutputStream();
+    body.write(0x02);
+    body.writeBytes(governingDocSha256);
+    body.writeBytes(envSlotBytes(env));
+    writeTrailer(out, GOVERNING_TRAILER, body.toByteArray());
+    return out.toByteArray();
+  }
+
+  private static void writeTrailer(ByteArrayOutputStream out, int marker, byte[] body) {
+    out.write(marker);
+    int n = body.length;
+    out.write(n & 0xff);
+    out.write((n >>> 8) & 0xff);
+    out.write((n >>> 16) & 0xff);
+    out.write((n >>> 24) & 0xff);
+    out.writeBytes(body);
+  }
+
+  /**
    * Decode the {@code 0x05} / {@code 0x06} trailers a sealed commitment appends into digest fields
    * 10-12. {@code scheme} is {@link CommitmentVersion#V5}, {@link CommitmentVersion#V6}, or {@code
    * null} for the scheme-free decode (both {@code 0x06} body versions accepted, the version
@@ -1473,6 +1556,8 @@ public final class SeamCrypto {
    */
   private static String recomputeCommitmentDigest(CommitmentVersion version, Commitment c) {
     if (version == CommitmentVersion.V5) {
+      if (c.gateBody() != null) throw refused("v5_refuses_gate_block");
+      if (c.env() != null) throw refused("v5_refuses_env");
       if (c.trailers() == null) return seamCommitmentDigest(c);
       CommitmentTrailers t = decodeCommitmentTrailers(c.trailers(), CommitmentVersion.V5);
       return commitmentDigest(
@@ -1481,7 +1566,16 @@ public final class SeamCrypto {
           new CommitmentDigestFields(
               c.selectionDigest(), c.certificateDigest(), t.governingDocSha256(), null));
     }
-    byte[] raw = c.trailers() == null ? new byte[0] : c.trailers();
+    // Fields 10-12 come from the trailers only. No raw trailers is a served commitment: its projection
+    // is rebuilt into the trailer run (#420), which is then the only source.
+    byte[] raw;
+    if (c.trailers() == null) {
+      raw = servedCommitmentTrailers(c.gateBody(), c.governingDocSha256(), c.env());
+    } else {
+      if (c.gateBody() != null || c.env() != null)
+        throw refused("served_projection_beside_trailers");
+      raw = c.trailers();
+    }
     CommitmentTrailers t = decodeCommitmentTrailers(raw, CommitmentVersion.V6);
     return commitmentDigest(
         version,

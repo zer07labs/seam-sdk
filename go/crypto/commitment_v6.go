@@ -440,6 +440,12 @@ func selectFromExt(extRaw []byte) (CommitmentVersion, string, error) {
 func expectedCommitmentDigest(version CommitmentVersion, c Commitment) (string, error) {
 	switch version {
 	case CommitmentV5:
+		if c.GateBody != nil {
+			return "", refuse("v5_refuses_gate_block")
+		}
+		if c.Env != nil {
+			return "", refuse("v5_refuses_env")
+		}
 		if c.Trailers == nil {
 			return seamCommitmentDigest(c)
 		}
@@ -459,8 +465,19 @@ func expectedCommitmentDigest(version CommitmentVersion, c Commitment) (string, 
 			return "", err
 		}
 		f := CommitmentDigestFields{SelectionDigest: sel, GoverningDocSha256: c.GoverningDocSha256}
-		// nil Trailers is a record with neither trailer: fields 10-12 come from the trailers only.
-		t, err := DecodeCommitmentTrailers(c.Trailers, SchemeV6)
+		// Fields 10-12 come from the trailers only. nil Trailers is a served commitment: its projection is
+		// rebuilt into the trailer run (#420), which is then the only source, so nothing beside it is compared.
+		raw := c.Trailers
+		if raw == nil {
+			raw, err = ServedCommitmentTrailers(c.GateBody, c.GoverningDocSha256, c.Env)
+			if err != nil {
+				return "", err
+			}
+			c.GoverningDocSha256 = nil
+		} else if c.GateBody != nil || c.Env != nil {
+			return "", refuse("served_projection_beside_trailers")
+		}
+		t, err := DecodeCommitmentTrailers(raw, SchemeV6)
 		if err != nil {
 			return "", err
 		}
@@ -474,4 +491,44 @@ func expectedCommitmentDigest(version CommitmentVersion, c Commitment) (string, 
 		return CommitmentDigest(CommitmentV6, c, f)
 	}
 	return "", refuse("unknown_commitment_version")
+}
+
+// ServedCommitmentTrailers is the raw v6 `0x05` / `0x06` trailer run a served `seam.api.v1.Commitment`
+// projects (#420): `gate = 13` (GateRecord.body, the exact `0x05` body), `governing_doc_sha256 = 11` and
+// `env = 14`. The projection is lossless under v6 (the `0x06` body v2 is exactly `0x02 ‖ doc ‖ env slot`), so
+// this rebuilds the run (empty when the record has neither trailer) for DecodeCommitmentTrailers to read under
+// every v6 rule: field 10 is still the reader's own Gate digest over the body (VG1), and a Gate block must
+// match the governing env. Nothing served is trusted: each value is hashed into the digest the TCT signs.
+// v6 only. Refuses an env without a doc (env_without_governing_doc), an env other than "sandbox"/"live", and
+// a doc that is not 32 bytes (slot_length_not_32).
+func ServedCommitmentTrailers(gateBody, governingDocSha256 []byte, env *string) ([]byte, error) {
+	var out []byte
+	run := func(marker byte, body []byte) {
+		var n [4]byte
+		binary.LittleEndian.PutUint32(n[:], uint32(len(body)))
+		out = append(append(append(out, marker), n[:]...), body...)
+	}
+	if gateBody != nil {
+		run(gateTrailerMarker, gateBody)
+	}
+	if env != nil {
+		if _, err := envOf([]byte(*env)); err != nil {
+			return nil, err
+		}
+	}
+	if governingDocSha256 == nil {
+		if env != nil {
+			return nil, refuse("env_without_governing_doc")
+		}
+		if out == nil {
+			out = []byte{}
+		}
+		return out, nil
+	}
+	if len(governingDocSha256) != 32 {
+		return nil, refuse("slot_length_not_32")
+	}
+	body := append([]byte{0x02}, governingDocSha256...)
+	run(governingTrailerMarker, append(body, envEncoding(env)...))
+	return out, nil
 }

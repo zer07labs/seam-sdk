@@ -23,6 +23,7 @@
 // running verification inside their own pipeline should not have to shell out and parse `--json`.
 // This binary is a shell over that library, so the CLI and an embedding caller run exactly the same
 // code — there is no second implementation here to drift.
+use seam_verify::chain_key::{ChainKey, ChainSelector};
 use seam_verify::{verify, wire};
 
 use std::process::ExitCode;
@@ -36,7 +37,7 @@ fn usage() -> ! {
          \n\
          USAGE:\n    \
              seam-verify chain <FILE> [--strict] [--issuer <AID>] [--from-anchor <FILE>]\n                             \
-             [--expect-anchor <FILE>] [--allow-uncovered] [--json]\n    \
+             [--expect-anchor <FILE>] [--allow-uncovered] [--chain <SELECTOR>] [--json]\n    \
              seam-verify erasure-cert <FILE> --issuer <AID> [--json]\n    \
              seam-verify bundle <DIR> --issuer <AID> [--json]\n\
          \n\
@@ -55,6 +56,10 @@ fn usage() -> ! {
              digest cannot be recomputed from a payload this build cannot parse. Those events are\n    \
              reported on the `unverified content` line (and as `unverified_content` under --json),\n    \
              never folded into a green claim.\n\
+         \n\
+             --chain <SELECTOR>  Verify ONE keyed chain (tag 29) of the stream alone, from its own\n                       \
+                       genesis: cell | tenant:<T> | flow:<T>:<FLOW>:live | flow:<T>:<FLOW>:sandbox:<N>.\n                       \
+                       Every other event is skipped and counted. No event of that chain is an error.\n\
          \n\
              --strict  Refuse a stream containing any non-advisory event with no digest/checksum.\n              \
                        Events written before Seam added those fields look exactly like advisory ones\n              \
@@ -223,6 +228,7 @@ fn load_anchor(
     Ok(Some(anchor))
 }
 
+#[allow(clippy::too_many_arguments)] // one parameter per CLI flag, each checked in main
 fn cmd_chain(
     path: &str,
     strict: bool,
@@ -231,6 +237,7 @@ fn cmd_chain(
     from_anchor: Option<&str>,
     expect_anchor: Option<&str>,
     allow_uncovered: bool,
+    chain_sel: Option<&ChainSelector>,
 ) -> ExitCode {
     let anchor = match load_anchor(from_anchor, issuers, json) {
         Ok(a) => a,
@@ -271,6 +278,59 @@ fn cmd_chain(
     };
     // Delivery is not ordered (at-least-once, replays, merged shards). Sort rather than demand order.
     events.sort_by_key(|e| e.seq);
+
+    // `--chain` (Flows W5): keep only the events tag 29 places on the selected chain, so that chain is
+    // verified alone, from its own genesis, whatever else the stream holds. An entry whose tag-29 key the
+    // chain-key table refuses is kept too, whatever chain it names, so the walk refuses the run exactly as
+    // it would without `--chain`: a selection never hides an invalid key. After dedup, so a retry is still
+    // collapsed against its twin.
+    let mut skipped = 0usize;
+    if let Some(sel) = chain_sel {
+        let before = events.len();
+        events.retain(|e| {
+            e.chain.as_ref().is_some_and(|c| {
+                let selected = c.kind == u32::from(sel.kind)
+                    && e.tenant == sel.tenant
+                    && c.flow_id == sel.flow_id
+                    && c.env == sel.env
+                    && c.version == sel.version;
+                selected
+                    || ChainKey::new(
+                        c.kind,
+                        &e.stream_id,
+                        &e.tenant,
+                        &c.flow_id,
+                        &c.env,
+                        c.version,
+                    )
+                    .is_err()
+            })
+        });
+        skipped = before - events.len();
+        if events.is_empty() {
+            return io_error(
+                &format!(
+                    "{path}: --chain {sel}: no event of that chain in the stream ({before} other \
+                     event(s)) — refusing to report a green chain over nothing"
+                ),
+                json,
+            );
+        }
+        let mut streams: Vec<&str> = events.iter().map(|e| e.stream_id.as_str()).collect();
+        streams.sort_unstable();
+        streams.dedup();
+        if streams.len() > 1 {
+            return io_error(
+                &format!(
+                    "{path}: --chain {sel}: the selection spans {} delivery streams ({}) — a chain \
+                     lives in one stream; split the file by stream_id",
+                    streams.len(),
+                    streams.join(", ")
+                ),
+                json,
+            );
+        }
+    }
 
     let report = match &anchor {
         Some(a) => verify::chain_anchored(&events, &a.tenant, a.attested_len, &a.attested_head),
@@ -460,6 +520,14 @@ fn cmd_chain(
                     .collect();
                 format!(",\"chains\":[{}]", entries.join(","))
             };
+            // Present only under `--chain`, so JSON for every other run is unchanged.
+            let selected_json = match chain_sel {
+                Some(sel) => format!(
+                    ",\"selected_chain\":{},\"skipped_other_chains\":{skipped}",
+                    q(&sel.to_string())
+                ),
+                None => String::new(),
+            };
             let warnings_json = if warnings.is_empty() {
                 String::new()
             } else {
@@ -499,7 +567,7 @@ fn cmd_chain(
                 println!(
                     "{{\"verified\":true,\"events\":{},\"links\":{},\"advisory\":{},\"duplicates\":{},\
                      \"unverifiable\":{},\"unverified_content\":{},\"unmodelled_kinds\":{},\
-                     \"head\":\"{}\"{}{}{}{}{}}}",
+                     \"head\":\"{}\"{}{}{}{}{}{}}}",
                     r.events,
                     r.links,
                     r.advisory,
@@ -517,6 +585,7 @@ fn cmd_chain(
                     tenants_json,
                     truncation_extra,
                     chains_json,
+                    selected_json,
                     warnings_json,
                 );
             } else {
@@ -546,6 +615,12 @@ fn cmd_chain(
                          (--allow-uncovered diagnostic report)",
                         uncovered.len(),
                         if uncovered.len() == 1 { "y" } else { "ies" }
+                    );
+                }
+                if let Some(sel) = chain_sel {
+                    println!(
+                        "  selected chain    : {sel} (verified alone; {skipped} event(s) of other \
+                         chains or untagged skipped)"
                     );
                 }
                 println!("  events            : {}", r.events);
@@ -876,6 +951,8 @@ fn main() -> ExitCode {
     // `--allow-uncovered`: chain only, with `--issuer`, never with `--json` (checked below, before any
     // verification runs, so a rejected combination never reaches stdout).
     let mut allow_uncovered = false;
+    // `--chain <SELECTOR>`: chain only; verify one keyed chain of the stream alone (Flows W5).
+    let mut chain_sel: Option<ChainSelector> = None;
 
     let mut it = argv[1..].iter();
     while let Some(a) = it.next() {
@@ -883,6 +960,25 @@ fn main() -> ExitCode {
             "--json" => json = true,
             "--strict" => strict = true,
             "--allow-uncovered" => allow_uncovered = true,
+            "--chain" => match it.next() {
+                Some(v) => {
+                    if chain_sel.is_some() {
+                        eprintln!("seam-verify: --chain given twice — one run verifies one chain");
+                        usage();
+                    }
+                    match ChainSelector::parse(v) {
+                        Ok(sel) => chain_sel = Some(sel),
+                        Err(e) => {
+                            eprintln!("seam-verify: {e}");
+                            usage();
+                        }
+                    }
+                }
+                None => {
+                    eprintln!("seam-verify: --chain requires a SELECTOR");
+                    usage();
+                }
+            },
             "--issuer" => match it.next() {
                 Some(v) => issuers.push(v.clone()),
                 None => {
@@ -978,6 +1074,14 @@ fn main() -> ExitCode {
                     );
                     usage();
                 }
+                // An anchor attests a legacy per-tenant chain; a selected keyed chain has none.
+                if chain_sel.is_some() && (from_anchor.is_some() || expect_anchor.is_some()) {
+                    eprintln!(
+                        "seam-verify: --chain does not pair with --from-anchor / --expect-anchor — \
+                         an anchor attests a per-tenant chain, not a keyed one"
+                    );
+                    usage();
+                }
                 cmd_chain(
                     &p,
                     strict,
@@ -986,6 +1090,7 @@ fn main() -> ExitCode {
                     from_anchor.as_deref(),
                     expect_anchor.as_deref(),
                     allow_uncovered,
+                    chain_sel.as_ref(),
                 )
             }
             None => {
@@ -1004,6 +1109,10 @@ fn main() -> ExitCode {
             }
             if allow_uncovered {
                 eprintln!("seam-verify: --allow-uncovered is a chain-only flag");
+                usage();
+            }
+            if chain_sel.is_some() {
+                eprintln!("seam-verify: --chain is a chain-only flag");
                 usage();
             }
             // A certificate names exactly ONE signer; repeatable --issuer is a chain-only affordance for
@@ -1027,6 +1136,10 @@ fn main() -> ExitCode {
             // A bundle's chain step always refuses an uncovered entry; there is no diagnostic mode.
             if allow_uncovered {
                 eprintln!("seam-verify: --allow-uncovered is a chain-only flag");
+                usage();
+            }
+            if chain_sel.is_some() {
+                eprintln!("seam-verify: --chain is a chain-only flag");
                 usage();
             }
             // Like a certificate, a bundle names exactly ONE issuer, and the pin must be that issuer.

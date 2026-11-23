@@ -156,10 +156,30 @@ with its `version`, present only when non-empty).
 `flow_ref_sandbox_version_missing`); on live it is `0` before Promote or the promoted version after.
 `FLOW_REF_CONFLICT` compares the version against the chain on sandbox only.
 
-This build checks **integrity only** for keyed chains. Authenticity over them needs attestation v3
-(W5 multi-chain verify), so `--issuer` and `bundle` refuse a window that contains one rather than vouch
-for it. No producer emits tag 29 yet. `CHAIN_MANIFEST` events are linked but their payload is not
-modelled yet: they are disclosed as unverified content.
+**One chain alone — `--chain <SELECTOR>`** (0.6.0, Flows W5). A stream usually holds several keyed
+chains: a flow's Live chain, one Sandbox chain per version, the tenant chain and the cell chain. Every
+chain is already walked independently, from its own genesis. `--chain` keeps only the events tag 29 places
+on one chain, so that chain is verified alone and reported with `selected_chain` and
+`skipped_other_chains` in JSON:
+
+```
+seam-verify chain stream.jsonl --chain flow:acme:flow-fraud:live
+seam-verify chain stream.jsonl --chain flow:acme:flow-fraud:sandbox:2
+seam-verify chain stream.jsonl --chain tenant:acme        # or: --chain cell
+```
+
+The tenant may not contain `:`; the flow id may, since env and version are read from the right. A
+selector the chain-key table refuses (a Live version, a Sandbox without one) is a usage error. A
+selection with no events, or one spanning two `stream_id`s, exits 1. It never reports a green over
+nothing. An entry relabelled onto the selected chain is kept, so the walk refuses it rather than dropping
+it, and an entry whose tag-29 key the chain-key table refuses fails the run whatever chain it names,
+exactly as without `--chain`. A tamper on one chain fails that chain only, so the other chains still verify alone. `--chain` does
+not pair with `--from-anchor` / `--expect-anchor`, because an anchor attests a per-tenant chain.
+
+This build checks **integrity only** for keyed chains. Authenticity over them needs attestation v3, which
+this build carries but does not verify, so `--issuer` and `bundle` refuse a window that contains a keyed
+chain rather than vouch for it. `CHAIN_MANIFEST` events are linked, but their payload is not modelled yet,
+so they are disclosed as unverified content.
 
 #### AUTHENTICITY — `chain <FILE> --issuer <AID>`
 
@@ -540,7 +560,7 @@ Stated plainly, because a verifier that oversells itself is worse than none:
 | `docs/erasure-certificate.v1.md` | the certificate signing framing — **normative** |
 | `docs/evidence-bundle.v1.md` | the evidence bundle and its binding framing — **normative**, a verbatim pinned copy of the runtime's spec (see Drift) |
 | `docs/audit-anchor.md` | the out-of-band anchor |
-| `proto/seam/event/v1/seam_event.proto` | the canonical protobuf schema, a byte-verbatim copy of seam-runtime `crates/seam-api/proto/seam/event/v1/seam_event.proto` @ `cd8505ce` (seam-runtime#1873, 0.114.0) (it has no header to carry a pin, so the commit is recorded here; not checked by `check_vendored_spec.py`) |
+| `proto/seam/event/v1/seam_event.proto` | the canonical protobuf schema, a byte-verbatim copy of seam-runtime `crates/seam-api/proto/seam/event/v1/seam_event.proto` @ `ddbfa6ff` (runtime main; unchanged since seam-runtime#1873, 0.114.0) (it has no header to carry a pin, so the commit is recorded here; not checked by `check_vendored_spec.py`) |
 | `fixtures/erasure_certificate_vector.json` | a real signed certificate to check against |
 | `fixtures/evidence-bundle/` | four real bundles from the runtime's exporter (byte-exact: `.gitattributes` keeps git off them) |
 | `src/` | the reference implementation |

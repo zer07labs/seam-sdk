@@ -287,13 +287,83 @@ class CommitmentDigestV6Test {
               new CommitmentDigestFields(null, t.gateDigest(), t.governingDocSha256(), t.env())),
           name);
       assertTrue(SeamCrypto.verifyTct(issuer, (String) k.get("signed_artifact"), c, NOW_S), name);
-      // The same TCT over the commitment without its trailers recomputes a different v6 digest.
+      // The same TCT over the commitment with neither trailers nor a projection recomputes a
+      // different v6 digest.
       if (!((String) k.get("trailers")).isEmpty()) {
-        SeamCrypto.Commitment bare = withTrailers(c, null);
+        SeamCrypto.Commitment bare = served(c, null, null, null);
         assertFalse(
             SeamCrypto.verifyTct(issuer, (String) k.get("signed_artifact"), bare, NOW_S), name);
       }
     }
+  }
+
+  /** {@code b} as a served commitment: no raw trailers, the given projection beside it (#420). */
+  private static SeamCrypto.Commitment served(
+      SeamCrypto.Commitment b, byte[] gateBody, byte[] doc, String env) {
+    return new SeamCrypto.Commitment(
+        b.id(), b.action(), b.authority(), b.supersedes(), b.authMethod(), b.trustBasis(),
+        b.committer(), b.explanationDigest(), b.explanation(), b.selectionDigest(),
+        b.certificateDigest(), doc, null, gateBody, env);
+  }
+
+  @Test
+  void servedCommitmentsVerify() throws Exception {
+    Map<String, Object> v = load("commitment_digest_v6_signed_vector.json");
+    String issuer = (String) v.get("issuer_aid");
+    for (Map<String, Object> k : rows(v, "cases")) {
+      String name = (String) k.get("name");
+      String jws = (String) k.get("signed_artifact");
+      SeamCrypto.Commitment c = signedCommitment(k);
+      byte[] raw = c.trailers();
+      byte[] gate = null;
+      if (raw.length > 0 && raw[0] == 0x05) {
+        int n = (raw[1] & 0xff) | (raw[2] & 0xff) << 8 | (raw[3] & 0xff) << 16 | (raw[4] & 0xff) << 24;
+        gate = java.util.Arrays.copyOfRange(raw, 5, 5 + n);
+      }
+      CommitmentTrailers t = SeamCrypto.decodeCommitmentTrailers(raw, CommitmentVersion.V6);
+      assertEquals(
+          hex(raw),
+          hex(SeamCrypto.servedCommitmentTrailers(gate, t.governingDocSha256(), t.env())),
+          name + ": the projection rebuilds the trailers");
+      SeamCrypto.Commitment s = served(c, gate, t.governingDocSha256(), t.env());
+      assertTrue(SeamCrypto.verifyTct(issuer, jws, s, NOW_S), name + ": served");
+      if (t.governingDocSha256() != null) {
+        String flipped = "live".equals(t.env()) ? "sandbox" : "live";
+        assertFalse(
+            SeamCrypto.verifyTct(issuer, jws, served(c, gate, t.governingDocSha256(), flipped), NOW_S),
+            name + ": flipped env");
+        assertFalse(
+            SeamCrypto.verifyTct(issuer, jws, served(c, gate, new byte[32], t.env()), NOW_S),
+            name + ": wrong doc");
+      }
+      if (gate != null) {
+        assertFalse(
+            SeamCrypto.verifyTct(issuer, jws, served(c, null, t.governingDocSha256(), t.env()), NOW_S),
+            name + ": gate dropped");
+      }
+      SeamCrypto.Commitment both =
+          new SeamCrypto.Commitment(
+              c.id(), c.action(), c.authority(), c.supersedes(), c.authMethod(), c.trustBasis(),
+              c.committer(), c.explanationDigest(), c.explanation(), c.selectionDigest(),
+              c.certificateDigest(), c.governingDocSha256(), raw, new byte[0], null);
+      assertFalse(SeamCrypto.verifyTct(issuer, jws, both, NOW_S), name + ": projection beside trailers");
+    }
+  }
+
+  @Test
+  void servedCommitmentTrailersRefusals() {
+    assertEquals(
+        "env_without_governing_doc",
+        assertThrows(SeamCrypto.CommitmentRefusal.class, () -> SeamCrypto.servedCommitmentTrailers(null, null, "live")).rule());
+    assertEquals(
+        "slot_length_not_32",
+        assertThrows(SeamCrypto.CommitmentRefusal.class, () -> SeamCrypto.servedCommitmentTrailers(null, new byte[31], null)).rule());
+    assertEquals(
+        "env_not_sandbox_or_live",
+        assertThrows(SeamCrypto.CommitmentRefusal.class, () -> SeamCrypto.servedCommitmentTrailers(null, new byte[32], "")).rule());
+    assertEquals(
+        "env_not_sandbox_or_live",
+        assertThrows(SeamCrypto.CommitmentRefusal.class, () -> SeamCrypto.servedCommitmentTrailers(null, new byte[32], "Live")).rule());
   }
 
   @Test

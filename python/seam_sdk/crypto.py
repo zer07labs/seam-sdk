@@ -3012,12 +3012,66 @@ def _v5_commitment_input(commitment: dict) -> dict:
     return {**commitment, "governing_doc_sha256": dec.governing_doc_sha256}
 
 
+def served_commitment_trailers(gate_body, governing_doc_sha256, env) -> bytes:
+    """The raw v6 ``0x05`` / ``0x06`` trailer run a served ``seam.api.v1.Commitment`` projects (#420).
+
+    ``Commitment`` carries no raw trailers. It carries ``gate = 13`` (``GateRecord.body``, the exact
+    ``0x05`` body, byte for byte), ``governing_doc_sha256 = 11`` and ``env = 14``, and that projection is
+    lossless under v6: the ``0x06`` body v2 is exactly ``0x02 ‖ doc ‖ env slot``. So this rebuilds the run
+    (``""`` when the record has neither trailer) and the verifier then decodes it under every v6 rule
+    (:func:`decode_commitment_trailers`): field 10 is still this reader's own ``seam-gate-digest:v1`` over
+    the body (VG1), and a Gate block must still match the governing env (``gate_env_binding``). Nothing
+    served is trusted: each value is hashed into the digest the TCT signs, so a wrong one fails it.
+
+    v6 only: v5 frames a governed record from ``governing_doc_sha256`` beside the commitment, as before.
+    Refuses (:class:`CommitmentRefused`) an env without a governing doc (``env_without_governing_doc``),
+    an env that is not exactly ``sandbox`` / ``live``, and a doc that is not 32 bytes."""
+    out = b""
+    if gate_body is not None:
+        body = _bytes_or_hex(gate_body)
+        out += bytes([GATE_TRAILER_MARKER]) + struct.pack("<I", len(body)) + body
+    env_b = _env_input(env)
+    if governing_doc_sha256 is None:
+        if env_b is not None:
+            raise CommitmentRefused("env_without_governing_doc")
+        return out
+    doc = _bytes_or_hex(governing_doc_sha256)
+    if len(doc) != 32:
+        raise CommitmentRefused("slot_length_not_32", f"got {len(doc)} bytes")
+    body = bytes([GOVERNING_BODY_V2]) + doc + _env_slot(env_b)
+    return out + bytes([GOVERNING_TRAILER_MARKER]) + struct.pack("<I", len(body)) + body
+
+
 def _tct_commitment_digest(version: str, commitment: dict) -> str:
     """The digest :func:`verify_tct` compares, under the selected ``version`` only. Under v6 fields 10-12
-    come from the raw ``trailers`` only, never from values beside them (VG1): absent trailers mean a record
-    with neither trailer, and a gate digest, doc digest or env given beside must agree with them."""
+    come from the raw ``trailers`` only, never from values beside them (VG1). A commitment without raw
+    ``trailers`` is a served one: its ``gate_body`` / ``governing_doc_sha256`` / ``env`` projection is
+    rebuilt into the trailers (:func:`served_commitment_trailers`, #420), so a governed record fetched
+    through ``GetCommitmentProof`` verifies. A bare ``gate_digest`` beside is never a source: it must agree
+    with the digest recomputed over the Gate body, so with no body it refuses."""
     if version == "v6":
         if commitment.get("trailers") is None:
-            commitment = {**commitment, "trailers": b""}
+            served = served_commitment_trailers(
+                commitment.get("gate_body"),
+                commitment.get("governing_doc_sha256"),
+                commitment.get("env"),
+            )
+            commitment = {
+                **commitment,
+                "trailers": served,
+                "governing_doc_sha256": None,
+                "env": None,
+            }
+        elif (
+            commitment.get("gate_body") is not None or commitment.get("env") is not None
+        ):
+            # The raw trailers are the only source: a served projection beside them is refused, as in
+            # every port, never compared.
+            raise CommitmentRefused(
+                "served_projection_beside_trailers",
+                "gate_body / env beside raw trailers",
+            )
         return commitment_digest_v6(commitment)
+    if commitment.get("gate_body") is not None:
+        raise CommitmentRefused("v5_refuses_gate_block")
     return _seam_commitment_digest(_v5_commitment_input(commitment))

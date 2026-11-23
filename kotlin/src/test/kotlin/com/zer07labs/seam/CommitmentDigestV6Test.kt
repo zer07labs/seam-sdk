@@ -223,11 +223,61 @@ class CommitmentDigestV6Test {
             )
             val tct = k["signed_artifact"] as String
             assertTrue(SeamCrypto.verifyTct(issuer, tct, c, nowS), name)
-            // The same TCT over the commitment without its trailers recomputes a different v6 digest.
+            // With neither trailers nor a projection the same TCT recomputes a different v6 digest.
             if ((k["trailers"] as String).isNotEmpty()) {
-                assertFalse(SeamCrypto.verifyTct(issuer, tct, c.copy(trailers = null), nowS), name)
+                assertFalse(
+                    SeamCrypto.verifyTct(issuer, tct, c.copy(trailers = null, governingDocSha256 = null), nowS),
+                    name,
+                )
             }
         }
+    }
+
+    @Test
+    fun servedCommitmentsVerify() {
+        val v = signed
+        val issuer = v["issuer_aid"] as String
+        for (k in vectorRows(v, "cases")) {
+            val name = k["name"] as String
+            val tct = k["signed_artifact"] as String
+            val c = signedCommitment(k)
+            val raw = c.trailers!!
+            val gate = if (raw.isNotEmpty() && raw[0] == 0x05.toByte()) {
+                val n = (raw[1].toInt() and 0xff) or ((raw[2].toInt() and 0xff) shl 8) or
+                    ((raw[3].toInt() and 0xff) shl 16) or ((raw[4].toInt() and 0xff) shl 24)
+                raw.copyOfRange(5, 5 + n)
+            } else {
+                null
+            }
+            val t = SeamCrypto.decodeCommitmentTrailers(raw, CommitmentVersion.V6)
+            assertEquals(hexOf(raw), hexOf(SeamCrypto.servedCommitmentTrailers(gate, t.governingDocSha256, t.env)), name)
+            val served = c.copy(trailers = null, gateBody = gate, governingDocSha256 = t.governingDocSha256, env = t.env)
+            assertTrue(SeamCrypto.verifyTct(issuer, tct, served, nowS), "$name: served")
+            if (t.governingDocSha256 != null) {
+                val flipped = if (t.env == "live") "sandbox" else "live"
+                assertFalse(SeamCrypto.verifyTct(issuer, tct, served.copy(env = flipped), nowS), "$name: flipped env")
+                assertFalse(
+                    SeamCrypto.verifyTct(issuer, tct, served.copy(governingDocSha256 = ByteArray(32)), nowS),
+                    "$name: wrong doc",
+                )
+            }
+            if (gate != null) {
+                assertFalse(SeamCrypto.verifyTct(issuer, tct, served.copy(gateBody = null), nowS), "$name: gate dropped")
+            }
+            assertFalse(
+                SeamCrypto.verifyTct(issuer, tct, c.copy(gateBody = ByteArray(0)), nowS),
+                "$name: projection beside trailers",
+            )
+        }
+    }
+
+    @Test
+    fun servedCommitmentTrailersRefusals() {
+        fun rule(f: () -> Unit) = assertThrows(CommitmentRefusal::class.java) { f() }.rule
+        assertEquals("env_without_governing_doc", rule { SeamCrypto.servedCommitmentTrailers(null, null, "live") })
+        assertEquals("slot_length_not_32", rule { SeamCrypto.servedCommitmentTrailers(null, ByteArray(31), null) })
+        assertEquals("env_not_sandbox_or_live", rule { SeamCrypto.servedCommitmentTrailers(null, ByteArray(32), "") })
+        assertEquals("env_not_sandbox_or_live", rule { SeamCrypto.servedCommitmentTrailers(null, ByteArray(32), "Live") })
     }
 
     @Test

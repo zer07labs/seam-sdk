@@ -1,4 +1,7 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ df24d05c tracking release/w4 (refreshed 2026-11-23).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ ddbfa6ff (refreshed 2026-11-23).
+     Re-pinned to runtime main (#419's TODO): ddbfa6ff is #1897 squash-merged; body byte-identical to the
+     df24d05c pin below. Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ df24d05c tracking release/w4 (refreshed 2026-11-23).
      seam-runtime#1897 (Flows W4 release, 0.115.0): the seam.audit.legal-hold.v1 row gains `hold_carried` (L3d);
      seam_event.proto unchanged. Prior pin (landed on main as 50cac84a, rt#1873), kept for history:
      Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ cd8505ce tracking golden-gate/revendor-bced9ba1890e-45063536209 (refreshed 2026-11-22).

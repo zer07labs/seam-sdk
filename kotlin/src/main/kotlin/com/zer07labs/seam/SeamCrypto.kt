@@ -110,6 +110,15 @@ data class Commitment(
     val governingDocSha256: ByteArray? = null,
     val selection: SelectionBlock? = null,
     val trailers: ByteArray? = null,
+    /**
+     * The served projection (#420): `seam.api.v1.Commitment` carries no raw trailers, only `gate = 13`
+     * (`GateRecord.body`, the exact `0x05` body) beside [governingDocSha256] and `env = 14`. With
+     * `trailers == null`, [SeamCrypto.verifyTct] under v6 rebuilds the trailer run from [gateBody],
+     * [governingDocSha256] and [env] ([SeamCrypto.servedCommitmentTrailers]) and decodes it under every
+     * v6 rule; v5 refuses either. Setting either beside [trailers] is refused.
+     */
+    val gateBody: ByteArray? = null,
+    val env: String? = null,
 )
 
 /** One weight override of a [SelectionBlock]. */
@@ -969,6 +978,36 @@ object SeamCrypto {
     private fun envSlotBytes(env: String?): ByteArray = slotBytes(env?.toByteArray(Charsets.US_ASCII))
 
     /**
+     * The raw v6 `0x05` / `0x06` trailer run a served `seam.api.v1.Commitment` projects (#420): `gate = 13`
+     * (`GateRecord.body`, the exact `0x05` body), `governing_doc_sha256 = 11` and `env = 14`. The
+     * projection is lossless under v6 (the `0x06` body v2 is exactly `0x02 ‖ doc ‖ env slot`), so this
+     * rebuilds the run (empty when the record has neither trailer) for [decodeCommitmentTrailers] to read
+     * under every v6 rule: field 10 is still the reader's own Gate digest over the body (VG1), and a Gate
+     * block must match the governing env. Nothing served is trusted: each value is hashed into the digest
+     * the TCT signs. v6 only. Throws [CommitmentRefusal]: an env without a doc
+     * (`env_without_governing_doc`), an env other than `sandbox`/`live`, a doc that is not 32 bytes
+     * (`slot_length_not_32`).
+     */
+    fun servedCommitmentTrailers(gateBody: ByteArray?, governingDocSha256: ByteArray?, env: String?): ByteArray {
+        val out = ByteArrayOutputStream()
+        fun run(marker: Int, body: ByteArray) {
+            out.write(marker)
+            val n = body.size
+            for (shift in 0 until 32 step 8) out.write((n ushr shift) and 0xff)
+            out.write(body)
+        }
+        if (gateBody != null) run(GATE_TRAILER, gateBody)
+        if (env != null) envOf(env.toByteArray(Charsets.UTF_8))
+        if (governingDocSha256 == null) {
+            if (env != null) throw CommitmentRefusal("env_without_governing_doc")
+            return out.toByteArray()
+        }
+        if (governingDocSha256.size != 32) throw CommitmentRefusal("slot_length_not_32")
+        run(GOVERNING_TRAILER, byteArrayOf(0x02) + governingDocSha256 + envSlotBytes(env))
+        return out.toByteArray()
+    }
+
+    /**
      * Decode the `0x05` / `0x06` trailers a sealed commitment appends into digest fields 10-12. [scheme]
      * is [CommitmentVersion.V5], [CommitmentVersion.V6], or `null` for the scheme-free decode (both `0x06`
      * body versions accepted, the version reported; the caller applies the scheme rules).
@@ -1132,13 +1171,23 @@ object SeamCrypto {
     private fun recomputeCommitmentDigest(version: CommitmentVersion, c: Commitment): String {
         val selection = c.selection?.let { selectionDigest(selectionBody(it)) } ?: c.selectionDigest
         if (version == CommitmentVersion.V5) {
+            if (c.gateBody != null) throw CommitmentRefusal("v5_refuses_gate_block")
+            if (c.env != null) throw CommitmentRefusal("v5_refuses_env")
             val raw = c.trailers ?: return seamCommitmentDigest(c)
             val t = decodeCommitmentTrailers(raw, CommitmentVersion.V5)
             return commitmentDigest(
                 version, c, CommitmentDigestFields(selection, c.certificateDigest, t.governingDocSha256, null),
             )
         }
-        val t = decodeCommitmentTrailers(c.trailers ?: ByteArray(0), CommitmentVersion.V6)
+        // Fields 10-12 come from the trailers only. No raw trailers is a served commitment: its projection
+        // is rebuilt into the trailer run (#420), which is then the only source.
+        val raw = if (c.trailers == null) {
+            servedCommitmentTrailers(c.gateBody, c.governingDocSha256, c.env)
+        } else {
+            if (c.gateBody != null || c.env != null) throw CommitmentRefusal("served_projection_beside_trailers")
+            c.trailers
+        }
+        val t = decodeCommitmentTrailers(raw, CommitmentVersion.V6)
         return commitmentDigest(
             version, c, CommitmentDigestFields(selection, t.gateDigest, t.governingDocSha256, t.env),
         )

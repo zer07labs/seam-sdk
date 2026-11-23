@@ -815,7 +815,7 @@ export function verifyTct(
       return false;
     // Exact string compare: the runtime emits lowercase hex, and an uppercase spelling is a different
     // statement, not a normalization opportunity.
-    if (stmt.commitment_digest !== commitmentDigestUnder(version, version === "v6" && commitment.trailers == null ? { ...commitment, trailers: "" } : commitment)) return false;
+    if (stmt.commitment_digest !== tctCommitmentDigest(version, commitment)) return false;
     // Option selection (runtime 0.90.0, selection-rule.v1 §5 steps 4, 6-9). No block means "not a
     // selection decision" and nothing more. A block without the entries cannot be checked, so it fails
     // closed rather than passing as if the winner had been recomputed.
@@ -2423,6 +2423,68 @@ export interface Commitment {
    * `governing_doc_sha256` (the digest-only path), but `verifyTct` reads absent as `""` under v6, so fields
    * 10-12 come from the trailers only. No other marker is carried: `0x01`-`0x04` and `0x07` are refused. */
   trailers?: DigestBytes | null;
+  /** The served Gate block (`Commitment.gate = 13`, `GateRecord.body`): the exact `0x05` body, never a
+   * digest of it. A served projection: with no `trailers`, {@link verifyTct} rebuilds the v6 trailer run
+   * from it, `governing_doc_sha256` and `env` ({@link servedCommitmentTrailers}, #420). v5 refuses it. */
+  gate_body?: DigestBytes | null;
+  /** The served env (`Commitment.env = 14`): exactly `"sandbox"` or `"live"`, or absent. A served
+   * projection, read like `gate_body`; v5 refuses it (`v5_refuses_env`). */
+  env?: string | null;
+}
+
+/** The raw v6 `0x05` / `0x06` trailer run a served `seam.api.v1.Commitment` projects (#420).
+ *
+ * `Commitment` carries no raw trailers. It carries `gate = 13` (`GateRecord.body`, the exact `0x05` body),
+ * `governing_doc_sha256 = 11` and `env = 14`, and that projection is lossless under v6: the `0x06` body v2
+ * is exactly `0x02 ‖ doc ‖ env slot`. This rebuilds the run (empty when the record has neither trailer); a
+ * verifier then decodes it under every v6 rule ({@link decodeCommitmentTrailers}), so field 10 is still its
+ * own `seam-gate-digest:v1` over the body (VG1) and a Gate block must match the governing env. Nothing served
+ * is trusted: every value is hashed into the digest the TCT signs. v6 only. Refuses an env without a doc
+ * (`env_without_governing_doc`), an env other than `sandbox`/`live`, and a doc that is not 32 bytes. */
+export function servedCommitmentTrailers(
+  gateBody: DigestBytes | null | undefined,
+  governingDocSha256: DigestBytes | null | undefined,
+  env: string | null | undefined,
+): Uint8Array {
+  const parts: Uint8Array[] = [];
+  const run = (marker: number, body: Uint8Array) => {
+    const head = new Uint8Array(5);
+    head[0] = marker;
+    new DataView(head.buffer).setUint32(1, body.length, true);
+    parts.push(head, body);
+  };
+  if (gateBody !== undefined && gateBody !== null) run(GATE_TRAILER, digestBytes(gateBody, "gate_body"));
+  const e = env === undefined || env === null ? null : envOfString(env);
+  if (governingDocSha256 === undefined || governingDocSha256 === null) {
+    if (e !== null) refuse("env_without_governing_doc");
+    return concat(...parts);
+  }
+  const doc = digestBytes(governingDocSha256, "governing_doc_sha256");
+  if (doc.length !== 32) refuse("slot_length_not_32", `governing_doc_sha256 is ${doc.length} bytes`);
+  run(GOVERNING_TRAILER, concat(new Uint8Array([2]), doc, envSlot(e)));
+  return concat(...parts);
+}
+
+/** The digest {@link verifyTct} compares, under the selected version only. Under v6 fields 10-12 come from
+ * the raw `trailers` only (VG1); a commitment without them is a served one, whose `gate_body` /
+ * `governing_doc_sha256` / `env` projection is rebuilt into the trailers ({@link servedCommitmentTrailers}).
+ * Under v5 a served Gate block or env refuses. */
+function tctCommitmentDigest(version: CommitmentDigestVersion, commitment: Commitment): string {
+  const { gate_body, env, ...c } = commitment;
+  const hasGate = gate_body !== undefined && gate_body !== null;
+  const hasEnv = env !== undefined && env !== null;
+  if (version === "v6") {
+    if (c.trailers !== undefined && c.trailers !== null) {
+      // The raw trailers are the only source: a served projection beside them is refused, never compared.
+      if (hasGate || hasEnv) refuse("served_projection_beside_trailers", "gate_body / env beside raw trailers");
+      return commitmentDigestUnder(version, c);
+    }
+    const trailers = servedCommitmentTrailers(gate_body, c.governing_doc_sha256, env);
+    return commitmentDigestUnder(version, { ...c, trailers, governing_doc_sha256: null });
+  }
+  if (hasGate) refuse("v5_refuses_gate_block");
+  if (hasEnv) refuse("v5_refuses_env");
+  return commitmentDigestUnder(version, c);
 }
 
 function refuse(rule: string, detail?: string): never {

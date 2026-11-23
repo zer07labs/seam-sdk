@@ -52,6 +52,21 @@ Execution: each phase is written by a dedicated Opus executor agent on `feat/pos
 
 ## Phase log
 
+### Flows W5 clients · 2026-11-23 (plans/flows-w5-clients.md)
+- P1-P4 executed on `feat/flows-w5-clients`. Gate:
+  - pytest 3238 passed / 73 skipped; ruff clean;
+  - TS 738 passed;
+  - Go vet/test clean;
+  - Java and Kotlin `CommitmentDigestV6Test` 14/14 each, full suites green (JDK 17 at /opt/homebrew/opt/openjdk@17);
+  - verify 296 passed, clippy and fmt clean, independence OK, publish dry run 0.6.0 OK;
+  - check_vendored_spec OK.
+- Independent Opus review: PASS, no blockers. Took all 4 should-fix items:
+  - projection-beside-trailers refuses under one rule name in every port;
+  - `--chain` keeps invalid-key entries, so they fail the run;
+  - refusal-path tests in TS, Go, Java, Kotlin, Python and Rust;
+  - docstring and leading-zero nits.
+  Re-gated: pytest 3243 passed / 73 skipped, TS 738 passed, Go ok, Java 148 / Kotlin 149 tests 0 failed, verify 296 passed (clippy and fmt clean).
+
 ### Finalization · 2026-10-19
 - **Gate (clean, after `make generate`):** pytest 1985 passed / 30 skipped (3 of the skips are `test_packaging`, which errors under `SEAM_REQUIRE_WHEEL_BUILD=1` locally only: the project venv has no pip, so the builder falls back to the system pip3 and builds `UNKNOWN-0.0.0`; in a pip-equipped venv with `SEAM_REQUIRE_WHEEL_BUILD=1` all 10 pass); ruff clean; TS 362 passed / 15 skipped; Go vet/test/gofmt clean; Java and Kotlin green; check-contract exit 0; sibling quotes 3/3; scripts/test_*.py guards all green.
 - **Wheel smoke:** built `seam_sdk-0.48.0` wheel, installed in a fresh venv, imports, derives, and `load_identity_facts` reads `identity_v1_aid_python.json`.
@@ -4069,7 +4084,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2322`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2349`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4556,12 +4571,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:135` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:2072-2089` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:2074-2091`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:2099-2116` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:2101-2118`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:1974` and `PROGRESS.md:3981` cites `CHANGELOG.md:1859`, both already ~130-250
+  `CHANGELOG.md:2001` and `PROGRESS.md:3981` cites `CHANGELOG.md:1886`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4571,7 +4586,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:2074-2091`) to `CHANGELOG.md:2090-2107` — verified against the exact
+  (`CHANGELOG.md:2101-2118`) to `CHANGELOG.md:2117-2134` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
