@@ -157,12 +157,12 @@ def _event_fields(manifest: pathlib.Path) -> list[str]:
 # after or delete outright. Lifted verbatim from the generated files rather than hand-typed, so a
 # mutation that stops matching means the stubs changed shape — which is itself worth knowing.
 #
-# `digest_schema` and not `signature`, which reads more naturally as "the tail": `signature` also
+# `chain_kind` and not `signature`, which reads more naturally as "the tail": `signature` also
 # appears on `DecisionSealed`, so `SIGNATURE_FIELD_NUMBER` occurs twice in the .pyi and the
 # uniqueness assertion below catches it. Every mutation here needs a line it can identify, not one it
-# can merely find.
-PY_ANCHOR = "    DIGEST_SCHEMA_FIELD_NUMBER: _ClassVar[int]\n"
-TS_ANCHOR = "   * @generated from field: uint32 digest_schema = 5;\n"
+# can merely find. (It was `digest_schema` until Flows W4's `ChainManifest` declared one too.)
+PY_ANCHOR = "    CHAIN_KIND_FIELD_NUMBER: _ClassVar[int]\n"
+TS_ANCHOR = "   * @generated from field: uint32 chain_kind = 11;\n"
 
 
 def _append_field_both(
@@ -225,7 +225,7 @@ def test_a_field_deleted_from_both_event_trees_is_reported_missing_with_exit_8(
         f"{r.returncode}\n{r.stdout}\n{r.stderr}"
     )
     out = r.stdout + r.stderr
-    assert "ChainHeadAttestation/digest_schema" in out, out
+    assert "ChainHeadAttestation/chain_kind" in out, out
     assert "MISSING from the" in out, out
 
 
@@ -422,9 +422,12 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
     # LearningDecision tags 10-14 and LearningOutcome tags 4-7 (outcome-ingestion BP-2a,
     # seam-runtime#1572). 124 since runtime 0.91.0: DecisionSealed.certificate and its CertificateRef
     # message (cert-ref, seam-runtime#1749). 133 since Flows W1 R3: SeamEvent.flow_ref (tag 28) and
-    # .chain (tag 29) with their FlowRef and ChainRef messages (DECISIONS 2026-11-21, CL C6).
-    assert len(fields) == 133, (
-        f"expected 133 declared event fields, found {len(fields)}"
+    # .chain (tag 29) with their FlowRef and ChainRef messages (DECISIONS 2026-11-21, CL C6). 169 since
+    # Flows W4 (runtime 0.115.0): chain_bundle v2's SeamEvent.chain_manifest (tag 30), ChainManifest,
+    # ChainManifestEntry, ChainHead, ErasureItem, attestation v3 and erasure certificate v2 fields, and
+    # FlowRef/ChainRef.version (DECISIONS 2026-11-23: carried, not verified).
+    assert len(fields) == 169, (
+        f"expected 169 declared event fields, found {len(fields)}"
     )
     messages = {line.split("/")[0] for line in fields}
     assert messages == {
@@ -433,10 +436,14 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
         "AuthorizeEvaluated",
         "BudgetBreach",
         "CertificateRef",
+        "ChainHead",
         "ChainHeadAttestation",
+        "ChainManifest",
+        "ChainManifestEntry",
         "ChainRef",
         "DecisionSealed",
         "ErasureCertificate",
+        "ErasureItem",
         "EventRedriven",
         "FlowRef",
         "GoverningConfig",

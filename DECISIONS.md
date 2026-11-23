@@ -3389,3 +3389,19 @@ Ranked by blast radius. The two possible one-way doors (a public exception API, 
   JSON member already refused it, so this follows the existing rule.
 - **Decided by:** Opus (reversible tier: reader-side code following a frozen, hub-pinned contract).
 
+
+## 2026-11-23 — `seam.event.v1` W4 surface (chain_bundle v2, runtime 0.115.0, seam-runtime#1897): carried, not verified
+
+- **The fields:** 36 manifest lines, now in the BSR after seam-runtime#1873 landed. They cover `SeamEvent.chain_manifest`
+  (tag 30), the `ChainManifest`, `ChainManifestEntry`, `ChainHead` and `ErasureItem` messages, the attestation v3
+  fields on `ChainHeadAttestation` (`chain_kind`, `env`, `flow_id`, `stream_id`, `version`), the erasure certificate v2
+  fields on `ErasureCertificate` (`erased_items`, `heads`, `held_items`, `stream_id`), and `FlowRef.version` /
+  `ChainRef.version`. Before: CI's `STREAM=1 EVENTS=1 check-contract` exited 8 on these lines (Python). After, against
+  the BSR, it exits 0.
+- **Decision:** ADOPT into `contract/event-field-manifest.txt` as **carried, not verified**. The generated stubs carry
+  them as-is. `verify/` reads `FlowRef`/`ChainRef.version` (chain_bundle v2, #416). It does not check attestation v3,
+  erasure certificate v2 or chain manifests. Whether it will is a W5 decision, and nothing here pre-empts it.
+- **Same change:** `verify/src/entry.rs` adds `hold_carried` to `seam.audit.legal-hold.v1`, matching the vendored spec
+  (df24d05c) and the runtime verifier. The gate's `probe_event_field` stops using `grep -q` under `pipefail`: the
+  bigger TS extraction made `sort` die of SIGPIPE, and CI then read `AuditEntryEvent.actor` as ABSENT (exit 2).
+- **Decided by:** owner (flows leader relay, 2026-11-23). **Verdict:** ADOPT, carried-not-verified. **Status:** ADOPTED.

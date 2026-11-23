@@ -180,15 +180,15 @@ probe_api() {
 probe_event_field() {
   local label="$1" want="$2" tag="$3"
   local rc=0 field="${2#*/}"
-  if fields_python "$PY_EV" | grep -qxF "$want"; then
+  if fields_python "$PY_EV" | grep -xF "$want" >/dev/null; then
     note "PRESENT $label [python]"
   else
     note "ABSENT  $label [python]"; rc=1
   fi
-  # BOTH conditions on the TS side: the field is declared on that message, AND it still carries the
-  # tag this probe's label advertises. `grep -qxF` for the first (exact line, no regex), `grep -qE`
-  # for the second (the tag lives in protobuf-es's generated comment, not in the extracted set).
-  if fields_ts "$TS_EV" seam.event.v1 | grep -qxF "$want" \
+  # BOTH on TS: declared on that message (`grep -xF`, never `-q` after an extractor: under pipefail `-q`
+  # SIGPIPEs its `sort` once the set outgrows the pipe buffer, reading PRESENT as ABSENT, W4 CI), AND
+  # still carrying the label's tag (`grep -qE` on the file: the tag lives in protobuf-es's comment).
+  if fields_ts "$TS_EV" seam.event.v1 | grep -xF "$want" >/dev/null \
      && grep -qE "\\b${field} = ${tag};" "$TS_EV"; then
     note "PRESENT $label [ts]"
   else
