@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.115.0 — 2026-11-23
+
 ## 0.114.0 — 2026-11-23
 
 ### Changed — `seam-verify` reads chain_bundle v2 (Flows W4 train 1, seam#264)
