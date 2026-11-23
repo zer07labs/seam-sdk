@@ -1,4 +1,7 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ cd8505ce tracking golden-gate/revendor-bced9ba1890e-45063536209 (refreshed 2026-11-22).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ df24d05c tracking release/w4 (refreshed 2026-11-23).
+     seam-runtime#1897 (Flows W4 release, 0.115.0): the seam.audit.legal-hold.v1 row gains `hold_carried` (L3d);
+     seam_event.proto unchanged. Prior pin (landed on main as 50cac84a, rt#1873), kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ cd8505ce tracking golden-gate/revendor-bced9ba1890e-45063536209 (refreshed 2026-11-22).
      seam-runtime#1873 (Flows W4, the 0.114.0 contract release): body byte-identical to the 9223b384 pin below;
      re-pinned to the release head so the vendored copy names the commit that ships it. Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 9223b384 tracking lanes/w4-v2-content (refreshed 2026-11-22).
@@ -511,7 +514,7 @@ when present** (absent appends nothing; `Some("")` appends a zero length and so 
 | domain | actions | envelope `classification` |
 |---|---|---|
 | `seam.audit.management.v1` | `session_resumed`, `session_cancelled`, `party_registered`, `party_removed`, `cross_namespace_grant_placed`, `cross_namespace_grant_revoked`, `tenant_enrolled`, `tenant_revoked`, `config_snapshot_installed`, `config_section_removed`, `events_redriven`, `erasure_previewed`, `subject_commitments_recomputed`, `subject_commitment_recompute_refused`, `subject_commitment_tombstoned`, `tenant_move_out`, `tenant_move_in` | `Internal` |
-| `seam.audit.legal-hold.v1` | `hold_placed`, `hold_released` | `Internal` |
+| `seam.audit.legal-hold.v1` | `hold_placed`, `hold_released`, `hold_carried` | `Internal` |
 | `seam.audit.archive-evict.v1` | `ciphertext_evicted` | `Internal` |
 | `seam.audit.boundary.v1` | `boundary.data_flagged` | `Confidential` |
 | `seam.audit.denial.v1` | `admit.compat_reject` | `Internal` |

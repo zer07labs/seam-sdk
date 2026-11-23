@@ -72,7 +72,9 @@ const FACT_APPENDED: &str = "fact_appended";
 const DOMAINS: &[(&str, &[&str])] = &[
     (
         "seam.audit.legal-hold.v1",
-        &["hold_placed", "hold_released"],
+        // `hold_carried` (Flows W4 R4c-b §2.2, runtime 0.115.0): `subject` cites the tenant-chain
+        // `hold_placed` entry. Mirrors seam-runtime `crates/seam-verify/src/entry.rs`.
+        &["hold_placed", "hold_released", "hold_carried"],
     ),
     ("seam.audit.archive-evict.v1", &["ciphertext_evicted"]),
     ("seam.audit.boundary.v1", &["boundary.data_flagged"]),
