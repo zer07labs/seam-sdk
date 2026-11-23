@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.115.1 — 2026-11-23
+
 ### Fixed — a governed v6 record served by `GetCommitmentProof` now verifies (#420, all six ports)
 
 - `verify_decision` / `verifyTct` returned `False` for every governed v6 commitment fetched from the
