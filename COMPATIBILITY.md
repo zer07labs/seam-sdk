@@ -62,11 +62,11 @@ boundary above, that means an SDK ≥ 0.33.2 needs a runtime image built from se
 
 | Consumer | Constraint on `seam-sdk` | Verified at |
 |---|---|---|
-| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.117.0,<0.118` | `seam-adapters/core/pyproject.toml:159` |
+| `seam-adapters` (`seam-agent-core[sdk]`) | `seam-sdk>=0.118.0,<0.119` | `seam-adapters/core/pyproject.toml:164` |
 
 **One caveat on this row: the lockfile number is not a real resolution.**
 `seam-adapters/uv.lock:4217` resolved `seam-sdk` **0.17.0** when this row was first verified. That
-was inside the range declared then and is outside the one declared now (raised to `>=0.43.3,<0.44` in
+was inside the range declared then and is outside the one declared now (the row above; first raised past it to `>=0.43.3,<0.44` in
 seam-adapters a46209f), and the lock was never evidence either way: `seam-adapters/pyproject.toml:59` overrides the dependency
 with an unconditional editable path source (`{ path = "../seam-sdk/python", editable = true }`), so
 the lock records the sibling checkout rather than a resolved release. A reader should not take
