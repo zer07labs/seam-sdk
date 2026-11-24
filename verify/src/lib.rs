@@ -104,6 +104,7 @@ pub mod chain_key;
 pub mod commitment;
 mod entry;
 pub mod gate;
+pub mod manifest;
 pub mod selection;
 pub mod verify;
 pub mod voter;
@@ -114,9 +115,9 @@ pub mod wire;
 // `verify` is a helper they compose.
 pub use bundle::{verify_bundle, BundleError, BundleReport};
 pub use verify::{
-    chain, chain_anchored, chain_by_tenant, check_kind_payload, check_not_truncated,
-    erasure_certificate, link, verify_anchor, verify_authenticity, verify_authenticity_anchored,
-    verify_authenticity_anchored_with, verify_authenticity_by_tenant,
+    chain, chain_anchored, chain_by_tenant, chain_selected, check_kind_payload,
+    check_not_truncated, erasure_certificate, link, verify_anchor, verify_authenticity,
+    verify_authenticity_anchored, verify_authenticity_anchored_with, verify_authenticity_by_tenant,
     verify_authenticity_by_tenant_with, AuthOptions, ChainReport, IssuerReport, TenantChain,
     Uncovered, UNCOVERED_ENTRY,
 };

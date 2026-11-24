@@ -4084,7 +4084,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2353`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2368`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4571,12 +4571,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:135` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:2103-2120` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:2105-2122`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:2118-2135` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:2120-2137`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:2005` and `PROGRESS.md:3981` cites `CHANGELOG.md:1890`, both already ~130-250
+  `CHANGELOG.md:2020` and `PROGRESS.md:3981` cites `CHANGELOG.md:1905`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4586,7 +4586,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:2105-2122`) to `CHANGELOG.md:2121-2138` — verified against the exact
+  (`CHANGELOG.md:2120-2137`) to `CHANGELOG.md:2136-2153` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -5455,3 +5455,13 @@ Kotlin green; `verify/` cargo 286 passed, clippy and fmt clean; ruff clean;
 `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exit 0. seam-mcp CI-cost pass shipped separately as
 seam-mcp#161 (acfe00d3). Deferred items and their blockers: DECISIONS 2026-11-22 Flows W2 entry.
 
+
+## flows-w5-prevendor-1910 (waves flows W5, 2026-11-24)
+
+Plan: `plans/flows-w5-prevendor-1910.md`. Branch `flows-w5/prevendor-1910`, one PR. P1 vendor (proto, spec,
+`chain_manifest_vectors.json` at rt#1910 `a196a6c1`; spec-pin OK via gh), P2 `verify/` CHAIN_MANIFEST v2
+(seam-verify 0.7.0), P3 event-field manifest 169→171 + docs. Local gates against `a196a6c1`
+(`make generate-local` from an export): Python 3246 passed / 73 skipped; scripts 773 passed; ruff clean;
+TS fail 0; Go, Java, Kotlin green; `verify/` cargo 305 passed, clippy and fmt clean; independence 0;
+`STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exit 0. CI's contract job reads BSR `main` and stays at
+exit 8 until rt#1910 merges and pushes; merge after that (DECISIONS 2026-11-24).

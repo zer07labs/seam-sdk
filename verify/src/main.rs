@@ -334,6 +334,8 @@ fn cmd_chain(
 
     let report = match &anchor {
         Some(a) => verify::chain_anchored(&events, &a.tenant, a.attested_len, &a.attested_head),
+        // One selected chain: a tenant manifest's listed chains are outside the selection (V7 skipped).
+        None if chain_sel.is_some() => verify::chain_selected(&events),
         None => verify::chain(&events),
     };
 

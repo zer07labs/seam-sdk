@@ -1,4 +1,10 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ ddbfa6ff (refreshed 2026-11-23).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 37cb8115 (refreshed 2026-11-24).
+     Re-pinned to runtime main: 37cb8115 is #1910 squash-merged; body byte-identical to the a196a6c1 pin below.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ a196a6c1 tracking lanes/w5-train-2 (refreshed 2026-11-24).
+     seam-runtime#1910 (Flows W5 train, 0.117.0; D-163): CHAIN_MANIFEST signs under seam.audit.chain-manifest.v2 and
+     carries tenant_len = 10 / tenant_head = 11, the tenant head it follows. Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ ddbfa6ff (refreshed 2026-11-23).
      Re-pinned to runtime main (#419's TODO): ddbfa6ff is #1897 squash-merged; body byte-identical to the
      df24d05c pin below. Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ df24d05c tracking release/w4 (refreshed 2026-11-23).
@@ -1231,10 +1237,10 @@ attestation v3 = P("seam.audit.chain-head-attestation.v3") ‖ P(le64 attested_l
   payload: ChainHeadAttestation fields 1-7 plus stream_id = 8, flow_id = 9, env = 10, chain_kind = 11,
            version = 12 (all omitted on v1/v2); entry domain seam.audit.chain-attest-entry.v2
 
-manifest       = P("seam.audit.chain-manifest.v1") ‖ P(stream_id) ‖ P(tenant) ‖ P(governing_doc_sha256)
+manifest       = P("seam.audit.chain-manifest.v2") ‖ P(stream_id) ‖ P(tenant) ‖ P(governing_doc_sha256)
                  ‖ P(le64 governing_generated_at) ‖ P(le64 manifest_at) ‖ P(le32 n)
                  ‖ n × { P(flow_id) ‖ P(env) ‖ V ‖ P(le64 len) ‖ P(head) ‖ P(le32 state) }
-                 ‖ P(issuer_aid) ‖ P(le32 digest_schema)
+                 ‖ P(issuer_aid) ‖ P(le32 digest_schema) ‖ P(le64 tenant_len) ‖ P(tenant_head)
   entry domain seam.audit.chain-manifest-entry.v1
 
 erasure v2     = P("seam.erasure-certificate.v2") ‖ P(tenant) ‖ P(stream_id) ‖ P(subject)
@@ -1251,13 +1257,20 @@ erasure v2     = P("seam.erasure-certificate.v2") ‖ P(tenant) ‖ P(stream_id)
 ```
 ChainManifest      { stream_id = 1; tenant = 2; governing_doc_sha256 = 3; governing_generated_at = 4;
                      manifest_at = 5; repeated ChainManifestEntry chains = 6; issuer_aid = 7;
-                     digest_schema = 8; signature = 9 }
+                     digest_schema = 8; signature = 9; tenant_len = 10; tenant_head = 11 }
 ChainManifestEntry { flow_id = 1; env = 2; len = 3; head = 4; state = 5; version = 6 }
 ```
 
-- The tenant's declared flow chains, signed (fields 1-8, preimage above). It is appended to the **tenant**
-  chain (`chain.kind = 1`), envelope `classification` `Internal`, `namespace` `""`, entry id
-  `chain-manifest:<len>`.
+- The tenant's declared flow chains, signed (fields 1-8, 10 and 11, preimage above). It is appended to the
+  **tenant** chain (`chain.kind = 1`), envelope `classification` `Internal`, `namespace` `""`, entry id
+  `chain-manifest:<tenant_len>`.
+- **Since 0.117.0 (W5, D-163) the manifest signs the tenant head it follows.** `tenant_len` is the tenant
+  chain's length before the manifest's entry and `tenant_head` that chain's head (`genesis(K)` at 0): the
+  entry sits at `chain.seq = tenant_len` with `prev_checksum = tenant_head`, else
+  `MANIFEST_TENANT_HEAD_MISMATCH`. The writer appends it only while the tenant head is still the signed one
+  (a moved head writes nothing; the next pass re-signs). A verified manifest therefore covers the tenant
+  chain as an attestation does, as well as every flow chain it lists. Domain `v1` manifests (no fields
+  10-11) are not verifiable under v2; none survive the W4R reset.
 - `chains` is **strictly ascending** by `flow_id`, then `env` (both bytewise), then `version` (numeric); a
   duplicate or out-of-order entry refuses (`chains_not_ascending`). `state`: 1 active, 2 retired,
   3 moved_out, 4 destroyed (else `state_unknown`). A declared-but-empty chain has `len = 0` and

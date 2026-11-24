@@ -10,7 +10,7 @@
 #
 # What was covering it before, and still is, narrowly: the four STREAM/EVENTS presence probes in
 # `scripts/check-contract.sh` assert `session_lifecycle`, `chain_head_attestation`,
-# `ciphertext_digest` and `AuditEntryEvent.actor` — four of the 169 fields below, chosen because the
+# `ciphertext_digest` and `AuditEntryEvent.actor` — four of the 171 fields below, chosen because the
 # SDK decodes them. They never fail on anything else being added, removed or renamed. They are kept
 # deliberately: they fire even when this manifest is absent or has just been rewritten, and they
 # assert what the SDK READS rather than what the contract CONTAINS. Two different questions.
@@ -76,15 +76,20 @@
 # SPELLING
 # --------
 # One line per field: `<Message>/<field_name>`, proto spelling (snake_case), sorted, no tags, no
-# types. A `map` field is ONE entry on its owner, never a key/value pair. 169 fields, 22 messages (measured at the Flows W4
-# chain_bundle v2 adoption, seam-runtime 0.115.0).
+# types. A `map` field is ONE entry on its owner, never a key/value pair. 171 fields, 22 messages (measured at the Flows W5
+# D-163 pre-vendor, seam-runtime#1910 @ a196a6c1, 0.117.0).
 #
 # CARRIED, NOT VERIFIED (Flows W4, DECISIONS 2026-11-23): the attestation v3 lines (`ChainHeadAttestation/`
 # chain_kind, env, flow_id, stream_id, version) and the erasure certificate v2 lines (`ErasureCertificate/` erased_items,
 # heads, held_items, stream_id; all of `ErasureItem/` and `ChainHead/`) are in the stubs and recorded here, but no
-# verifier in this repo checks v3/v2 signatures or heads yet. Whether it will is a W5 decision. `ChainManifest/`,
-# `ChainManifestEntry/` (tag 30) are carried on the same terms. `FlowRef/version` and `ChainRef/version` are read by
+# verifier in this repo checks v3/v2 signatures or heads yet. `FlowRef/version` and `ChainRef/version` are read by
 # `verify/` since chain_bundle v2 (#416).
+#
+# VERIFIED IN `verify/` (Flows W5, DECISIONS 2026-11-24): every `ChainManifest/` and `ChainManifestEntry/` line (tag 30),
+# including `tenant_len`/`tenant_head` (fields 10/11, D-163, seam-runtime#1910). seam-verify decodes the payload on
+# both transports, recomputes its entry digest, and checks its structure, its signed tenant head and the listed heads.
+# Its domain v2 signature is checked by the library (`manifest::verify_signature`), which no CLI path reaches yet
+# (`--issuer` still refuses keyed chains). The hand-written clients carry the fields in the generated stubs only.
 #
 AgentPin/agent_id
 AgentPin/version
@@ -138,6 +143,8 @@ ChainManifest/manifest_at
 ChainManifest/signature
 ChainManifest/stream_id
 ChainManifest/tenant
+ChainManifest/tenant_head
+ChainManifest/tenant_len
 ChainManifestEntry/env
 ChainManifestEntry/flow_id
 ChainManifestEntry/head

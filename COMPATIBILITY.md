@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1308`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1323`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -271,6 +271,14 @@ push refuses because the tag already exists, and nothing else is written. Pin `s
 seamd 0.115.0. `seam-verify` 0.6.0, published separately (its version is its own), is the first build
 that reads chain_bundle v2 (#421).
 
+**`seam-verify` 0.7.0 pairs with runtime 0.117.0 (seam-runtime#1910, D-163).** Its manifests sign the tenant
+head they follow, under `seam.audit.chain-manifest.v2` (`verify/src/manifest.rs:29`). 0.7.0 checks each
+manifest in the integrity walk (`verify/src/verify.rs:625`, V7 at `verify/src/verify.rs:670`). A domain v1
+manifest, written by runtime 0.114.0-0.116.x, does not verify. The spec records that none survive the W4R reset.
+`seam-verify` 0.6.0 and earlier link a `CHAIN_MANIFEST` but disclose it as unverified content. The SDK
+release that carries this follows runtime 0.117.0's dispatch. Its branch merges after the runtime merge,
+because the event-field gate reads BSR `main` (DECISIONS 2026-11-24).
+
 **Option selection pairs with runtime 0.90.0 or later.** It is additive: a commitment with no `selection`
 block is "not a selection decision", field 9 stays `0x00`, and every earlier record verifies as before. An
 SDK below 0.90.1 cannot verify a selection decision's TCT, because it frames field 9 as `0x00`, and it
@@ -305,7 +313,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2324-2346`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2339-2361`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
