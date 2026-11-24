@@ -1,4 +1,4 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 8e579b2c tracking dc1-trains/release-0121 (refreshed 2026-11-24).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 62d94cc2 on runtime main (refreshed 2026-11-24).
      seam-runtime#1959 (0.121.0, deep-cleanup 3.3 step 4, train 1): AuthorizeEvaluated.subject_digest (tag 10) deleted and reserved; subject_digests (11) is the one carrier.
      Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 837c48a3 (refreshed 2026-11-24).
