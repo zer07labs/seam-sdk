@@ -30,9 +30,6 @@ pub struct ChainReport {
     pub links: usize,
     pub advisory: usize,
     pub duplicates: usize,
-    /// Events with no chain fields that are NOT advisory — pre-cutover history, which this tool
-    /// **cannot** verify. Disclosed, never silently folded in with the advisory ones.
-    pub unverifiable: Vec<u64>,
     /// **Spec §Versioning — unverified CONTENT.** `(seq, kind)` for every verified link whose `kind`
     /// this build does not model ([`wire::MODELLED_KINDS`]): a kind from a later additive revision of
     /// `seam-event.v1`. Their linkage is fully checked and they advance the head like any other link —
@@ -355,8 +352,9 @@ pub fn dedup_with_warnings(events: Vec<Event>) -> Result<Dedup, String> {
 ///
 /// **Chained-ness is by field PRESENCE, not by `kind`.** A verifier keyed on `kind` trips over the first
 /// `LEARNING_DECISION` in an unfiltered stream, and over the deliberately off-chain `chain_anchor`.
-/// This check (and `advisory`/`unverifiable` counting) is GLOBAL, never per-tenant — an event with no
-/// chain fields is counted once, before any tenant lookup, exactly as it always was.
+/// This check (and `advisory` counting) is GLOBAL, never per-tenant — an event with no chain fields is
+/// counted once, before any tenant lookup. A NON-advisory event with no chain fields fails the walk
+/// (seam-runtime deep-cleanup S9-O7): it is a stripped link or history this tool cannot check.
 ///
 /// **The cutover-backfill trap.** A tenant's first *attempted* link not matching its start (genesis,
 /// since an anchored tenant's start was already validated and cannot itself be wrong) is ambiguous:
@@ -398,7 +396,6 @@ fn walk(
         links: 0,
         advisory: 0,
         duplicates: 0,
-        unverifiable: Vec::new(),
         unmodelled: Vec::new(),
         head: GENESIS.to_vec(),
         heads: vec![GENESIS.to_vec()],
@@ -414,20 +411,23 @@ fn walk(
     let mut covering_tenants: BTreeSet<(String, String)> = BTreeSet::new();
 
     for e in events {
-        // First, before the link/advisory split and before any `unverifiable` counting — as the runtime
+        // First, before the link/advisory split and before the unchained refusal — as the runtime
         // does — so a relabelled or stripped event reports the binding, never a downstream symptom of
         // it. Every entry point (`chain`, `chain_anchored`, and `bundle` through it) inherits it here.
         check_kind_payload(e)?;
         let (Some(digest), Some(checksum)) = (e.digest.as_ref(), e.checksum.as_ref()) else {
-            if e.is_advisory() {
-                r.advisory += 1;
-            } else {
-                // A chained kind with no chain fields: either pre-cutover history, or an attacker who
-                // stripped the fields. We cannot tell them apart from bytes — and we do not pretend to.
-                // The tamper is caught at the NEXT link (its prev_checksum will not match the head this
-                // event should have produced); the history is caught by --strict.
-                r.unverifiable.push(e.seq);
+            if !e.is_advisory() {
+                // A chained kind with no chain fields: a stripped link or history this tool cannot
+                // check. It cannot tell them apart from bytes, and neither may green (S9-O7): a strip
+                // of the LAST link has no next link to catch it.
+                return Err(format!(
+                    "UNCHAINED EVENT — seq {}: a {} event carries no digest/checksum and is not an \
+                     advisory kind. It is a stripped link or history this tool cannot check, and the \
+                     chain does not verify over it.",
+                    e.seq, e.kind
+                ));
             }
+            r.advisory += 1;
             continue;
         };
 
@@ -577,7 +577,7 @@ fn walk(
         // §Versioning: this link is verified — the check above needed no payload semantics — but if
         // its kind is one this build has never seen, its CONTENT is not. Recorded here rather than
         // inferred downstream, because by the time the report is printed the kind is gone. GLOBAL,
-        // like `advisory`/`unverifiable` — not scoped per tenant.
+        // like `advisory` — not scoped per tenant.
         if !e.is_modelled() {
             r.unmodelled.push((e.seq, e.kind.clone()));
         }
@@ -1411,8 +1411,8 @@ pub fn verify_authenticity_anchored_with(
         //
         // The payload tenant must EQUAL the envelope's (#835 step 4). An empty payload tenant under a
         // named envelope — an attestation minted before U-RT-3 Phase 2 — used to be accepted on the
-        // envelope's word and counted as "tenant-unbound"; it is now this same refusal, with or without
-        // `--strict`, because its v1 signature never named the tenant whose chain it is attributed to.
+        // envelope's word and counted as "tenant-unbound"; it is now this same refusal, because its v1
+        // signature never named the tenant whose chain it is attributed to.
         if a.tenant != e.tenant {
             return Err(format!(
                 "ATTESTATION TENANT MISMATCH — a CHAIN_HEAD_ATTESTATION over len {} carries payload \
@@ -1420,8 +1420,8 @@ pub fn verify_authenticity_anchored_with(
                  The envelope is set by the transport, the payload tenant by the signer's own record \
                  of which tenant it was attesting (and, since #835 step 4, signed); a genuine \
                  attestation always agrees with itself. An empty payload tenant under a named \
-                 envelope (minted before U-RT-3 Phase 2) is this same refusal, with or without \
-                 --strict. Refused outright, never silently trusted on either field alone.",
+                 envelope (minted before U-RT-3 Phase 2) is this same refusal. Refused outright, \
+                 never silently trusted on either field alone.",
                 a.attested_len, a.tenant, e.tenant
             ));
         }

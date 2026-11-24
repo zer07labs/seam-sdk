@@ -51,7 +51,7 @@
 //! * **Evidence bundles** (`seam-evidence-bundle.v1`, seam-sdk#225) — a decision-scoped directory an
 //!   operator hands an adverse party, verified from its files and the pinned issuer AID alone
 //!   ([`verify_bundle`]): the manifest's hashes, the anchored window (the same calls as
-//!   `chain --from-anchor --strict`), the decision's inclusion, the Commitment's TCT, the issuer's
+//!   `chain --from-anchor`), the decision's inclusion, the Commitment's TCT, the issuer's
 //!   signed binding of that Commitment to the chain link, and the disclosed context and policy.
 //! * **The commitment digest** (`seam-commitment-digest:v5`, with `seam-explanation-digest:v2`) and
 //!   the self-issued TCT that carries it ([`commitment`]) — implemented for the bundle's step 4, and

@@ -290,25 +290,25 @@ fn a_policy_denied_event_does_not_break_strict_issuer_verification() {
          \"policy_denied\":{\"policy_version\":\"p1\",\"mode\":\"macp.mode.decision.v1\",\
          \"reason\":\"capability_not_granted\"}}",
     );
-    let (code, out) = run("pd-strict", &stream, &["--strict", "--issuer", ISSUER]);
+    let (code, out) = run("pd", &stream, &["--issuer", ISSUER]);
     assert_eq!(
         code, VERIFIED,
-        "a healthy attested stream + one POLICY_DENIED must PASS under --strict --issuer:\n{out}"
+        "a healthy attested stream + one POLICY_DENIED must PASS under --issuer:\n{out}"
     );
     assert!(out.contains("CHAIN AUTHENTICATED"), "{out}");
     assert!(
         out.contains("advisory (skipped): 1"),
-        "the event must be classified advisory, not unverifiable:\n{out}"
+        "the event must be classified advisory, not unchained:\n{out}"
     );
 }
 
 // ── AUTHORIZE_EVALUATED is advisory (P1 regression) ───────────────────────────────────────────────────
 
 #[test]
-fn an_authorize_evaluated_event_does_not_break_strict_issuer_verification() {
+fn an_authorize_evaluated_event_does_not_break_issuer_verification() {
     // REGRESSION: AUTHORIZE_EVALUATED (spec §AUTHORIZE_EVALUATED, tag 23) is ADVISORY — the authorize
     // path seals nothing, so the event carries no digest/checksum BY DESIGN. Before the fix it was
-    // missing from the advisory set, filed as UNVERIFIABLE, and `--strict --issuer` over a healthy
+    // missing from the advisory set, and `--strict --issuer` (since S9-O7, every run) over a healthy
     // attested stream containing a single one exited 2. The runtime emits an event for EVERY ESCALATE
     // verdict unconditionally, so this false refusal hit any real delivered stream.
     let mut stream = golden("attested_chain.jsonl");
@@ -321,16 +321,15 @@ fn an_authorize_evaluated_event_does_not_break_strict_issuer_verification() {
          \"tool_input_digest\":\"sha256:00\",\"verdict\":\"ESCALATE\",\
          \"reason\":\"amount_over_floor\",\"policy_version\":\"p1\"}}",
     );
-    let (code, out) = run("az-strict", &stream, &["--strict", "--issuer", ISSUER]);
+    let (code, out) = run("az", &stream, &["--issuer", ISSUER]);
     assert_eq!(
         code, VERIFIED,
-        "a healthy attested stream + one AUTHORIZE_EVALUATED must PASS under --strict --issuer \
-         (it used to exit 2, filed as unverifiable):\n{out}"
+        "a healthy attested stream + one AUTHORIZE_EVALUATED must PASS under --issuer:\n{out}"
     );
     assert!(out.contains("CHAIN AUTHENTICATED"), "{out}");
     assert!(
         out.contains("advisory (skipped): 1"),
-        "the event must be classified advisory, not unverifiable:\n{out}"
+        "the event must be classified advisory, not unchained:\n{out}"
     );
 }
 

@@ -214,26 +214,40 @@ fn an_advisory_event_does_not_advance_the_head() {
     assert!(out.contains("links checked     : 3"), "{out}");
 }
 
+/// seam-runtime deep-cleanup S9-O7: a non-advisory event with no digest/checksum FAILS the stream in
+/// every mode. There is no `--strict` and no lenient default that skips it.
 #[test]
-fn pre_cutover_events_are_disclosed_and_strict_refuses_them() {
-    // The spec's MUST: an event with no digest/checksum that is NOT advisory predates the chain fields,
-    // and cannot be verified. Skipping it silently would report a green chain over history never checked.
+fn an_unchained_non_advisory_event_fails_the_stream() {
     let mut c = chain(3);
     c.push(
         r#"{"schema_version":"seam-event.v1","event_id":"old","seq":99,"kind":"DECISION_SEALED","prev_checksum":"","payload":{"decision_id":"old"}}"#
             .to_string(),
     );
 
-    let (code, out) = run("lenient", &c, &[]);
-    assert_eq!(code, VERIFIED, "default: skip — but SAY so:\n{out}");
-    assert!(
-        out.contains("UNVERIFIABLE"),
-        "the skip must be disclosed:\n{out}"
-    );
+    let (code, out) = run("unchained", &c, &[]);
+    assert_eq!(code, FAILED, "an unchained chained kind must fail:\n{out}");
+    assert!(out.contains("UNCHAINED EVENT — seq 99"), "{out}");
+}
 
-    let (code, out) = run("strict", &c, &["--strict"]);
-    assert_eq!(code, FAILED, "--strict must refuse:\n{out}");
-    assert!(out.contains("REFUSED"), "{out}");
+/// S9-O7 regression: tags 19/20 stripped off the LAST link. No next link catches the strip, so before
+/// S9-O7 this exited 0 unless `--strict` was passed. It now exits 2 with no flag.
+#[test]
+fn stripped_tags_19_20_on_the_last_link_exit_2_without_any_flag() {
+    let mut c = chain(3);
+    let last: serde_json::Value = serde_json::from_str(c.last().unwrap()).unwrap();
+    let mut last = last.as_object().unwrap().clone();
+    assert!(last.remove("digest").is_some() && last.remove("checksum").is_some());
+    *c.last_mut().unwrap() = serde_json::Value::Object(last).to_string();
+    let (code, out) = run("stripped-last", &c, &[]);
+    assert_eq!(code, FAILED, "a stripped last link must fail:\n{out}");
+    assert!(out.contains("UNCHAINED EVENT"), "{out}");
+}
+
+/// S9-O7: the flag is gone, so passing it is a usage error, never a silent no-op.
+#[test]
+fn the_strict_flag_is_gone() {
+    let (code, out) = run("strict-flag", &chain(2), &["--strict"]);
+    assert_eq!(code, 1, "--strict must be an unknown option:\n{out}");
 }
 
 #[test]

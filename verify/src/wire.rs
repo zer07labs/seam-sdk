@@ -1358,7 +1358,7 @@ impl Event {
 ///
 /// **Must stay equal to the spec's ADVISORY set** (`seam-runtime/docs/specs/seam-event.v1.md`, mirrored
 /// by the runtime verifier's `ADVISORY_KINDS` at `seam-runtime/crates/seam-verify/src/main.rs` and its
-/// `advisory_kinds_matches_spec_annotations` tripwire). A kind missing here makes `--strict` refuse a
+/// `advisory_kinds_matches_spec_annotations` tripwire). A kind missing here makes the verifier fail a
 /// healthy stream carrying it — exactly the `AUTHORIZE_EVALUATED` false refusal this list once shipped
 /// with. Pinned by `advisory_kinds_are_pinned_to_the_spec` below.
 pub const ADVISORY_KINDS: &[&str] = &[
@@ -1367,8 +1367,8 @@ pub const ADVISORY_KINDS: &[&str] = &[
     "BUDGET_BREACH",
     "SESSION_LIFECYCLE",
     // ADVISORY per spec §AUTHORIZE_EVALUATED (tag 23): the authorize path seals nothing — no record, no
-    // DEK, no chain append — so the row carries no digest/checksum by design. Its omission made --strict
-    // refuse any stream containing a single ESCALATE verdict (emitted unconditionally).
+    // DEK, no chain append — so the row carries no digest/checksum by design. Its omission would fail
+    // any stream containing a single ESCALATE verdict (emitted unconditionally).
     "AUTHORIZE_EVALUATED",
     // ADVISORY per spec §POLICY_DENIED (tag 24): a bound policy's refusal errors before the seal, so
     // nothing is sealed, no DEK is issued and nothing is appended — the row carries no
@@ -1481,7 +1481,7 @@ mod tests {
             ours, expected,
             "ADVISORY_KINDS drifted from the expected set. Reconcile with the spec's ADVISORY-annotated \
              EventKinds (seam-runtime/docs/specs/seam-event.v1.md) — a kind advisory in the spec but \
-             missing here makes --strict refuse a healthy stream (the AUTHORIZE_EVALUATED regression); \
+             missing here makes the verifier fail a healthy stream (the AUTHORIZE_EVALUATED regression); \
              one here but not in the spec would green an unverifiable stream."
         );
 
@@ -1621,7 +1621,7 @@ mod tests {
     /// (tag 24) and from the JSON projection — classify as advisory, and canonicalize to the SAME
     /// identity bytes. The twin of the AUTHORIZE_EVALUATED test below, and it exists for a sharper
     /// reason: this kind is emitted per REFUSED COMMITMENT, so a stream under a strict bound policy
-    /// carries many of them, and `--strict` refusing one refuses the whole stream.
+    /// carries many of them, and refusing one fails the whole stream.
     #[test]
     fn policy_denied_is_advisory_on_both_transports() {
         let pb = SeamEventPb {

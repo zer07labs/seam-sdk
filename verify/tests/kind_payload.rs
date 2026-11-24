@@ -9,7 +9,7 @@
 //!    hand-encode the payload field, so the presence decode of the five slots this crate does not model
 //!    (tags 14, 15, 17, 21, 26) is itself under test rather than assumed.
 //! 2. **The shipped binary.** The refusals a third party actually sees, in every mode: no flags,
-//!    `--strict`, `--issuer` — plus the cross-transport dedup of an event carrying an unmodelled payload.
+//!    `--issuer` — plus the cross-transport dedup of an event carrying an unmodelled payload.
 //!
 //! Every stream is built from the spec alone, like the rest of `tests/`.
 
@@ -251,7 +251,7 @@ fn every_known_kind_without_its_own_payload_is_refused() {
 }
 
 /// The well-formed control for both tables above: each kind carrying exactly its own payload passes the
-/// binding (unchained, so the walk skips it as advisory or unverifiable — never refuses it).
+/// binding (the binding alone, checked before any walk).
 #[test]
 fn every_known_kind_carrying_its_own_payload_passes_the_binding() {
     for slot in &SLOTS {
@@ -350,7 +350,7 @@ fn mutate_first_seal(f: impl Fn(&mut serde_json::Value)) -> String {
         .join("\n")
 }
 
-const MODES: [&[&str]; 3] = [&[], &["--strict"], &["--issuer", ISSUER]];
+const MODES: [&[&str]; 2] = [&[], &["--issuer", ISSUER]];
 
 #[test]
 fn the_golden_stream_verifies_in_every_mode() {
@@ -406,7 +406,7 @@ fn a_seal_with_its_payload_stripped_is_refused() {
 }
 
 /// Edge case: stripped of its payload AND its chain fields, a seal reports the binding — never the
-/// downstream `unverifiable` count — because the binding runs first, as in the runtime.
+/// downstream unchained refusal — because the binding runs first, as in the runtime.
 #[test]
 fn a_seal_stripped_of_payload_and_chain_fields_reports_the_binding_first() {
     let body = mutate_first_seal(|e| {

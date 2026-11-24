@@ -144,7 +144,7 @@ fn every_chained_audit_entry_recomputes() {
         "no genuine link may read as uncovered: {uncovered:?}"
     );
 
-    let (code, out) = run("genuine", &rows, &["--issuer", ENTRY_ISSUER, "--strict"]);
+    let (code, out) = run("genuine", &rows, &["--issuer", ENTRY_ISSUER]);
     assert_eq!(code, VERIFIED, "{out}");
 }
 
@@ -606,15 +606,13 @@ fn only(rows: Vec<Value>, tenant: &str) -> Vec<Value> {
 
 const SEQ6: &str = r#"seq 6, tenant "acme", kind "AUDIT_ENTRY", action "party_registered_v2""#;
 
-/// `--issuer` refuses an uncovered entry (spec `:293`), with or without `--strict`, and under `--json` it
+/// `--issuer` refuses an uncovered entry (spec `:293`), and under `--json` it
 /// is a `"verified":false` naming "cannot recompute". Plain `chain` (integrity) does not refuse it.
 fn assert_uncovered_refused(name: &str, rows: &[Value], names: &str) {
     let (code, out) = run(&format!("{name}-plain"), rows, &[]);
     assert_eq!(code, VERIFIED, "{name}: integrity does not refuse:\n{out}");
-    for args in [
-        &["--issuer", ENTRY_ISSUER][..],
-        &["--issuer", ENTRY_ISSUER, "--strict"][..],
-    ] {
+    {
+        let args = &["--issuer", ENTRY_ISSUER][..];
         let (code, out) = run(name, rows, args);
         assert_eq!(code, FAILED, "{name} {args:?}:\n{out}");
         assert!(out.contains("REFUSED (--issuer)"), "{name}:\n{out}");
@@ -810,21 +808,19 @@ fn the_library_refuses_an_uncovered_entry_unless_the_caller_opts_in() {
     .is_err());
 }
 
-/// Criterion 2, on both report paths (per tenant, and single tenant), with and without `--strict`
-/// (which does not change uncovered behaviour).
+/// Criterion 2, on both report paths (per tenant, and single tenant).
 #[test]
 fn allow_uncovered_exits_2_under_a_non_green_banner_with_the_full_report() {
     for (name, rows) in [
         ("allow-multi", unknown_action()),
         ("allow-acme", only(unknown_action(), "acme")),
     ] {
-        for args in [
-            &["--issuer", ENTRY_ISSUER, "--allow-uncovered"][..],
-            &["--issuer", ENTRY_ISSUER, "--allow-uncovered", "--strict"][..],
-        ] {
-            let (code, out) = run(name, &rows, args);
-            assert_diagnostic(name, &out, code, 1, &[SEQ6]);
-        }
+        let (code, out) = run(
+            name,
+            &rows,
+            &["--issuer", ENTRY_ISSUER, "--allow-uncovered"],
+        );
+        assert_diagnostic(name, &out, code, 1, &[SEQ6]);
     }
 }
 
@@ -846,7 +842,7 @@ fn allow_uncovered_over_a_genuine_stream_changes_nothing() {
         let (code, out) = run(
             name,
             &rows,
-            &["--issuer", ENTRY_ISSUER, "--allow-uncovered", "--strict"],
+            &["--issuer", ENTRY_ISSUER, "--allow-uncovered"],
         );
         assert_eq!(code, VERIFIED, "{name}:\n{out}");
         assert!(out.starts_with(banner), "{name}:\n{out}");
@@ -891,7 +887,6 @@ fn the_json_shape_is_unchanged() {
         "head",
         "links",
         "unmodelled_kinds",
-        "unverifiable",
         "unverified_content",
         "verified",
     ];
@@ -905,7 +900,7 @@ fn the_json_shape_is_unchanged() {
     let (code, stdout, _) = run_split(
         "json-multi",
         &stream(),
-        &["--issuer", ENTRY_ISSUER, "--strict", "--json"],
+        &["--issuer", ENTRY_ISSUER, "--json"],
     );
     assert_eq!(code, VERIFIED, "{stdout}");
     let v: Value = serde_json::from_str(stdout.trim()).unwrap();
@@ -925,7 +920,7 @@ fn the_json_shape_is_unchanged() {
     let (code, stdout, _) = run_split(
         "json-acme",
         &only(stream(), "acme"),
-        &["--issuer", ENTRY_ISSUER, "--strict", "--json"],
+        &["--issuer", ENTRY_ISSUER, "--json"],
     );
     assert_eq!(code, VERIFIED, "{stdout}");
     let v: Value = serde_json::from_str(stdout.trim()).unwrap();
@@ -994,9 +989,9 @@ fn an_uncovered_entry_in_an_anchored_window_is_refused_and_never_reads_as_authen
     assert!(out.contains("anchored start"), "{out}");
 }
 
-/// The `DECISION_SEALED` arm is deliberately NOT narrowed to links (D-042): an unchained seal relabelled
-/// to `schema_version: 3` is refused under `--issuer`, exactly as before (b′) landed. Stricter than the
-/// runtime, which skips unchained seals; pinned so a later "parity" change cannot relax it silently.
+/// An unchained seal (relabelled to `schema_version: 3`, D-042) is refused in EVERY mode: since D-048
+/// (seam-runtime S9-O7) the walk refuses any non-advisory event without chain fields before `--issuer`
+/// gets to it, and the runtime's verifier refuses it the same way.
 #[test]
 fn an_unchained_non_v4_seal_is_still_refused() {
     let mut rows = stream();
@@ -1013,14 +1008,14 @@ fn an_unchained_non_v4_seal_is_still_refused() {
     seal["payload"]["schema_version"] = 3.into();
     rows.push(seal);
 
-    let (code, out) = run("unchained-v3-plain", &rows, &[]);
-    assert_eq!(
-        code, VERIFIED,
-        "unchained history is disclosed, not refused, without --issuer:\n{out}"
-    );
-    let (code, out) = run("unchained-v3", &rows, &["--issuer", ENTRY_ISSUER]);
-    assert_eq!(code, FAILED, "{out}");
-    assert!(out.contains("CANNOT VERIFY"), "{out}");
+    for (name, args) in [
+        ("unchained-v3-plain", &[][..]),
+        ("unchained-v3", &["--issuer", ENTRY_ISSUER][..]),
+    ] {
+        let (code, out) = run(name, &rows, args);
+        assert_eq!(code, FAILED, "{name}: {out}");
+        assert!(out.contains("UNCHAINED EVENT — seq 25"), "{name}: {out}");
+    }
 }
 
 // ---- D-043 retired (D-044) ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@
 //! 1. **Manifest** — `format`, the pinned issuer, every listed file's SHA-256 and size, the required
 //!    and paired members, and `disclosed` agreeing with `files`.
 //! 2. **Chain** — the window is walked exactly as `chain events.jsonl --issuer AID --from-anchor
-//!    anchor.json --strict` walks it, through the same library functions.
+//!    anchor.json` walks it, through the same library functions.
 //! 3. **Inclusion** — exactly one chained `DECISION_SEALED` for the manifest's decision, in its tenant,
 //!    whose `checksum` is `inclusion.record_checksum`.
 //! 4. **Commitment** — the TCT (when present) verifies against the pinned AID and binds this
@@ -577,7 +577,7 @@ struct Window {
     anchor: Attestation,
 }
 
-/// `chain events.jsonl --issuer AID --from-anchor anchor.json --strict`, through the same library
+/// `chain events.jsonl --issuer AID --from-anchor anchor.json`, through the same library
 /// calls `seam-verify chain` makes, so the two cannot disagree about a window.
 fn check_window(dir: &Path, pinned: &str) -> Result<Window, BundleError> {
     let f2 = |m: String| failed(2, m);
@@ -634,14 +634,6 @@ fn check_window(dir: &Path, pinned: &str) -> Result<Window, BundleError> {
             "the window's chained events span {} tenants — an evidence bundle's window is exactly \
              one tenant's, the one its anchor names",
             report.tenants.len()
-        )));
-    }
-    if !report.unverifiable.is_empty() {
-        return Err(f2(format!(
-            "REFUSED (--strict): {} event(s) carry no digest/checksum and are not advisory (first \
-             seq {})",
-            report.unverifiable.len(),
-            report.unverifiable[0]
         )));
     }
     // The strict default: an uncovered chained entry is refused here (spec `:293`). A bundle never
