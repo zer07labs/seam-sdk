@@ -29,6 +29,8 @@ than trusting a summary here.
   `callSigPayload`, `CALL_SIG_CONTEXT`) and `conformance/call_sig_payload_vector.json` are deleted
   (S3-O2). Every sender already signed v3.
 
+## 0.117.1 — 2026-11-24
+
 ## 0.117.0 — 2026-11-24
 
 ### Added — `seam-verify` 0.7.0 verifies `CHAIN_MANIFEST` domain v2 (Flows W5, D-163, seam-runtime#1910)
