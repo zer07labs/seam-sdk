@@ -87,8 +87,9 @@
 #
 # VERIFIED IN `verify/` (Flows W5, DECISIONS 2026-11-24): every `ChainManifest/` and `ChainManifestEntry/` line (tag 30),
 # including `tenant_len`/`tenant_head` (fields 10/11, D-163, seam-runtime#1910). seam-verify decodes the payload on
-# both transports, recomputes its entry digest, checks its structure, its signed tenant head and the listed heads, and
-# its domain v2 signature against a pinned issuer. The hand-written clients carry them in the generated stubs only.
+# both transports, recomputes its entry digest, and checks its structure, its signed tenant head and the listed heads.
+# Its domain v2 signature is checked by the library (`manifest::verify_signature`), which no CLI path reaches yet
+# (`--issuer` still refuses keyed chains). The hand-written clients carry the fields in the generated stubs only.
 #
 AgentPin/agent_id
 AgentPin/version

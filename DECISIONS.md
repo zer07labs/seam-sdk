@@ -3449,10 +3449,11 @@ new fields (exit 8), which is the decision #88 asks for. `verify/` now models th
 the integrity walk: structure, the entry digest recomputed from its fields (envelope `Internal`), the
 D-163 position (`tenant_len` = `chain.seq`, `tenant_head` = `prev_checksum`, tenant chain), and V7 over
 the walked chains. The hand-written clients have no chain verifier, so they carry the fields only in the
-generated stubs. Reversible: the walk only refuses streams the runtime's own verifier refuses, or a
-manifest whose fields do not recompute its stored digest. The runtime checks that body under `--issuer`
-only, but here the fields V7 and D-163 read must be the ones the chain commits to. An honest stream
-always recomputes.
+generated stubs. Reversible. The integrity walk here is stricter than the runtime's in four ways: the
+structural rules, the `Internal` classification, the entry-digest recompute (the runtime checks all three
+under `--issuer` only), and the tag-30 kind binding (not in the runtime's `check_kind_payload` at rt#1910).
+The reason: the fields V7 and D-163 read must be the ones the chain commits to. An honest writer passes
+all four.
 
 **The signature is a library check, not a CLI one.** `manifest::verify_signature` checks it against a
 pinned issuer and is pinned by the runtime vectors. The CLI still refuses `--issuer` over keyed chains,

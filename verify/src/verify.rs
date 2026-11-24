@@ -126,10 +126,12 @@ pub struct TenantChain {
 /// known advisory kind (or the chain anchor) that carries `digest`/`checksum` is refused, not linked."*
 ///
 /// Three rules, in this order, mirroring the runtime verifier's `check_kind_payload` so the two refuse
-/// the same streams with the same markers:
+/// the same streams with the same markers. One deliberate difference: tag 30 (`CHAIN_MANIFEST`) is a
+/// payload owner here, per the spec, and is not in the runtime's table at rt#1910, so a manifest payload
+/// on another kind (or a `CHAIN_MANIFEST` without one) is refused here and not there:
 ///
 /// 1. No payload is present that belongs to a kind other than `e.kind` (`KIND/PAYLOAD MISMATCH`).
-/// 2. A **known** kind — one of the eleven payload owners below — carries its own payload
+/// 2. A **known** kind — one of the twelve payload owners below — carries its own payload
 ///    (`KIND/PAYLOAD MISMATCH`). An unknown, future kind may carry none of the known ones (rule 1), and
 ///    carrying nothing is not a mismatch: it is a link like any other, disclosed as unmodelled.
 /// 3. An [`Event::is_advisory`] event — a known advisory kind, or the `chain_anchor` audit entry —
