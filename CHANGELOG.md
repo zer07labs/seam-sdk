@@ -16,6 +16,22 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Fixed — `seam-verify` 0.7.1 verifies pre-D-163 `CHAIN_MANIFEST`s (Flows W6, seam-runtime#1921)
+
+- `seam-verify` 0.7.0 recomputed every manifest under the domain v2 preimage. A manifest sealed by runtime
+  0.115-0.116 (`seam.audit.chain-manifest.v1`, no `tenant_len`/`tenant_head`) therefore failed the walk as
+  `ENTRY REWRITE`, and its signature failed `manifest::verify_signature`. Live prd and partner streams hold
+  such manifests.
+- 0.7.1 applies the runtime's dispatch rule (`crates/seam-verify/src/chains.rs` @ `253f4995`). A manifest
+  with `tenant_len` 0 and an empty `tenant_head` is v1 (`manifest::is_v1`). It is recomputed and verified
+  under the v1 preimage and gets no tenant-head check. A v1 manifest after a v2 one on the same
+  `(stream_id, tenant)` chain is refused as `MANIFEST_DOWNGRADE`.
+- Pinned by the runtime's real v1 event (`conformance/chain/chain_manifest_v1_event.json`, byte for byte
+  from seam-runtime @ `253f4995`) and a mixed v1→v2 stream (`verify/tests/chain_manifest_v1.rs`).
+- The vendored `seam-event.v1.md` is re-pinned to `253f4995`: `LEARNING_*` events carry `flow_ref` when the
+  decision's session had one. The stale copy is what refused the 0.118.0 release dispatch (#427).
+- `seam.api.v1` at 0.118.0 changed comments only. The regenerated stubs change no client.
+
 ### Removed (deep-cleanup 3.3, train 1 consumers — breaking, version-locked to the runtime)
 
 - `open_session` / `openSession` and `SeamAdminClient.resume_session` / `resumeSession` no longer take

@@ -11,10 +11,17 @@
 //! entry digest = SHA-256(P("seam.audit.chain-manifest-entry.v1") ‖ P(manifest) ‖ P(signature))
 //! ```
 //!
-//! **Domain v2 only (W5, D-163).** Since runtime 0.117.0 the manifest also signs `tenant_len`/`tenant_head`,
+//! **Domain v2 (W5, D-163).** Since runtime 0.117.0 the manifest also signs `tenant_len`/`tenant_head`,
 //! the tenant chain it follows: the entry sits at `chain.seq = tenant_len` with `prev_checksum =
-//! tenant_head` (`MANIFEST_TENANT_HEAD_MISMATCH`, checked in [`crate::verify::chain_by_tenant`]). A domain
-//! v1 manifest (no fields 10-11) does not verify here; the spec records that none survive the W4R reset.
+//! tenant_head` (`MANIFEST_TENANT_HEAD_MISMATCH`, checked in [`crate::verify::chain_by_tenant`]).
+//!
+//! **Domain v1 (runtime 0.115-0.116, before D-163).** Those manifests are still on live streams. They were
+//! signed under `seam.audit.chain-manifest.v1` over fields 1-8 only. The wire carries no version, so the
+//! marker is the absent tenant head ([`is_v1`]): a v2 manifest always signs a 32-byte `tenant_head` (the
+//! tenant chain's genesis at `tenant_len` 0). The choice is signed, not trusted: a v1 manifest verifies
+//! only under the v1 preimage, and the entry digest its tenant chain links is over that same preimage.
+//! A v1 manifest gets no tenant-head check, and one after a v2 manifest on the same tenant chain is
+//! `MANIFEST_DOWNGRADE`. This matches seam-runtime `crates/seam-verify/src/chains.rs` @ `253f4995`.
 //!
 //! The structural rules run before any signature work, in the spec's order: `chains_not_ascending`, then
 //! per entry a [`ChainKey`] rule for a malformed `(flow_id, env, version)`, `state_unknown`, and
@@ -25,8 +32,10 @@ use sha2::{Digest, Sha256};
 use crate::chain_key::ChainKey;
 use crate::wire::ChainManifestPb;
 
-/// Signed-payload domain of a `CHAIN_MANIFEST`.
+/// Signed-payload domain of a `CHAIN_MANIFEST` (v2, D-163).
 pub const CHAIN_MANIFEST_DOMAIN: &[u8] = b"seam.audit.chain-manifest.v2";
+/// Signed-payload domain of a `CHAIN_MANIFEST` sealed before D-163 (runtime 0.115-0.116): fields 1-8 only.
+pub const CHAIN_MANIFEST_V1_DOMAIN: &[u8] = b"seam.audit.chain-manifest.v1";
 /// Chain-entry digest domain of a `CHAIN_MANIFEST` entry.
 pub const CHAIN_MANIFEST_ENTRY_DOMAIN: &[u8] = b"seam.audit.chain-manifest-entry.v1";
 
@@ -35,11 +44,25 @@ fn put(v: &mut Vec<u8>, x: &[u8]) {
     v.extend_from_slice(x);
 }
 
-/// The signed preimage (fields 1-8, 10 and 11, framed). Not hashed: [`signed_digest`] and [`entry_digest`]
-/// both consume it.
+/// Whether `m` was sealed before D-163 (domain v1): `tenant_len` 0 and an empty `tenant_head`. A v2
+/// manifest always signs a 32-byte head, so no v2 manifest has this shape.
+pub fn is_v1(m: &ChainManifestPb) -> bool {
+    m.tenant_len == 0 && m.tenant_head.is_empty()
+}
+
+/// The signed preimage under the domain `m` was sealed with ([`is_v1`]): fields 1-8 under v1, fields 1-8,
+/// 10 and 11 under v2, framed. Not hashed: [`signed_digest`] and [`entry_digest`] both consume it.
 pub fn signed_preimage(m: &ChainManifestPb) -> Vec<u8> {
+    let v1 = is_v1(m);
     let mut v = Vec::new();
-    put(&mut v, CHAIN_MANIFEST_DOMAIN);
+    put(
+        &mut v,
+        if v1 {
+            CHAIN_MANIFEST_V1_DOMAIN
+        } else {
+            CHAIN_MANIFEST_DOMAIN
+        },
+    );
     put(&mut v, m.stream_id.as_bytes());
     put(&mut v, m.tenant.as_bytes());
     put(&mut v, &m.governing_doc_sha256);
@@ -61,8 +84,10 @@ pub fn signed_preimage(m: &ChainManifestPb) -> Vec<u8> {
     }
     put(&mut v, m.issuer_aid.as_bytes());
     put(&mut v, &m.digest_schema.to_le_bytes());
-    put(&mut v, &m.tenant_len.to_le_bytes());
-    put(&mut v, &m.tenant_head);
+    if !v1 {
+        put(&mut v, &m.tenant_len.to_le_bytes());
+        put(&mut v, &m.tenant_head);
+    }
     v
 }
 
@@ -132,7 +157,7 @@ pub fn verify_signature(pinned_aid: &str, m: &ChainManifestPb) -> Result<(), Str
     vk.verify(&signed_digest(m), &Signature::from_bytes(&sig))
         .map_err(|_| {
             "signature_invalid — the manifest does not verify under the pinned issuer's key (forged, \
-             altered after signing, or a domain v1 manifest)."
+             or altered after signing)."
                 .to_string()
         })
 }

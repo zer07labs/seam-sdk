@@ -131,7 +131,8 @@ pub struct SeamEventPb {
 }
 
 /// `ChainManifest` (envelope tag 30), transcribed from `seam-event.v1.md` §CHAIN_MANIFEST. Fields 1-8,
-/// 10 and 11 are signed ([`crate::manifest::signed_preimage`]); 9 is the signature.
+/// 10 and 11 are signed under domain v2, fields 1-8 only under domain v1 (before D-163,
+/// [`crate::manifest::is_v1`]); see [`crate::manifest::signed_preimage`]. 9 is the signature.
 #[derive(Clone, PartialEq, Eq, Message)]
 pub struct ChainManifestPb {
     #[prost(string, tag = "1")]
