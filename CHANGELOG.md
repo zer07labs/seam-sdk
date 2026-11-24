@@ -16,6 +16,17 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Removed (deep-cleanup 3.3 step 4, train 0.121.0 lockstep — breaking on the event wire, version-locked to the runtime)
+
+- The regenerated `seam.event.v1` stubs drop `AuthorizeEvaluated.subject_digest` (field 10): runtime 0.121.0
+  reserves it (seam-runtime#1959). `subject_digests` (field 11) is the one subject carrier; it always held the
+  same commitment as element 0. A consumer reading tag 10 must read `subject_digests` instead.
+- `seam-verify` mirrors the runtime: tag 10 is gone from its hand-written payload structs, and a stray tag 10
+  (or a JSON `subject_digest` key) on an older row parses and reaches neither the canonical bytes nor the dedup
+  identity. `verify/proto` and `verify/docs/seam-event.v1.md` are re-vendored from the train.
+- Built against BSR label `pr-1959` (`contract/bsr-label`) until the runtime merges; the label flips back to
+  `main` with the 0.121.0 release.
+
 ## 0.120.0 — 2026-11-24
 
 ## 0.119.0 — 2026-11-24

@@ -1,4 +1,7 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 837c48a3 (refreshed 2026-11-24).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 8e579b2c tracking dc1-trains/release-0121 (refreshed 2026-11-24).
+     seam-runtime#1959 (0.121.0, deep-cleanup 3.3 step 4, train 1): AuthorizeEvaluated.subject_digest (tag 10) deleted and reserved; subject_digests (11) is the one carrier.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 837c48a3 (refreshed 2026-11-24).
      seam-runtime#1921 (Flows W6, 0.118.0): LEARNING_* carry flow_ref (tag 28) when the decision's session had one.
      Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 37cb8115 (refreshed 2026-11-24).
@@ -614,21 +617,24 @@ message AuthorizeEvaluated {           // envelope tag 23
   string verdict = 7;                  // "ALLOW" | "DENY" | "TRANSFORM" | "ESCALATE"
   string reason = 8;                   // closed-set / operator-authored only (D-030)
   string policy_version = 9;           // the policy the binding named — STAGED, not "ran under"
-  optional string subject_digest = 10; // "hmac-sha256:<kid>:<hex>" — NEVER the raw subject
-  repeated string subject_digests = 11; // one keyed commitment PER effective subject (#715); [0] == subject_digest
+  reserved 10;                         // was the singular `subject_digest` — deleted in 0.121.0
+  reserved "subject_digest";
+  repeated string subject_digests = 11; // one keyed commitment PER effective subject (#715) — NEVER the raw subject
 }
 ```
 
 **`subject_digests` (tag 11, #715).** One keyed commitment per effective subject of the authorize call — the union of
 `AuthorizeRequest.subjects`, deduped in request order, at most 16 (the singular `AuthorizeRequest.subject`, which used to
-lead the union, is reserved since runtime 0.120.0, S3-O4). Each element is the
-**same** commitment as `subject_digest` (same key, same `kid`, same per-tenant domain), so it is no weaker than tag 10: it cannot be tied to
-a subject without the tenant's key and carries no bare-hash oracle. The row stays
-append-only, as tag 10's is — what this field adds is that EVERY subject of a call is recomputable by the runtime's audited recompute
-route (`POST /v1/erasure/subject-commitments`, see below), not only the first; `subject_digest` (10) stays populated with the first element for legacy
-consumers. **Reader rule:** when `subject_digests` is non-empty, `subject_digest` MUST equal element 0 and a consumer SHOULD reject a row where it does not (or where tag 11 is set and tag 10 is absent). **Un-updated consumers see tag 10 only — one of up to 16 subjects, silently** (connector sinks, the SDK JSON codecs, any learning reader); deploy consumers before the producer. Subjects are committed **byte-exact**: the producer neither trims, case-folds nor normalizes, so a recompute must use the exact bytes the caller sent; the runtime commits what it is *told* is a subject. Every `AUTHORIZE_EVALUATED` row — and therefore every commitment on it — exists only when the row is emitted (`emit_events`, sampling) and survives only for the outbox retention window. Absent (empty) on rows written before the field existed and on subject-less calls — it is omitted from the
-canonical JSON when empty. Every element is held to the commitment scheme (`hmac-sha256:…`). Adding it changes the
-`seam_event_descriptor` golden: the vendored copies (seam-connectors, the hub manifest) move in lockstep.
+lead the union, is reserved since runtime 0.120.0, S3-O4). Each element is a keyed commitment
+(`hmac-sha256:<kid>:<hex>`, the tenant's key, one per-tenant domain): it cannot be tied to
+a subject without the tenant's key and carries no bare-hash oracle. The row is
+append-only, and EVERY subject of a call is recomputable by the runtime's audited recompute
+route (`POST /v1/erasure/subject-commitments`, see below). **Tag 11 is the one subject carrier.** The singular
+`subject_digest` (tag 10), which only ever repeated element 0, is deleted and reserved since runtime 0.121.0
+(deep-cleanup train 1). **Reader rule:** read the subjects from `subject_digests` alone; a row with no subject has it
+empty. A stray tag 10 on a row is an unknown field and carries nothing. Subjects are committed **byte-exact**: the producer neither trims, case-folds nor normalizes, so a recompute must use the exact bytes the caller sent; the runtime commits what it is *told* is a subject. Every `AUTHORIZE_EVALUATED` row — and therefore every commitment on it — exists only when the row is emitted (`emit_events`, sampling) and survives only for the outbox retention window. Empty on subject-less calls — it is omitted from the
+canonical JSON when empty. Every element is held to the commitment scheme (`hmac-sha256:…`). The tag-10 deletion
+changes the `seam_event_descriptor` golden: the hub manifest moves first and the vendored copies follow it.
 
 **`policy_version` is STAGED, not proof of enforcement.** The authorize path produces **no
 enforcement fact at all**, by design: it seals nothing, and v1 routes and records policy without
@@ -640,7 +646,7 @@ Envelope: `event_id = "{authorize_id}#az#{seq}"`; `classification` is **fixed `I
 and a closed-set reason — no subject, secret, or agent content can reach it, so classification-gated
 redaction never fires: gate on `when_kind`).
 
-**PII rule.** The end-user data subject rides ONLY as `subject_digest` / `subject_digests`, and the request input ONLY as
+**PII rule.** The end-user data subject rides ONLY as `subject_digests`, and the request input ONLY as
 `tool_input_digest`. Both are **keyed commitments**, not bare hashes:
 
 ```
@@ -697,7 +703,7 @@ within the retention window (≥ 8 days after relay consumption); the long-lived
 and **a sink that retains `AUTHORIZE_EVALUATED` beyond the outbox window MUST support purge by
 commitment**: given a commitment from the recompute route (today: the erasure operator's runbook step;
 later: automated from the erasure certificate), delete or null every row of that tenant whose
-`subject_digest` or any `subject_digests` element equals it. A sink MAY additionally purge on the
+any `subject_digests` element equals it. A sink MAY additionally purge on the
 `subject_commitment_tombstoned` entry it receives on the stream. After a tenant crypto-shred no sink
 action is required for linkability (the key is gone), though a sink MAY drop the tenant's rows.
 
@@ -708,7 +714,7 @@ compatibility is kept:
   written between #484 and #1293 carry commitments under the retired **deployment-wide** key, which
   is derivable by anyone holding the issuer seed and which the runtime no longer holds. **Neither can
   be recomputed** by the route above. The runtime's copies have aged out of the outbox; **a sink MUST
-  drop or null `subject_digest` / `subject_digests` / `tool_input_digest` on every
+  drop or null `subject_digests` (and the since-reserved `subject_digest`) / `tool_input_digest` on every
   `AUTHORIZE_EVALUATED` row emitted before the #1293 deploy** (one-time), keeping `authorize_id` for
   joins.
 - **Rows across the cutover never join on a commitment.** A query spanning the deploy returns nothing
@@ -723,7 +729,7 @@ compatibility is kept:
 whose append is **fail-closed**: an ESCALATE whose append fails returns an error rather than the verdict,
 because an escalation nobody can ever see is not an escalation. ALLOW/DENY/TRANSFORM appends stay
 fail-open (verdict returned, `seam.security` WARN logged). The `{authorize_id, client_request_id?,
-agent_aid, agent_id, tool_name, tool_input_digest, subject_digest?, subject_digests?, reason}` field set on an ESCALATE row
+agent_aid, agent_id, tool_name, tool_input_digest, subject_digests?, reason}` field set on an ESCALATE row
 is the complete event-side contract an escalation consumer reads — built from events alone, with no wire
 change.
 
@@ -735,7 +741,7 @@ as the outbox append — so the escalation inbox is no longer "built from events
 differences matter to anyone joining across them. First, that table stores the caller's **raw**
 `sha256:<hex>` `tool_input_digest`, while the outbox row above carries the `#484` keyed commitment — the
 two are not equal and never join; join on `authorize_id`. Second, the table stores **no**
-`subject_digest` at all. The stored row is also retention-bounded and is deleted on expiry, whereas the
+subject commitment at all. The stored row is also retention-bounded and is deleted on expiry, whereas the
 outbox row's lifetime is the relay-GC window; neither is a mirror of the other.
 
 
