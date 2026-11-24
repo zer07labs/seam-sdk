@@ -53,7 +53,6 @@ import {
   aidFromPubkey,
   buildPresentation,
   callSigV3,
-  callSig,
   enrollPop,
   jcsCanonicalize,
   newEnrollPopNonce,
@@ -1195,13 +1194,9 @@ export class SeamClient {
       digestOnly?: boolean;
       features?: Record<string, string>;
       sessionId?: string;
-      subject?: string;
-      /** Supersedes the deprecated singular `subject`: the server takes the union of both, drops
-       * empty entries, dedupes first-wins, and caps the effective set at 16. **Today the server
-       * refuses an effective subject set larger than one** — supplying more than one is the
-       * server's `INVALID_ARGUMENT` until Phase B ships `AuthorizeEvaluated.subject_digests`; this
-       * field exists now so callers can migrate off `subject` one at a time. Both are signed by
-       * `callSig` v3, in the order passed. */
+      /** The call's end-user data subjects: the server dedupes first-wins and caps the set at 16;
+       * each is signed by `callSig` v3, in the order passed. The retired singular `subject` is gone
+       * (deep-cleanup 3.3 S3-O4); pass `subjects: [s]`. */
       subjects?: string[];
       agentId?: string;
       clientRequestId?: string;
@@ -1218,7 +1213,9 @@ export class SeamClient {
         toolInputDigest: digest,
         toolName,
         agentId: opts?.agentId ?? "",
-        subject: opts?.subject ?? "",
+        // The retired `AuthorizeRequest.subject` (field 8) is never sent; v3 keeps its preimage slot
+        // and signs it as the constant empty string (deep-cleanup 3.3 S3-O4).
+        subject: "",
         subjects: opts?.subjects ?? [],
         clientRequestId: opts?.clientRequestId ?? "",
         sessionId: opts?.sessionId ?? "",
@@ -1479,14 +1476,14 @@ export class SeamClient {
   // whose `state === "Suspended"` is a hard budget breach (a resolved step, not a thrown error — the
   // R9 approver then resumes with a raise). A scope-floor denial throws a `PERMISSION_DENIED`.
 
-  /** Admit (the PoP handshake) → open an incremental session. `budget` is the legacy message count
-   * (0 ⇒ the server default 32); `limits` adds the other 6.2 dimensions. */
+  /** Admit (the PoP handshake) → open an incremental session. `limits` sets the 6.2 budget
+   * dimensions; absent, the message count is the server default (32). The legacy `budget` count is
+   * gone (deep-cleanup 3.3 S3-O3); use `limits: { messages: n }`. */
   async openSession(
     agent: Agent,
     opts: {
       sessionId: string;
       participants: string[];
-      budget?: number;
       limits?: BudgetLimits;
       mode?: string;
       onBehalfOf?: string[];
@@ -1502,8 +1499,6 @@ export class SeamClient {
     const init = {
       sessionId: opts.sessionId,
       participants: opts.participants,
-      // 0 ⇒ the server default (32) — the proto owns the default, the client never re-states it.
-      budget: opts.budget ?? 0,
       mode: opts.mode ?? "",
       presentation: await this.presentation(agent, opts),
       limits: opts.limits,

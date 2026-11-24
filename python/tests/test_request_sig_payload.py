@@ -43,12 +43,12 @@ def test_vector_file_is_present_and_populated() -> None:
 
 def test_domain_tag_matches_the_vector() -> None:
     """The tag IS the version. If the runtime bumps it and we do not, every credentialed call is
-    rejected. It must also differ from `seam-authorize-call-v2`, so a captured Authorize call_sig
+    rejected. It must also differ from `seam-authorize-call-v3`, so a captured Authorize call_sig
     is never spendable here and vice versa."""
     assert REQUEST_SIG_CONTEXT.decode() == _vector()["domain"]
-    from seam_sdk.crypto import CALL_SIG_CONTEXT
+    from seam_sdk.crypto import CALL_SIG_V3_CONTEXT
 
-    assert REQUEST_SIG_CONTEXT != CALL_SIG_CONTEXT
+    assert REQUEST_SIG_CONTEXT != CALL_SIG_V3_CONTEXT
 
 
 @pytest.mark.parametrize("case", _cases(), ids=lambda c: c["name"])
@@ -146,10 +146,22 @@ def test_signature_verifies_over_the_payload() -> None:
 def test_request_sig_does_not_verify_against_a_call_sig_payload() -> None:
     """The two credentials use different domain tags, so a captured one must never verify as the
     other — even when every other input happens to collide."""
-    from seam_sdk.crypto import call_sig_payload
+    from seam_sdk.crypto import call_sig_v3_payload
 
     seed = bytes(range(32))
     sk = Ed25519PrivateKey.from_private_bytes(seed)
-    sig = sk.sign(call_sig_payload(b"t", "d", "n", "a"))
+    sig = sk.sign(
+        call_sig_v3_payload(
+            b"t",
+            "d",
+            "n",
+            "a",
+            subject="",
+            subjects=[],
+            client_request_id="",
+            session_id="",
+            features=None,
+        )
+    )
     with pytest.raises(Exception):
         sk.public_key().verify(sig, request_sig_payload(b"t", "d", "n", "a"))

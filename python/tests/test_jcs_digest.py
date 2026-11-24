@@ -10,11 +10,8 @@ import json
 import pathlib
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from seam_sdk.crypto import (
-    call_sig,
-    call_sig_payload,
     jcs_canonicalize,
     tool_input_digest,
 )
@@ -68,22 +65,3 @@ def test_lone_surrogate_is_rejected():
     # Not valid Unicode -> not UTF-8-encodable; both SDK languages must refuse, not silently escape.
     with pytest.raises(ValueError):
         jcs_canonicalize({"s": "\ud800"})
-
-
-def test_call_sig_is_ed25519_over_the_v2_payload():
-    """Shape only. The FRAMING is pinned by test_call_sig_payload.py against the runtime's bytes.
-
-    This test in its previous form verified the signature against the payload it had just built
-    itself (`ticket + digest`), so it stayed green straight through the v1→v2 framing change while
-    every live ENFORCE call was being rejected. A test that reconstructs the subject's own input
-    can only prove self-consistency — never conformance.
-    """
-    seed = bytes(range(32))
-    ticket = b"opaque-ticket-bytes"
-    digest = tool_input_digest(jcs_canonicalize({"a": 1}))
-    sig = call_sig(seed, ticket, digest, tool_name="t", agent_id="a")
-    assert len(sig) == 64
-    pub = Ed25519PrivateKey.from_private_bytes(seed).public_key()
-    pub.verify(sig, call_sig_payload(ticket, digest, "t", "a"))  # raises on mismatch
-    with pytest.raises(Exception):
-        pub.verify(sig, call_sig_payload(ticket, digest, "t", "DIFFERENT"))

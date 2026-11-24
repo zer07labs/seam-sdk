@@ -156,7 +156,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 > checkpoint trail lives in git history (`git log -p -- PROGRESS.md`); nothing here carries over.
 >
 > **Done in Phase 1 (2026-08-31).** Delivery was verified against this tree — `record_digest_v3` (since the
-> protocol pass, `record_digest_v4`) at `python/seam_sdk/crypto.py:1003`, `ts/src/crypto.ts:1553`, `verify/src/verify.rs:648`; the 6a/6b
+> protocol pass, `record_digest_v4`) at `python/seam_sdk/crypto.py:943`, `ts/src/crypto.ts:1490`, `verify/src/verify.rs:648`; the 6a/6b
 > streamed arms live at `python/seam_sdk/admin.py:141` and `ts/src/admin.ts:162`; KATs at
 > `conformance/vectors.json:70` — and the plan is now `plans/archive/record-digest-v3.md`.
 > `plans/authorize-single-canonicalization.md` turned out to be delivered too (issue #60, closed
@@ -172,15 +172,15 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `ts/src/client.ts:431` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:169-174` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
 | `ts/gen/seam/api/v1/seam_pb.ts` | Branded `SessionStep = Message<"seam.api.v1.SessionStep"> & {…}` — the reason Phase 3's TS half is a hard block, not a typing nicety. Also carries `collectiveOutcome?` on the same branded type. Cited by symbol, not by line: this is a generated, gitignored file, and a line number into it is correct only until the next `make generate`. |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi` | `SessionStep.collective_outcome` in the Python stubs — generated, never surfaced. Cited by symbol for the same reason as the row above; it carried `:289,297` until round 3, in direct violation of that rule and of `test_no_document_line_anchors_into_a_generated_file`, which it evaded **only** because a comma-list matches `CITATION` not at all. The rule was stated one row up and broken the next. |
-| `python/seam_sdk/client.py:978`, `ts/src/client.ts:1761` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
+| `python/seam_sdk/client.py:972`, `ts/src/client.ts:1757` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
 | `python/tests/test_collective_outcome.py`, `ts/tests/collective_outcome.test.ts` | `DecisionResponse` cases only. **Phase 3** adds the `SessionStep` cases (absent ⇒ none; `UNSPECIFIED` ⇒ raise; unknown ⇒ raise; non-commit step ⇒ none). Drive red first. |
-| `python/seam_sdk/client.py:878` + `python/seam_sdk/client.py:933` · `python/seam_sdk/aio.py:581` + `python/seam_sdk/aio.py:636` · `ts/src/client.ts:1645` + `ts/src/client.ts:1706` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
-| `python/seam_sdk/client.py:914-915` · `python/seam_sdk/aio.py:619-620` · `ts/src/client.ts:1667` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
+| `python/seam_sdk/client.py:872` + `python/seam_sdk/client.py:927` · `python/seam_sdk/aio.py:574` + `python/seam_sdk/aio.py:629` · `ts/src/client.ts:1641` + `ts/src/client.ts:1702` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
+| `python/seam_sdk/client.py:908-909` · `python/seam_sdk/aio.py:612-613` · `ts/src/client.ts:1663` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
 > **Read every row below as *as at plan time*, 2026-08-31, unless the row says otherwise.** Some
 > were updated mid-run and some were not, which is worse than either — an unstamped map invites a
 > reader to treat a stale row as current. The rows known to have moved since are corrected inline.
 
-| `python/seam_sdk/_authorize.py:180,223` | `AuthorizeRequest.subjects` — one shared builder feeds sync + aio + TS. Delivered; tests at `python/tests/test_authorize.py:639,646`. |
+| `python/seam_sdk/_authorize.py:179,223` | `AuthorizeRequest.subjects` — one shared builder feeds sync + aio + TS. Delivered; tests at `python/tests/test_authorize.py:639,646`. |
 | `scripts/check-contract.sh` | The contract-freshness gate. `:192` probe 1 (one named RPC) · `:196-210` probe 1b and `:212-226` probe 1c (hardcoded names; 1b includes **two `seam.api.v1` field names**, `call_sig` and `on_behalf_of`, at `:205-206`) · `:228-241` probe 2 (**exactly four hardcoded field names, all on `seam.event.v1`**; `STREAM=1` hardens) · `:242-247` probe 3 (`EVENTS=1`) · `:249-275` probe 4 (RPC set comparison, both directions). Every field probe names a *pre-existing* field, so **a new message field is invisible to all of them — that is the hole Phase 5 closes.** Extractors to mirror: `:158-161` `rpcs_python` (greps `_pb2_grpc.py`), `:163-166` `rpcs_ts` (greps `@generated from rpc`), `:173-188` `--write-manifest` (**writes from Python only**, preserves the header verbatim), `:88-97` the exit-3 no-stubs guard. |
 | `contract/rpc-manifest.txt:61-62` | Declares `SubmitEvaluation`/`SubmitObjection`. The model Phase 5 mirrors one level down. |
 | `contract/field-manifest.txt` | **Phase 5 creates.** Whole-surface `seam.api.v1` field declaration (measured: **223 fields over 65 messages** — both extractors agree exactly, given the `_FIELD_NUMBER` rule in the row below), set-compared per language both directions, `--write-manifest` escape. Also the ACDP tags-7-10 tripwire. **As shipped: 228, not 223** — the plan measured the surface before ACDP reached the BSR. |
@@ -199,7 +199,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
 | `verify/docs/seam-event.v1.md` | Byte-verbatim vendored spec, pinned in its header. **Phase 9** refreshes it whole-file. Source of #73's citation drift. |
 | `scripts/check_vendored_spec.py:22-38` | Integrity (`:24-26`) / reachability (`:28-32`) / **currency** (`:34-38`) — fails on staleness by explicit decision. This is what will announce runtime P1a Phase 6 by reddening `spec-pin` (`.github/workflows/ci.yml:645-646`) on every PR. |
-| `python/seam_sdk/crypto.py:924-928` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:624,668,702`, `python/seam_sdk/admin.py:153`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:609` `_opt_bytes` · `:394` `record_digest_v2`. |
+| `python/seam_sdk/crypto.py:864-868` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:624,668,702`, `python/seam_sdk/admin.py:153`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:609` `_opt_bytes` · `:394` `record_digest_v2`. |
 | `verify/src/verify.rs:869-875` | `schema_version` dispatch (2 ⇒ v2, 3 ⇒ v3, else refuse); `:837-845` ceiling refusal. P1a keeps `schema_version = 3`, so **no new arm**. |
 | `python/tests/test_errors_is_import_light.py:87-100` | `crypto.py` may import only `cryptography`; `errors.py` only `grpc`. seam-runtime's `sdk-digest-parity` gate loads `crypto.py` standalone. **No phase may add an import to either.** |
 | `scripts/test_ci_gate.py:79,98,141` | `ci-ok`'s `needs:` must equal the full job set both ways; `ALLOWED_ADVISORY` (the literal is at `:52`, asserted by the test at `:98`) may hold only `{integration, spec-pin}`; `workflow-guards` must stay free of `BUF_TOKEN`/`buf-setup-action`/`make generate` (banned triple at `:191-195`). **Any new CI job must be added to `needs:`.** |
@@ -273,7 +273,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   `python/pyproject.toml` and `ts/package.json` (version stamps) — no line number cited anywhere in
   the plan moved. Merge commit `68e92c2`; branch `feat/publish-integrity-and-tracking-state`.
 - **Delivery verified against code, not status tables** (the whole point of the phase):
-  `record_digest_v3` at `python/seam_sdk/crypto.py:928`, `ts/src/crypto.ts:1553`,
+  `record_digest_v3` at `python/seam_sdk/crypto.py:868`, `ts/src/crypto.ts:1490`,
   `verify/src/verify.rs:648`; streamed v3 arms at `python/seam_sdk/admin.py:141` (with `:107`
   refusing `schema_version > 3`) and `ts/src/admin.ts:162` (with `:109` the matching ceiling
   refusal); KATs at `conformance/vectors.json:70`;
@@ -744,7 +744,7 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   `ContextBinding` field present — all eleven, `content_hash` / `receipt_hash` / `key_status` /
   `resolved_status` / `retraction` among them.
 - **No wrapper change was needed, exactly as the plan predicted** — verified rather than assumed:
-  `resolve_context` (`python/seam_sdk/client.py:1306`) and `resolveContext` (`ts/src/client.ts:1713`)
+  `resolve_context` (`python/seam_sdk/client.py:1300`) and `resolveContext` (`ts/src/client.ts:1709`)
   return the generated `ContextBinding` straight through, so the five fields reach callers with no
   SDK work. What both *did* carry was a docstring enumerating four of the eleven fields as if that
   were the set; both now say what they actually return, and both carry the vocabulary warning.
@@ -4084,7 +4084,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2372`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2385`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4391,10 +4391,10 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
 
 ## plans/verify-anchor-tenant.md — repo map (written by /plan, 2026-10-05)
 
-- `python/seam_sdk/client.py:1287-1293` — sync `verify_party_anchor`, the primary wrapper to
+- `python/seam_sdk/client.py:1281-1287` — sync `verify_party_anchor`, the primary wrapper to
   change; `python/seam_sdk/client.py:179` has `DEFAULT_TIMEOUT_S = 2.0`, the method's timeout
   default.
-- `python/seam_sdk/aio.py:999-1007` — the async twin, hand-duplicated (no shared base class) —
+- `python/seam_sdk/aio.py:992-1000` — the async twin, hand-duplicated (no shared base class) —
   must change in lockstep: `python/tests/test_client_parity.py:64-79`'s
   `test_the_two_clients_agree_on_each_verbs_signature` compares parameter lists in order, so a
   half-done change reddens it, not just a names-only check.
@@ -4410,7 +4410,7 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   deadline tables; confirmed unaffected by a keyword-only addition.
 - `ts/src/client.ts:117-169` (`UnaryCallOptions`/`CredentialedCallOptions`/`call()`),
   `ts/src/client.ts:803-825` (`authorize`'s inline-opts precedent),
-  `ts/src/client.ts:1562-1574` (`verifyPartyAnchor` itself) — the TS surface Phase 2 changes
+  `ts/src/client.ts:1558-1570` (`verifyPartyAnchor` itself) — the TS surface Phase 2 changes
   and the conventions it must match.
 - `ts/src/admin.ts:366-389` — `resumeSession`'s inline `tenant?: string` precedent, the pattern
   Phase 2 mirrors on the data plane.
@@ -4599,7 +4599,7 @@ green before any code changed.
      unknown-event-tag audit (relayed to seam-runtime, closed): no SDK verifier re-serializes a
      whole decoded `seam.event.v1` message to compute a digest/chain hash — Rust
      (`verify/src/wire.rs:16-80,161-211`, `verify/src/verify.rs:559-585`), Python
-     (`python/seam_sdk/crypto.py:708-745,695`), and TypeScript (`ts/src/crypto.ts:1064,882`) all
+     (`python/seam_sdk/crypto.py:648-685,695`), and TypeScript (`ts/src/crypto.ts:1490`) all
      hand-build their preimage from an explicit, spec-transcribed field list. An unsealed,
      non-preimage field just flows through harmlessly, same conclusion as that audit reached for
      the sealed-vs-unsealed question in general.
@@ -5389,7 +5389,7 @@ not filed here. OQ-1 is resolved, so no phase is gated.
     - an explicit JS non-carrier test;
     - TSDoc now states that a `null` view throws;
     - TSDoc carries the "operator alteration breaks the chain re-verify" sentence;
-    - re-anchored `PROGRESS.md:163` (`confidence`, now `ts/src/client.ts:1667`).
+    - re-anchored `PROGRESS.md:163` (`confidence`, now `ts/src/client.ts:1663`).
   - Files: `ts/src/client.ts` (allocationOf + interfaces after sealAttestationOf), `ts/src/index.ts` (EIGHT dual-declared names), `ts/tests/allocation.test.ts` (new; reads the Python fixture), `ts/tests/integration.test.ts`.
   - The client.ts insertion shifted citations by 149: `COMPATIBILITY.md:700,820` and `PROGRESS.md:160,162` were re-anchored.
   - Results: TS typecheck/build clean, 567 tests pass; pytest 2601 passed.

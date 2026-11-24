@@ -46,18 +46,17 @@ def test_step_usage_defaults_to_zero():
     assert pb.tokens == 1000 and pb.cost_micros == 40
 
 
-def test_every_budget_default_is_zero_meaning_server_default():
-    """The proto's semantics: 0 ⇒ the server default (currently 32). A client that bakes in 32
-    silently pins today's server default forever; sending 0 keeps the server the owner of the
-    number. Pinned across every entry point that carries a ``budget``."""
+def test_no_entry_point_carries_the_retired_budget_scalar():
+    """deep-cleanup 3.3 S3-O3: the legacy ``budget`` message count is gone from the wire. Every entry
+    point that opened or resumed a session takes ``limits`` / ``raise_`` only; an absent message limit
+    is the server's default (currently 32), which the client never re-states."""
     entry_points = [
         SeamClient.open_session,
         aio.SeamClient.open_session,
         SeamAdminClient.resume_session,
     ]
     for method in entry_points:
-        default = inspect.signature(method).parameters["budget"].default
-        assert default == 0, f"{method.__qualname__} budget default is {default}, not 0"
+        assert "budget" not in inspect.signature(method).parameters, method.__qualname__
 
 
 def test_client_exposes_the_full_session_lifecycle():

@@ -176,7 +176,6 @@ def build_authorize_request(
     digest_only: bool = False,
     features: Optional[Mapping[str, str]] = None,
     session_id: str = "",
-    subject: str = "",
     subjects: Sequence[str] = (),
     agent_id: str = "",
     client_request_id: str = "",
@@ -200,13 +199,12 @@ def build_authorize_request(
     Canonicality is the caller's assertion, and a caller can only misrepresent its own input, which
     it already controls, under its own signature.
 
-    ``subjects`` supersedes the deprecated singular ``subject``: the server takes the union of both,
-    drops empty entries, dedupes first-wins, and caps the effective set at 16. ``call_sig`` is v3
-    (#197): it signs ``subject``, ``subjects`` (in the order passed here), ``client_request_id``,
-    ``session_id`` and ``features`` together with the ticket, digest, ``tool_name`` and ``agent_id``.
-    Changing any of them after signing is therefore a rejected call. Today the
-    server refuses an effective subject set larger than one (``INVALID_ARGUMENT``); Phase B
-    (``AuthorizeEvaluated.subject_digests``) lifts that cap.
+    ``subjects`` is the only subject input; the server dedupes first-wins and caps the set at 16.
+    The retired singular ``AuthorizeRequest.subject`` (field 8) is never sent: the v3 preimage keeps its
+    slot and signs it as the constant empty string (deep-cleanup 3.3 S3-O4). ``call_sig`` is v3 (#197):
+    it signs ``subjects`` (in the order passed here), ``client_request_id``, ``session_id`` and
+    ``features`` together with the ticket, digest, ``tool_name`` and ``agent_id``. Changing any of them
+    after signing is therefore a rejected call.
     """
     canonical = _resolve_canonical(tool_input, canonical)
     digest = tool_input_digest(canonical)
@@ -222,14 +220,13 @@ def build_authorize_request(
             digest,
             tool_name=tool_name,
             agent_id=agent_id,
-            subject=subject,
+            subject="",
             subjects=list(subjects),
             client_request_id=client_request_id,
             session_id=session_id,
             features=features,
         ),
         session_id=session_id,
-        subject=subject,
         subjects=list(subjects),
         agent_id=agent_id,
         client_request_id=client_request_id,

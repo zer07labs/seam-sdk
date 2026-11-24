@@ -631,20 +631,20 @@ test("admin cancelSession sends one CancelSession with the scope and returns the
   assert.equal(calls[0]!.input.namespace, "");
 });
 
-// ── Budget default: 0 ⇒ the server owns the default; the client never re-states 32 ───────────────
+// ── deep-cleanup 3.3 S3-O3: the legacy `budget` scalar is never sent ──────────────────────────────
 
-test("openSession / admin resumeSession send budget 0 when unspecified (the proto owns the default)", async () => {
+test("openSession / admin resumeSession never send the retired budget scalar", async () => {
   const calls: Recorded[] = [];
   const { handle } = fakeSeam();
   const client = new SeamClient(fakeTransport(calls, handle));
   await client.openSession(new Agent(SEED), { sessionId: "s", participants: ["a", "b"] });
   const open = calls.find((c) => c.method === "OpenSession")!;
-  assert.equal(open.input.budget, 0);
+  assert.equal("budget" in open.input, false);
 
   const adminCalls: Recorded[] = [];
   const admin = new SeamAdminClient(fakeTransport(adminCalls, () => ({})));
   await admin.resumeSession("s", "op:approver");
-  assert.equal(adminCalls[0]!.input.budget, 0);
+  assert.equal("budget" in adminCalls[0]!.input, false);
 });
 
 test("the data-plane resumeSession is removed; resume is the management-plane R9 action only", () => {

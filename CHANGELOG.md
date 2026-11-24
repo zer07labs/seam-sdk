@@ -16,6 +16,19 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Removed (deep-cleanup 3.3, train 1 consumers — breaking, version-locked to the runtime)
+
+- `open_session` / `openSession` and `SeamAdminClient.resume_session` / `resumeSession` no longer take
+  the legacy `budget` message count (S3-O3). Use `limits=BudgetLimits(messages=n)` /
+  `raise_=BudgetLimits(messages=n)` (TS `limits: { messages: n }` / `raise`). Absent, the server
+  default (32) applies, as before.
+- `authorize` no longer takes the singular `subject` (S3-O4). Pass `subjects=[s]`. The SDK never sends
+  `AuthorizeRequest.subject` (field 8) and signs its `call_sig` v3 preimage slot as the constant empty
+  string, so the v3 framing is unchanged and the runtime can reserve the field.
+- The dead `call_sig` v2 helpers (`call_sig`, `call_sig_payload`, `CALL_SIG_CONTEXT`; TS `callSig`,
+  `callSigPayload`, `CALL_SIG_CONTEXT`) and `conformance/call_sig_payload_vector.json` are deleted
+  (S3-O2). Every sender already signed v3.
+
 ## 0.117.1 — 2026-11-24
 
 ## 0.117.0 — 2026-11-24

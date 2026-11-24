@@ -682,7 +682,6 @@ class SeamAdminClient:
         *,
         tenant: str = "",
         namespace: str = "",
-        budget: int = 0,
         raise_: Optional["_client.BudgetLimits"] = None,
         timeout: float = DEFAULT_ADMIN_TIMEOUT_S,
     ) -> pb.SessionStep:
@@ -690,14 +689,14 @@ class SeamAdminClient:
         moved off the data plane; the ``SeamClient.resume_session`` tombstone is removed). It requires
         the ``session:resume`` operator scope. ``approver`` is a **required**, non-empty attribution for the
         approval (an R9 approval must name who granted it). ``raise_`` raises any budget dimension; absent,
-        ``budget`` raises the message count (0 means the server default, currently 32).
+        the message count is raised by the server default (currently 32). The legacy ``budget`` count is
+        gone (deep-cleanup 3.3 S3-O3); use ``raise_=BudgetLimits(messages=n)``.
         ``tenant``/``namespace`` scope the lookup — leave empty to resolve the session by id alone."""
         req = pb.AdminResumeRequest(
             session_id=session_id,
             approver=approver,
             tenant=tenant,
             namespace=namespace,
-            budget=budget,
         )
         if raise_ is not None:
             # `raise` is a Python keyword, so the generated field is reached via getattr.

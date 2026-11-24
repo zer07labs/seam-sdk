@@ -717,7 +717,7 @@ wrong answers rather than misses:
 - **In a table row the subject wins.** `PROGRESS.md`'s repo-map row for `python/seam_sdk/crypto.py`
   names `python/seam_sdk/admin.py:153` mid-sentence and then continues with four more bare
   references, all of which are crypto.py. Binding them to the nearer citation reports
-  `python/seam_sdk/crypto.py:956` as past-EOF — it is `_opt_bytes`, and the claim is true.
+  `python/seam_sdk/crypto.py:896` as past-EOF — it is `_opt_bytes`, and the claim is true.
 - **Inheritance must not cross a line.** `PROGRESS.md` writes `p1a:103-107` followed by bare
   companions, where `p1a` is a shorthand alias for a sibling-repo spec and not a path at all. A
   paragraph-scoped resolver walks past it and binds those references to whatever file the previous
@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:2344-2366` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:2357-2379` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -1543,11 +1543,11 @@ not as written.
   over-generalized. Python's validation still earns its place by a different route: v2 accepts a
   `memoryview(array("I", [0]*32))` and produces a digest whose length prefix claims 32 while 128
   bytes are hashed — the exact injectivity break framing exists to prevent — and v3 refuses it
-  (`python/seam_sdk/crypto.py:611-641`).
+  (`python/seam_sdk/crypto.py:611-637`).
 - **Correction to the entry's blast-radius claim:** "every such digest was wrong, so no correct
   caller breaks" is too strong. A proto3-JSON int64-as-string (`sealedAt: "123"`) coerced
   *correctly* through `BigInt` under the old TS behavior and is now refused. The refusal is loud, at
-  the first record, and names the fix (`ts/src/crypto.ts:1416-1420`) — and accepting strings reopens
+  the first record, and names the fix (`ts/src/crypto.ts:1353-1357`) — and accepting strings reopens
   `BigInt("")→0n` and `BigInt([5])→5n`. The choice stands; the justification does not extend to
   "nothing that used to work stops working."
   *(Citation corrected 2026-09-03. It named lines 509-522, which then held `v3Text` — the string slot
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:2372` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:2385` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.

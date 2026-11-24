@@ -313,7 +313,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2343-2365`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2356-2378`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -744,7 +744,7 @@ so it cannot reach the taxonomy. Use `canonicalize_tool_input()`
 ### `canonical=` hands you the derivation, and the responsibility with it
 
 `authorize(canonical=…)` (`python/seam_sdk/client.py:460`, `python/seam_sdk/aio.py:236`; `opts.canonical`
-in TypeScript, `ts/src/client.ts:1199`) is additive and keyword-only. The SDK does **not** verify the
+in TypeScript, `ts/src/client.ts:1194`) is additive and keyword-only. The SDK does **not** verify the
 bytes — re-deriving to check would reinstate the second derivation the parameter exists to remove.
 So two things become possible that were not:
 
@@ -772,17 +772,17 @@ values reached one digest. Measured against the pre-fix build, `recordDigestV2({
 `b566fdea56b8487bc5ebc26d1d6585339e9ab2a3a499247bd7230e4f20f05d7f`. That is a digest failing at the
 only thing a digest does.
 
-The guard is `uintSlot` (`ts/src/crypto.ts:1453`), which already governed the v3 record digest;
-`u64le`/`u32le` (`ts/src/crypto.ts:1168`) now route through it, so v2 and the attestation framing get
+The guard is `uintSlot` (`ts/src/crypto.ts:1390`), which already governed the v3 record digest;
+`u64le`/`u32le` (`ts/src/crypto.ts:1105`) now route through it, so v2 and the attestation framing get
 the rule that was always written for them. Python got the same treatment: `_uint_slot`
-(`python/seam_sdk/crypto.py:928`) was `_v3_uint`, and `record_digest_v2` shared it (both v2 and v3
+(`python/seam_sdk/crypto.py:868`) was `_v3_uint`, and `record_digest_v2` shared it (both v2 and v3
 are now deleted; `record_digest_v4` uses it). Every
 "before" below was measured against the pre-fix build, not inferred.
 
 **Read the `now` column as the record-digest arm.** In the chain-head **attestation** arm every one
 of these refusals was observed as `false` rather than as a thrown error, because
 `verifyChainHeadAttestation` wrapped its whole body in a catch that returned `false`
-(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);`, `ts/src/crypto.ts:1732`). The
+(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);`, `ts/src/crypto.ts:1669`). The
 distinction mattered for the `true` row in particular, where the attestation arm showed no
 caller-visible change at all — `false` before, `false` after — even though what it was refusing had
 changed. **§10 closed that**: the type checks now run before the `try`, so a wrong type throws there
@@ -809,7 +809,7 @@ Python never had it. What Python had was three smaller defects in the same code:
 
 - `verify_chain_head_attestation` let that `struct.error` escape a function documented to return
   `False` on any tamper, so an out-of-range length **crashed** a caller instead of being rejected. It
-  now returns `False` (`python/seam_sdk/crypto.py:1142-1268`).
+  now returns `False` (`python/seam_sdk/crypto.py:1082-1208`).
 - `attested_len`, `attested_at` and `digest_schema` are now required to be `int`. Previously
   `True` was digested as `1` (`bool` subclasses `int`) and `5.0` raised `struct.error` — a *third*
   answer from a function that should only ever give two. Both now raise `TypeError`.

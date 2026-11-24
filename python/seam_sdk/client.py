@@ -284,7 +284,7 @@ class Agent:
 @dataclass
 class BudgetLimits:
     """Multi-dimension session budget (enterprise 6.2). Every field is optional; an unset
-    dimension is unlimited. ``messages``, when set, overrides the legacy ``budget`` count.
+    dimension is unlimited.
     ``soft_pct`` is the soft-warning threshold as a percent of any limit (server default 80)."""
 
     messages: Optional[int] = None
@@ -462,7 +462,6 @@ class SeamClient:
         digest_only: bool = False,
         features: Optional[Mapping[str, str]] = None,
         session_id: str = "",
-        subject: str = "",
         subjects: Sequence[str] = (),
         agent_id: str = "",
         client_request_id: str = "",
@@ -486,12 +485,9 @@ class SeamClient:
         and the two derivations can disagree across the gap between them (seam-sdk#60). The two
         parameters are mutually exclusive; passing both is an error rather than a precedence rule.
 
-        ``subjects`` supersedes the deprecated singular ``subject``: the server takes the union of
-        both, drops empty entries, dedupes first-wins, and caps the effective set at 16. **Today the
-        server refuses an effective subject set larger than one** — supplying more than one is the
-        server's ``INVALID_ARGUMENT`` until Phase B ships ``AuthorizeEvaluated.subject_digests``; this
-        parameter exists now so callers can migrate off ``subject`` one at a time. Both are signed by
-        ``call_sig`` v3, in the order passed.
+        ``subjects`` names the call's end-user data subjects: the server dedupes first-wins and caps the
+        set at 16, and each one is signed by ``call_sig`` v3, in the order passed. The retired singular
+        ``subject`` is gone (deep-cleanup 3.3 S3-O4); pass ``subjects=[s]``.
         """
         # Canonicalized ONCE, before the ticket is acquired and outside the closure below. Both
         # halves of that are load-bearing. Inside the closure it was re-derived on the refresh-and-
@@ -510,7 +506,6 @@ class SeamClient:
             digest_only=digest_only,
             features=features,
             session_id=session_id,
-            subject=subject,
             subjects=list(subjects),
             agent_id=agent_id,
             client_request_id=client_request_id,
@@ -770,7 +765,6 @@ class SeamClient:
         session_id: str,
         participants: Sequence[str],
         *,
-        budget: int = 0,
         limits: Optional[BudgetLimits] = None,
         mode: str = "",
         on_behalf_of: Sequence[str] = (),
@@ -778,9 +772,10 @@ class SeamClient:
         credential: Optional[Agent] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
-        """Admit (the PoP handshake) → open an incremental session. ``budget`` is the legacy
-        message count (0 means the server default, currently 32 — the proto's semantics, so the
-        server owns the number); ``limits`` adds the other 6.2 dimensions. ``on_behalf_of`` binds
+        """Admit (the PoP handshake) → open an incremental session. ``limits`` sets the 6.2
+        budget dimensions; absent, the message count is the server default (currently 32, the server
+        owns the number). The legacy ``budget`` count is gone (deep-cleanup 3.3 S3-O3); use
+        ``limits=BudgetLimits(messages=n)``. ``on_behalf_of`` binds
         end-user data subjects to the session (see :meth:`run_decision`). ``credential`` is the
         per-request identity (#508), defaulting to the bound agent (#202) — see :meth:`get_decision`. ``requester`` is the
         human principal the session was opened for, as the control plane's pseudonymous ``p_…`` id (RT4,
@@ -790,7 +785,6 @@ class SeamClient:
         req = pb.OpenSessionRequest(
             session_id=session_id,
             participants=list(participants),
-            budget=budget,
             mode=mode,
             presentation=self._presentation(agent, timeout),
             on_behalf_of=list(on_behalf_of),

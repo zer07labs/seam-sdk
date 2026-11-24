@@ -521,7 +521,7 @@ export class SeamAdminClient {
   /** Resume a Suspended session — the R9 approver action, on the **management** plane (rt-D: this moved
    * off the data plane, where the `SeamClient.resumeSession` tombstone is now removed). Requires the
    * `session:resume` operator scope. `approver` is a **required**, non-empty attribution for the approval.
-   * `raise` raises any budget dimension; absent, `budget` raises the message count. `tenant`/`namespace`
+   * `raise` raises any budget dimension; absent, the server default raises the message count. `tenant`/`namespace`
    * scope the lookup — leave empty to resolve the session by id alone. */
   async resumeSession(
     sessionId: string,
@@ -529,7 +529,6 @@ export class SeamAdminClient {
     opts?: {
       tenant?: string;
       namespace?: string;
-      budget?: number;
       raise?: BudgetLimits;
       timeoutMs?: number;
     },
@@ -540,8 +539,6 @@ export class SeamAdminClient {
         approver,
         tenant: opts?.tenant ?? "",
         namespace: opts?.namespace ?? "",
-        // 0 ⇒ the server default — the proto owns the default, the client never re-states it.
-        budget: opts?.budget ?? 0,
         raise: opts?.raise,
       },
       call(opts),

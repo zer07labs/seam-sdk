@@ -337,15 +337,22 @@ def test_optional_fields_ride_the_request(fake_server):
         {},
         features={"amount_band": "high"},
         session_id="s-1",
-        subject="user@example.com",
+        subjects=["user@example.com"],
         agent_id="agent-red",
         client_request_id="req-42",
     )
     req = servicer.last_request
     assert dict(req.features) == {"amount_band": "high"}
-    assert (req.session_id, req.subject, req.agent_id, req.client_request_id) == (
+    # deep-cleanup 3.3 S3-O4: the retired singular `subject` (field 8) is never sent.
+    assert req.subject == ""
+    assert (
+        req.session_id,
+        list(req.subjects),
+        req.agent_id,
+        req.client_request_id,
+    ) == (
         "s-1",
-        "user@example.com",
+        ["user@example.com"],
         "agent-red",
         "req-42",
     )

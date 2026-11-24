@@ -95,7 +95,6 @@ def test_authorize_requests_are_signed_v3_over_their_own_wire_fields() -> None:
         tool_input={"path": "/tmp/x"},
         features={"region": "eu", "amount_bucket": "high"},
         session_id="sess-9",
-        subject="user-1",
         subjects=["user-3", "user-2"],
         agent_id="billing-agent",
         client_request_id="req-0001",
@@ -136,3 +135,27 @@ def test_features_sort_by_utf8_bytes_not_utf16_order() -> None:
         "04000000f0908080" + "0100000062"
     )
     assert p.hex().endswith(want)
+
+
+def test_the_retired_subject_slot_is_signed_empty() -> None:
+    """deep-cleanup 3.3 S3-O4: the builder never sends `AuthorizeRequest.subject` (field 8) and signs
+    its v3 preimage slot as the constant empty string, so the runtime can reserve the field."""
+    req = build_authorize_request(
+        ticket=b"\x02" * 16,
+        agent_seed=SEED,
+        tool_name="t",
+        tool_input={},
+        subjects=["user-1"],
+    )
+    assert req.subject == ""
+    payload = call_sig_v3_payload(
+        req.ticket,
+        req.tool_input_digest,
+        req.tool_name,
+        req.agent_id,
+        subject="",
+        subjects=["user-1"],
+    )
+    Ed25519PrivateKey.from_private_bytes(SEED).public_key().verify(
+        req.call_sig, payload
+    )
