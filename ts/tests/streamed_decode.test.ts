@@ -260,6 +260,7 @@ test(
         SEAM_GRPC_LISTEN: `127.0.0.1:${dataPort}`,
         SEAM_GRPC_MGMT_LISTEN: `127.0.0.1:${mgmtPort}`,
         SEAM_DEV_INSECURE: "1",
+        SEAM_ENFORCE_SUBJECT: "0", // explicit loopback off switch: unset enforces since seam-runtime deep-cleanup D10
       },
       stdio: "ignore",
     });

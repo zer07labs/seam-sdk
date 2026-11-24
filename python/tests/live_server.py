@@ -240,6 +240,9 @@ def spawn_server(
         **os.environ,
         "SEAM_GRPC_LISTEN": f"127.0.0.1:{data_port}",
         "SEAM_DEV_INSECURE": "1",
+        # The one explicit off switch (loopback only): since seam-runtime deep-cleanup D10 an unset
+        # SEAM_ENFORCE_SUBJECT enforces. A caller that wants enforcement passes it in env_extra.
+        "SEAM_ENFORCE_SUBJECT": "0",
     }
     if mgmt_port is not None:
         env["SEAM_GRPC_MGMT_LISTEN"] = f"127.0.0.1:{mgmt_port}"
