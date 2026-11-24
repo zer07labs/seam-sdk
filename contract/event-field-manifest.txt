@@ -10,7 +10,7 @@
 #
 # What was covering it before, and still is, narrowly: the four STREAM/EVENTS presence probes in
 # `scripts/check-contract.sh` assert `session_lifecycle`, `chain_head_attestation`,
-# `ciphertext_digest` and `AuditEntryEvent.actor` — four of the 171 fields below, chosen because the
+# `ciphertext_digest` and `AuditEntryEvent.actor` — four of the 170 fields below, chosen because the
 # SDK decodes them. They never fail on anything else being added, removed or renamed. They are kept
 # deliberately: they fire even when this manifest is absent or has just been rewritten, and they
 # assert what the SDK READS rather than what the contract CONTAINS. Two different questions.
@@ -76,8 +76,8 @@
 # SPELLING
 # --------
 # One line per field: `<Message>/<field_name>`, proto spelling (snake_case), sorted, no tags, no
-# types. A `map` field is ONE entry on its owner, never a key/value pair. 171 fields, 22 messages (measured at the Flows W5
-# D-163 pre-vendor, seam-runtime#1910 @ a196a6c1, 0.117.0).
+# types. A `map` field is ONE entry on its owner, never a key/value pair. 170 fields, 22 messages (measured at the 0.121.0
+# lockstep, seam-runtime#1959 @ 8e579b2c: `AuthorizeEvaluated/subject_digest`, tag 10, deleted and reserved).
 #
 # CARRIED, NOT VERIFIED (Flows W4, DECISIONS 2026-11-23): the attestation v3 lines (`ChainHeadAttestation/`
 # chain_kind, env, flow_id, stream_id, version) and the erasure certificate v2 lines (`ErasureCertificate/` erased_items,
@@ -103,7 +103,6 @@ AuthorizeEvaluated/authorize_id
 AuthorizeEvaluated/client_request_id
 AuthorizeEvaluated/policy_version
 AuthorizeEvaluated/reason
-AuthorizeEvaluated/subject_digest
 AuthorizeEvaluated/subject_digests
 AuthorizeEvaluated/tool_input_digest
 AuthorizeEvaluated/tool_name

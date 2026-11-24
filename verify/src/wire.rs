@@ -314,10 +314,12 @@ pub struct AuthorizeEvaluatedPb {
     pub reason: String,
     #[prost(string, tag = "9")]
     pub policy_version: String,
-    #[prost(string, optional, tag = "10")]
-    pub subject_digest: Option<String>,
-    /// tag 11 — one keyed commitment per effective subject (#715). Carried for the dedup identity, like
-    /// every other field here: two rows differing only in their subject set are two different calls.
+    // Tag 10 (the singular `subject_digest`, always element 0 of tag 11) is reserved since runtime 0.121.0
+    // (seam-runtime#1959). A stray tag 10 decodes as an unknown field and reaches nothing — neither the
+    // canonical bytes nor the dedup identity — exactly as in the runtime's `AuthorizeEvaluatedPb`.
+    /// tag 11 — one keyed commitment per effective subject (#715), the one subject carrier. Carried for the
+    /// dedup identity, like every other field here: two rows differing only in their subject set are two
+    /// different calls.
     #[prost(string, repeated, tag = "11")]
     pub subject_digests: Vec<String>,
 }
@@ -629,8 +631,7 @@ pub struct AuthorizeEvaluatedJson {
     pub reason: String,
     #[serde(default)]
     pub policy_version: String,
-    #[serde(default)]
-    pub subject_digest: Option<String>,
+    // No `subject_digest`: reserved since runtime 0.121.0. A stray key is ignored (no deny_unknown_fields).
     #[serde(default)]
     pub subject_digests: Vec<String>,
 }
@@ -1094,7 +1095,6 @@ impl Event {
                     verdict: a.verdict,
                     reason: a.reason,
                     policy_version: a.policy_version,
-                    subject_digest: a.subject_digest,
                     subject_digests: a.subject_digests,
                 }),
                 denial: j.policy_denied.map(|d| PolicyDeniedPb {
@@ -1735,7 +1735,6 @@ mod tests {
                 verdict: "ESCALATE".into(),
                 reason: "amount_over_floor".into(),
                 policy_version: "p1".into(),
-                subject_digest: None,
                 subject_digests: Vec::new(),
             }),
             ..Default::default()
@@ -1786,7 +1785,6 @@ mod tests {
                 tool_input_digest: "sha256:00".into(),
                 verdict: "ALLOW".into(),
                 policy_version: "p1".into(),
-                subject_digest: subjects.first().map(|s| s.to_string()),
                 subject_digests: subjects.iter().map(|s| s.to_string()).collect(),
                 ..Default::default()
             }),
@@ -1812,7 +1810,6 @@ mod tests {
             "prev_checksum":"","tenant_seq":0,"authorize_evaluated":{"authorize_id":"az02",
             "agent_aid":"aid:pubkey:agent","agent_id":"agent-1","tool_name":"payments.transfer",
             "tool_input_digest":"sha256:00","verdict":"ALLOW","policy_version":"p1",
-            "subject_digest":"hmac-sha256:k1:aa",
             "subject_digests":["hmac-sha256:k1:aa","hmac-sha256:k1:bb"]}}"#
             .replace('\n', "");
         let from_json = Event::parse(&json).expect("JSON transport must parse");
@@ -1836,6 +1833,77 @@ mod tests {
         assert_ne!(
             base, &other_subjects.bytes,
             "subject_digests must reach the canonical bytes"
+        );
+    }
+
+    /// Tag 10 (`subject_digest`) is reserved since runtime 0.121.0 (seam-runtime#1959): `subject_digests`
+    /// (tag 11) is the one carrier. A row that still carries tag 10 — an older producer, or a JSON row with
+    /// the legacy key — must parse, and the stray value must reach NOTHING: the same canonical bytes as the
+    /// row without it, on both transports. Otherwise two copies of one event (old and new producer) would
+    /// stop deduplicating, and a verifier that kept the field would disagree with the runtime's.
+    #[test]
+    fn reserved_subject_digest_tag_10_carries_nothing() {
+        let pb = SeamEventPb {
+            schema_version: "seam-event.v1".into(),
+            event_id: "az03#az#9".into(),
+            seq: 9,
+            occurred_at: 1_700,
+            tenant: "acme".into(),
+            namespace: "fraud".into(),
+            kind: "AUTHORIZE_EVALUATED".into(),
+            authorize_evaluated: Some(AuthorizeEvaluatedPb {
+                authorize_id: "az03".into(),
+                agent_aid: "aid:pubkey:agent".into(),
+                agent_id: "agent-1".into(),
+                tool_name: "payments.transfer".into(),
+                tool_input_digest: "sha256:00".into(),
+                verdict: "ALLOW".into(),
+                policy_version: "p1".into(),
+                subject_digests: vec!["hmac-sha256:k1:aa".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let clean = pb.encode_to_vec();
+
+        // A legacy producer's tag 10. Protobuf merges repeated occurrences of an embedded message, so a
+        // second envelope tag 23 holding only `subject_digest = 10` merges into the same payload, exactly
+        // as if the producer had written it inline.
+        let legacy = b"hmac-sha256:k1:aa";
+        let mut inner = vec![(10 << 3) | 2, legacy.len() as u8];
+        inner.extend_from_slice(legacy);
+        let mut with_tag_10 = clean.clone();
+        with_tag_10.extend_from_slice(&[(23 << 3) | 2, 0x01, inner.len() as u8]);
+        with_tag_10.extend_from_slice(&inner);
+
+        let from_clean = Event::parse(&b64e(&clean)).expect("pb parses");
+        let from_legacy =
+            Event::parse(&b64e(&with_tag_10)).expect("a stray tag 10 must still parse");
+        assert_eq!(
+            from_legacy.authorize.as_ref().map(|a| a.verdict.as_str()),
+            Some("ALLOW"),
+            "the merged occurrence must land on the same tag-23 payload, not replace it"
+        );
+        assert_eq!(
+            from_clean.bytes, from_legacy.bytes,
+            "a reserved tag 10 must not reach the canonical bytes"
+        );
+
+        let json = |legacy_key: &str| {
+            format!(
+                r#"{{"schema_version":"seam-event.v1","event_id":"az03#az#9","seq":9,"occurred_at":1700,"tenant":"acme","namespace":"fraud","kind":"AUTHORIZE_EVALUATED","prev_checksum":"","authorize_evaluated":{{"authorize_id":"az03","agent_aid":"aid:pubkey:agent","agent_id":"agent-1","tool_name":"payments.transfer","tool_input_digest":"sha256:00","verdict":"ALLOW","policy_version":"p1",{legacy_key}"subject_digests":["hmac-sha256:k1:aa"]}}}}"#
+            )
+        };
+        let json_clean = Event::parse(&json("")).expect("JSON parses");
+        let json_legacy = Event::parse(&json(r#""subject_digest":"hmac-sha256:k1:aa","#))
+            .expect("a legacy subject_digest key must still parse");
+        assert_eq!(
+            json_clean.bytes, json_legacy.bytes,
+            "a legacy subject_digest key must not reach the canonical bytes"
+        );
+        assert_eq!(
+            from_clean.bytes, json_clean.bytes,
+            "one event, two transports — the canonical identity must collapse them"
         );
     }
     /// `stream_id` (envelope tag 27, k8s P7) is unsealed like `tenant_seq` and canonical identity like

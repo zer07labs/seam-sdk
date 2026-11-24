@@ -300,7 +300,7 @@ message EventRedriven {
 // was sealed, so this event is the ONLY trace of the call; `authorize_id` is its handle (never a
 // `decision_id`). Mirrors `AuthorizeEvaluatedPb`.
 //
-// PII rule: the end-user data subject rides ONLY as `subject_digest`, never raw. An outbox row is
+// PII rule: the end-user data subject rides ONLY as `subject_digests`, never raw. An outbox row is
 // un-shredable (GDPR erasure walks decision *records*), so a raw end-user id here would be an
 // un-erasable copy. Since #484 both digest fields are KEYED COMMITMENTS —
 // `hmac-sha256:<kid>:<hex>` over `put(domain) ‖ put(tenant) ‖ put(value)` — not bare hashes: an
@@ -326,13 +326,15 @@ message AuthorizeEvaluated {
   // enforcement fact at all by design (it seals nothing), so there is no companion attestation
   // here and a populated value proves only that a policy was routed and recorded (#561, #600).
   string policy_version = 9;
-  optional string subject_digest = 10;    // "hmac-sha256:<kid>:<hex>" — NEVER the raw subject
-  // One keyed commitment PER effective subject (#715): the union of AuthorizeRequest.subject and
-  // .subjects, deduped, in request order, at most 16. Each element is the SAME commitment as
-  // `subject_digest` ("hmac-sha256:<kid>:<hex>", same key and kid), so it is no weaker than tag 10: unlinkable to a
-  // subject without the deployment key (rotating the key severs every join), no bare-hash oracle. `subject_digest` (10) stays populated with the FIRST
-  // element for legacy consumers. Empty on rows written before this field existed — absent from the
-  // canonical JSON when empty.
+  // Tag 10 was the singular `subject_digest` (always element 0 of `subject_digests`), deleted in
+  // 0.121.0 (deep-cleanup train 1): `subject_digests` (11) is the one carrier. Reserved so it can never
+  // be reassigned.
+  reserved 10;
+  reserved "subject_digest";
+  // One keyed commitment PER effective subject (#715): AuthorizeRequest.subjects, deduped, in request
+  // order, at most 16. Each element is "hmac-sha256:<kid>:<hex>" — NEVER the raw subject: unlinkable to
+  // a subject without the deployment key (rotating the key severs every join), no bare-hash oracle.
+  // Empty — and absent from the canonical JSON — when the call named no subject.
   repeated string subject_digests = 11;
 }
 
