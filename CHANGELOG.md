@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.117.0 — 2026-11-24
+
 ### Added — `seam-verify` 0.7.0 verifies `CHAIN_MANIFEST` domain v2 (Flows W5, D-163, seam-runtime#1910)
 
 - **Pairs with runtime 0.117.0.** Its manifests sign `tenant_len`/`tenant_head` (`ChainManifest` fields 10/11)
