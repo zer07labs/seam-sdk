@@ -218,8 +218,8 @@ jobs:
       - name: build + publish
         working-directory: ts
         env:
-          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
-          CARGO_REGISTRIES_ZER07LABS_TOKEN: ${{ secrets.CARGO_REGISTRIES_ZER07LABS_TOKEN }}
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PUBLISH_API_KEY }}
+          CARGO_REGISTRIES_ZER07LABS_TOKEN: Bearer ${{ secrets.CLOUDSMITH_PUBLISH_API_KEY }}
         run: |
           # Prefer a dedicated CLOUDSMITH_API_KEY; else reuse the ORG-level Cargo token — the same Cloudsmith
           # key, just stored with the cargo:token provider's literal "Bearer " prefix, which npm's _authToken
@@ -380,8 +380,8 @@ jobs:
       - name: build (bundles the transport via package-data) + upload
         working-directory: python
         env:
-          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
-          CARGO_REGISTRIES_ZER07LABS_TOKEN: ${{ secrets.CARGO_REGISTRIES_ZER07LABS_TOKEN }}
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PUBLISH_API_KEY }}
+          CARGO_REGISTRIES_ZER07LABS_TOKEN: Bearer ${{ secrets.CLOUDSMITH_PUBLISH_API_KEY }}
           # Cloudsmith twine auth: username `token`, password = the raw API key.
           TWINE_USERNAME: token
           TWINE_REPOSITORY_URL: "https://python.cloudsmith.io/zer07labs/internal/"
@@ -536,7 +536,7 @@ jobs:
     env:
       # Job-level, because the dry-run needs it too (see the step comment below). Cloudsmith's
       # cargo:token provider expects a literal "Bearer " prefix on the value.
-      CARGO_REGISTRIES_ZER07LABS_TOKEN: ${{ secrets.CARGO_REGISTRIES_ZER07LABS_TOKEN }}
+      CARGO_REGISTRIES_ZER07LABS_TOKEN: Bearer ${{ secrets.CLOUDSMITH_PUBLISH_API_KEY }}
     defaults:
       run:
         working-directory: verify
