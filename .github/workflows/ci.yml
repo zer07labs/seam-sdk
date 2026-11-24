@@ -290,18 +290,18 @@ jobs:
           token: ${{ steps.app.outputs.token }}
           path: _seam-runtime
           persist-credentials: false
-      - name: build seam-grpc from source (the same recipe as seam-runtime's Dockerfile)
+      - name: build seam-server from source (the same recipe as seam-runtime's Dockerfile)
         if: env.SEAM_RUNTIME_BUILD_REF != ''
         working-directory: _seam-runtime
         run: |
           set -euo pipefail
           sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends protobuf-compiler pkg-config
           rustup toolchain install 1.94.1 --profile minimal  # = seam-runtime Dockerfile + rust-version
-          cargo +1.94.1 build --release -p seamd --features postgres --bin seam-grpc
-          cp target/release/seam-grpc "$GITHUB_WORKSPACE/seam-grpc"
-          chmod +x "$GITHUB_WORKSPACE/seam-grpc"
-          ldd "$GITHUB_WORKSPACE/seam-grpc"
-      - name: lift seam-grpc out of the published seamd image
+          cargo +1.94.1 build --release -p seamd --features postgres --bin seam-server
+          cp target/release/seam-server "$GITHUB_WORKSPACE/seam-server"
+          chmod +x "$GITHUB_WORKSPACE/seam-server"
+          ldd "$GITHUB_WORKSPACE/seam-server"
+      - name: lift seam-server out of the published seamd image
         if: env.SEAM_RUNTIME_BUILD_REF == ''
         env:
           # The repository's OWN token, and nothing else. `seamd` is an `internal` package, which a
@@ -324,13 +324,13 @@ jobs:
             exit 1
           fi
           cid="$(docker create "$IMAGE")"
-          docker cp "$cid:/usr/local/bin/seam-grpc" "$GITHUB_WORKSPACE/seam-grpc"
+          docker cp "$cid:/usr/local/bin/seam-server" "$GITHUB_WORKSPACE/seam-server"
           docker rm "$cid" >/dev/null
           # Nothing below this line needs the registry, and everything below it runs third-party
           # code (cargo/npm/pip resolve and execute other people's build hooks). Drop the credential
           # here rather than leaving it in the environment for the rest of the job.
           docker logout ghcr.io >/dev/null
-          chmod +x "$GITHUB_WORKSPACE/seam-grpc"
+          chmod +x "$GITHUB_WORKSPACE/seam-server"
           # Prove it actually executes on this runner before the suites blame themselves for a
           # binary that cannot start. `--version` may not be a supported flag; the exit code is not
           # what is being checked, the dynamic loader is.
@@ -338,8 +338,8 @@ jobs:
           # unrecognised flag could leave this waiting forever. The exit code is not what is being
           # checked here — `ldd` below is the real assertion, and it invokes the dynamic loader, so
           # it catches a missing library or a GLIBC symbol-version mismatch rather than mere presence.
-          timeout 10s "$GITHUB_WORKSPACE/seam-grpc" --version 2>&1 | head -1 || true
-          ldd "$GITHUB_WORKSPACE/seam-grpc"
+          timeout 10s "$GITHUB_WORKSPACE/seam-server" --version 2>&1 | head -1 || true
+          ldd "$GITHUB_WORKSPACE/seam-server"
       # The suites now capture the server's output per spawn (python/tests/live_server.py), so this
       # step is no longer the only place a startup failure is visible. It stays because it fails
       # FAST and unambiguously: if the binary itself cannot serve, this reddens before pip, npm and
@@ -359,8 +359,8 @@ jobs:
       - name: smoke — the binary must actually serve before the suites depend on it
         run: |
           set -uo pipefail
-          SEAM_GRPC_LISTEN=127.0.0.1:8099 SEAM_DEV_INSECURE=1 SEAM_ENFORCE_SUBJECT=0 \
-            "$GITHUB_WORKSPACE/seam-grpc" > /tmp/seam-grpc.log 2>&1 &
+          SEAM_LISTEN=127.0.0.1:0 SEAM_GRPC_LISTEN=127.0.0.1:8099 SEAM_DEV_INSECURE=1 SEAM_ENFORCE_SUBJECT=0 \
+            "$GITHUB_WORKSPACE/seam-server" > /tmp/seam-grpc.log 2>&1 &
           pid=$!
           # Reap it, do not merely signal it. SIGTERM starts a graceful drain, so a bare `kill`
           # followed by `exit 0` leaves this step's server still holding 8099 while later steps run.
@@ -411,7 +411,7 @@ jobs:
       - name: python live round-trip + management plane
         working-directory: python
         env:
-          SEAM_GRPC_BIN: ${{ github.workspace }}/seam-grpc
+          SEAM_GRPC_BIN: ${{ github.workspace }}/seam-server
         run: |
           pip install -e ".[dev]"
           # EVERY file with a live SEAM_GRPC_BIN gate, not a subset. This ran two of four, so
@@ -425,7 +425,7 @@ jobs:
       - name: typescript live round-trip
         working-directory: ts
         env:
-          SEAM_GRPC_BIN: ${{ github.workspace }}/seam-grpc
+          SEAM_GRPC_BIN: ${{ github.workspace }}/seam-server
         run: |
           npm ci
           npm test

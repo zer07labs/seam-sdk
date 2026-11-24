@@ -136,6 +136,7 @@ async function withPlanes(
     env: {
       ...process.env,
       ...governanceEnv(),
+      SEAM_LISTEN: "127.0.0.1:0", // seam-server also binds HTTP; an ephemeral port per spawn
       SEAM_GRPC_LISTEN: `127.0.0.1:${dataPort}`,
       SEAM_GRPC_MGMT_LISTEN: `127.0.0.1:${mgmtPort}`,
       SEAM_DEV_INSECURE: "1",
