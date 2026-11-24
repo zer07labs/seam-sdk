@@ -414,6 +414,8 @@ def deny_plane(tmp_path):
         env_extra={
             "SEAM_ENFORCE_SUBJECT": "1",
             "SEAM_GRPC_SUBJECT_HEADERS": "deny",
+            # seam-server judges its HTTP data plane too; deny there as well (the default since seam-runtime SEC1-P2).
+            "SEAM_SUBJECT_HEADERS": "deny",
         },
     ) as srv:
         yield srv.data_addr

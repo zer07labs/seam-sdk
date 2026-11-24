@@ -302,6 +302,7 @@ async function withDenyPlane(fn: (baseUrl: string) => Promise<void>): Promise<vo
       SEAM_DEV_INSECURE: "1",
       SEAM_ENFORCE_SUBJECT: "1",
       SEAM_GRPC_SUBJECT_HEADERS: "deny",
+      SEAM_SUBJECT_HEADERS: "deny", // seam-server judges its HTTP plane too (default since seam-runtime SEC1-P2)
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
