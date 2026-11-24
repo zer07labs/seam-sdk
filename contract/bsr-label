@@ -1,3 +1,3 @@
-pr-1959
+main
 # Line 1 is the BSR label `make generate` builds from (buf.build/zer07labs/seam:<label>); `main` is the release default.
 # Set a `pr-<N>` label here only for a lockstep pre-release train, and flip back to `main` at the final release.
