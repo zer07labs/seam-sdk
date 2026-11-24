@@ -576,7 +576,7 @@ Stated plainly, because a verifier that oversells itself is worse than none:
 | `docs/erasure-certificate.v1.md` | the certificate signing framing — **normative** |
 | `docs/evidence-bundle.v1.md` | the evidence bundle and its binding framing — **normative**, a verbatim pinned copy of the runtime's spec (see Drift) |
 | `docs/audit-anchor.md` | the out-of-band anchor |
-| `proto/seam/event/v1/seam_event.proto` | the canonical protobuf schema, a byte-verbatim copy of seam-runtime `crates/seam-api/proto/seam/event/v1/seam_event.proto` @ `a196a6c1` (seam-runtime#1910, the Flows W5 train, 0.117.0: `ChainManifest` fields 10/11) (it has no header to carry a pin, so the commit is recorded here; not checked by `check_vendored_spec.py`) |
+| `proto/seam/event/v1/seam_event.proto` | the canonical protobuf schema, a byte-verbatim copy of seam-runtime `crates/seam-api/proto/seam/event/v1/seam_event.proto` @ `37cb8115` (seam-runtime#1910 merged; vendored at `a196a6c1`, the Flows W5 train, 0.117.0: `ChainManifest` fields 10/11) (it has no header to carry a pin, so the commit is recorded here; not checked by `check_vendored_spec.py`) |
 | `fixtures/erasure_certificate_vector.json` | a real signed certificate to check against |
 | `fixtures/evidence-bundle/` | four real bundles from the runtime's exporter (byte-exact: `.gitattributes` keeps git off them) |
 | `src/` | the reference implementation |

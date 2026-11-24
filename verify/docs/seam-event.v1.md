@@ -1,4 +1,7 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ a196a6c1 tracking lanes/w5-train-2 (refreshed 2026-11-24).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 37cb8115 (refreshed 2026-11-24).
+     Re-pinned to runtime main: 37cb8115 is #1910 squash-merged; body byte-identical to the a196a6c1 pin below.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ a196a6c1 tracking lanes/w5-train-2 (refreshed 2026-11-24).
      seam-runtime#1910 (Flows W5 train, 0.117.0; D-163): CHAIN_MANIFEST signs under seam.audit.chain-manifest.v2 and
      carries tenant_len = 10 / tenant_head = 11, the tenant head it follows. Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ ddbfa6ff (refreshed 2026-11-23).
