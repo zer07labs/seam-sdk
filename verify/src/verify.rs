@@ -103,7 +103,8 @@ pub struct ChainReport {
     /// **`CHAIN_MANIFEST`s (`chain_bundle` v2, D-163)**, `(seq, manifest)` in stream order. Each one here
     /// passed the walk's manifest checks: well-formed, its entry digest recomputed from its own fields,
     /// and (v2) sitting on its tenant chain at `tenant_len` right after `tenant_head`; a v1 manifest
-    /// (before D-163) signs no tenant head and never follows a v2 one on its chain. Unless the window was
+    /// (before D-163) signs no tenant head and never follows a v2 one on its chain, so it does not
+    /// cover the tenant chain: never count one toward tenant-chain coverage. Unless the window was
     /// verified with [`chain_selected`], each listed chain also has the head the manifest lists (V7).
     /// The signature is checked only against a pinned issuer ([`crate::manifest::verify_signature`]).
     pub manifests: Vec<(u64, crate::wire::ChainManifestPb)>,
@@ -621,7 +622,7 @@ fn walk(
 /// The per-entry `CHAIN_MANIFEST` checks, on a link that has already verified (spec §CHAIN_MANIFEST):
 ///
 /// 1. the structural rules ([`crate::manifest::check_structure`]);
-/// 2. the envelope `classification` is `Internal`, and the stored digest is the manifest's entry digest
+/// 2. the envelope `classification` is `Internal`, the signed `tenant` is the envelope's, and the stored digest is the manifest's entry digest
 ///    recomputed from its own fields — so the fields the next two checks read are the ones the chain
 ///    commits to (a rewritten manifest with its old digest left in place is refused here, not trusted);
 /// 3. D-163, a v2 manifest: it sits on the tenant chain (`kind = 1`) at `tenant_len`, its `prev_checksum`
@@ -649,6 +650,15 @@ fn check_manifest_entry(
             "tenant '{}': seq {}: ENTRY REWRITE — a CHAIN_MANIFEST's envelope classification is {:?}, \
              not \"Internal\".",
             e.tenant, e.seq, e.classification
+        ));
+    }
+    // The signed tenant is the envelope's (seam-runtime `crates/seam-verify/src/entry.rs` @ `253f4995`). A
+    // v1 manifest signs no tenant head, so this is its only binding to the chain it sits on.
+    if m.tenant != e.tenant {
+        return Err(format!(
+            "tenant '{}': seq {}: ENTRY REWRITE — the CHAIN_MANIFEST signs tenant {:?}, not its \
+             envelope's.",
+            e.tenant, e.seq, m.tenant
         ));
     }
     let expect = crate::manifest::entry_digest(m);

@@ -113,6 +113,8 @@ impl TenantChain {
             ..Default::default()
         });
         let m = e.manifest.as_mut().unwrap();
+        m.stream_id = STREAM.into();
+        m.tenant = TENANT.into();
         m.chains.clear();
         m.manifest_at = 1_000 + len;
         m.issuer_aid = self.aid.clone();
@@ -167,6 +169,20 @@ fn a_v2_manifest_stripped_to_v1_is_refused() {
     assert!(err.contains("ENTRY REWRITE"), "{err}");
 }
 
+/// A manifest whose signed tenant is not its envelope's is an entry rewrite (the runtime's
+/// `CHAIN_MANIFEST's tenant`): for a v1 manifest it is the only tenant binding there is.
+#[test]
+fn a_manifest_on_another_tenants_envelope_is_refused() {
+    let mut s = TenantChain::new();
+    s.manifest(false);
+    s.events[0].manifest.as_mut().unwrap().tenant = "other".into();
+    let err = chain(&s.events).err().unwrap();
+    assert!(
+        err.contains("ENTRY REWRITE") && err.contains("signs tenant"),
+        "{err}"
+    );
+}
+
 /// A v1 manifest on another tenant's chain is not a downgrade of this one.
 #[test]
 fn a_downgrade_is_per_tenant_chain() {
@@ -184,6 +200,7 @@ fn a_downgrade_is_per_tenant_chain() {
     });
     let sk = SigningKey::from_bytes(&[7u8; 32]);
     let m = b.manifest.as_mut().unwrap();
+    m.stream_id = STREAM.into();
     m.tenant = "other".into();
     m.chains.clear();
     m.signature = sk.sign(&signed_digest(m)).to_bytes().to_vec();
