@@ -1,4 +1,4 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 0e3e0e29 (refreshed 2026-11-24).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 837c48a3 (refreshed 2026-11-24).
      seam-runtime#1921 (Flows W6, 0.118.0): LEARNING_* carry flow_ref (tag 28) when the decision's session had one.
      Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 37cb8115 (refreshed 2026-11-24).
@@ -620,7 +620,8 @@ message AuthorizeEvaluated {           // envelope tag 23
 ```
 
 **`subject_digests` (tag 11, #715).** One keyed commitment per effective subject of the authorize call — the union of
-`AuthorizeRequest.subject` and `.subjects`, deduped, `subject` first, then request order, at most 16. Each element is the
+`AuthorizeRequest.subjects`, deduped in request order, at most 16 (the singular `AuthorizeRequest.subject`, which used to
+lead the union, is reserved since runtime 0.120.0, S3-O4). Each element is the
 **same** commitment as `subject_digest` (same key, same `kid`, same per-tenant domain), so it is no weaker than tag 10: it cannot be tied to
 a subject without the tenant's key and carries no bare-hash oracle. The row stays
 append-only, as tag 10's is — what this field adds is that EVERY subject of a call is recomputable by the runtime's audited recompute
