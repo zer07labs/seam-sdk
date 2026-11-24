@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.121.0 — 2026-11-24
+
 ### Removed (deep-cleanup 3.3 step 4, train 0.121.0 lockstep — breaking on the event wire, version-locked to the runtime)
 
 - The regenerated `seam.event.v1` stubs drop `AuthorizeEvaluated.subject_digest` (field 10): runtime 0.121.0
