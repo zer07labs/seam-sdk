@@ -359,7 +359,7 @@ jobs:
       - name: smoke — the binary must actually serve before the suites depend on it
         run: |
           set -uo pipefail
-          SEAM_GRPC_LISTEN=127.0.0.1:8099 SEAM_DEV_INSECURE=1 \
+          SEAM_GRPC_LISTEN=127.0.0.1:8099 SEAM_DEV_INSECURE=1 SEAM_ENFORCE_SUBJECT=0 \
             "$GITHUB_WORKSPACE/seam-grpc" > /tmp/seam-grpc.log 2>&1 &
           pid=$!
           # Reap it, do not merely signal it. SIGTERM starts a graceful drain, so a bare `kill`

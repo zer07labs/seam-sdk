@@ -42,6 +42,7 @@ async function withPlanes(
       SEAM_GRPC_LISTEN: `127.0.0.1:${dataPort}`,
       SEAM_GRPC_MGMT_LISTEN: `127.0.0.1:${mgmtPort}`,
       SEAM_DEV_INSECURE: "1",
+      SEAM_ENFORCE_SUBJECT: "0", // explicit loopback off switch: unset enforces since seam-runtime deep-cleanup D10
     },
     stdio: "ignore",
   });
@@ -75,7 +76,7 @@ async function withServer(port: number, fn: (addr: string) => Promise<void>): Pr
   let proc: ReturnType<typeof spawn> | undefined;
   if (BIN && !process.env.SEAM_GRPC_ADDR) {
     proc = spawn(BIN, {
-      env: { ...process.env, ...governanceEnv(), SEAM_GRPC_LISTEN: addr, SEAM_DEV_INSECURE: "1" },
+      env: { ...process.env, ...governanceEnv(), SEAM_GRPC_LISTEN: addr, SEAM_DEV_INSECURE: "1", SEAM_ENFORCE_SUBJECT: "0" },
       stdio: "ignore",
     });
     await waitPort(Number(addr.split(":")[1]));
