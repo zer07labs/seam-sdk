@@ -175,15 +175,15 @@ fn plain_chain_verifies_the_stream() {
     assert_eq!(code, VERIFIED, "{out}");
 }
 
-/// The runtime's own stream is fully green under `--issuer --strict`, with the uncovered refusal in
+/// The runtime's own stream is fully green under `--issuer`, with the uncovered refusal in
 /// force: every chained non-seal link recomputes (15 `AUDIT_ENTRY`, 1 `ERASURE_CERTIFICATE`, 3
 /// `CHAIN_HEAD_ATTESTATION`), and nothing is uncovered. Both disclosures are printed, zero included.
 #[test]
-fn chain_with_issuer_and_strict_verifies_the_stream() {
+fn chain_with_issuer_verifies_the_stream() {
     let (code, out) = run(
-        "issuer-strict",
+        "issuer",
         &golden("entry_domains.jsonl"),
-        &["--issuer", ENTRY_ISSUER, "--strict"],
+        &["--issuer", ENTRY_ISSUER],
     );
     assert_eq!(code, VERIFIED, "{out}");
     assert!(

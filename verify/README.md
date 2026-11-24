@@ -84,7 +84,7 @@ unfiltered stream.
 a known kind carries its own. An event carrying another kind's payload, or a known kind without its own,
 is refused with `KIND/PAYLOAD MISMATCH`. An advisory event or the `chain_anchor` that carries
 `digest`/`checksum` is refused with `ADVISORY EVENT WITH CHAIN FIELDS`, never linked. Both refusals apply
-to `chain` (plain, `--strict` and `--issuer`) and to `bundle`, and exit 2; `erasure-cert` checks only the certificate
+to `chain` (plain and `--issuer`) and to `bundle`, and exit 2; `erasure-cert` checks only the certificate
 (D-041).
 
 **A `kind` this build has never seen is still verified — and still disclosed.** `seam-event.v1` grows
@@ -115,9 +115,9 @@ that cannot read a payload cannot vouch for it.
 `chain` recomputes no entry, whatever its action. The action-level claim, "every chained entry was
 recomputed", exists only under `--issuer`, where such an entry is counted under `uncovered` and refused.
 
-`--strict` does **not** refuse on this. It refuses on a different thing — non-advisory events carrying
-no chain fields at all — and a stream that merely outran your verifier is not the same failure as
-history nobody can check. The spec permits refusing (a MAY) and requires disclosing (a MUST); this tool
+An unmodelled kind is **not** refused. What is refused is a different thing — a non-advisory event
+carrying no chain fields at all — and a stream that merely outran your verifier is not the same failure
+as a link nobody can check. The spec permits refusing (a MAY) and requires disclosing (a MUST); this tool
 discloses, and leaves refusing to the caller, who has the number.
 
 #### Flow attribution (`flow_ref`, tag 28) — NOT covered by the seal
@@ -250,7 +250,7 @@ Three things a forger cannot fake:
   position check. A stream with no attestation at all is refused, not passed: its absence is the tell.
   **Each attestation is bound to its tenant** (seam-runtime #835 step 4): its payload `tenant` must
   equal its envelope's — an empty payload tenant under a named envelope included — or it is refused as
-  `ATTESTATION TENANT MISMATCH`, with or without `--strict`; and its signature must verify under the one
+  `ATTESTATION TENANT MISMATCH`; and its signature must verify under the one
   framing that tenant selects, v2 (tenant inside the signature) for a named tenant and v1 for the empty
   system partition, with no fallback. A tenant attestation minted before the runtime signed v2 (#835
   step 3) is v1 and is therefore **refused**: verify that history from a v2 anchor onward
@@ -293,8 +293,8 @@ UNCOVERED ENTRY — 1 chained entry carries an action or kind this build cannot 
 ```
 
 (That is `entry_domains.jsonl` with one `hold_placed` relabelled `hold_extended`. Plain `chain` still
-passes it, with `unverified content: 0`: the link hashes and the kind is modelled.) `--strict` does not
-change this, and one uncovered entry in any tenant refuses the whole call.
+passes it, with `unverified content: 0`: the link hashes and the kind is modelled.) One uncovered entry
+in any tenant refuses the whole call.
 
 **`--allow-uncovered` is a diagnosis, never a pass.** It is accepted only on `chain`, only with
 `--issuer`, and never with `--json` (each is a usage error, exit 1). On the same stream it prints the full
@@ -355,24 +355,11 @@ attestations signed by the retired key *and* the new one. Pass `--issuer` once p
 naming an issuer outside the pinned set is a **FAIL** — exactly as a single-pin mismatch always was. A
 stream with zero valid attestations is still refused.
 
-**A green banner is not the whole verdict — read the `unverifiable` count.** `CHAIN AUTHENTICATED` can
-legitimately coexist with a disclosed non-zero `UNVERIFIABLE` count: events with no `digest`/`checksum`
-that are not advisory (pre-cutover history — or a spec-condoned *tail-strip*, where chain fields were
-stripped from events after the last attested head; the next link catches an interior strip, but a strip
-at the very tail has no next link to catch it). The tool **discloses** these, it cannot check them. A CI
-consumer parsing the `--json` output should therefore assert `verified == true` **and**
-`unverifiable == 0` (or run with `--strict`, which refuses such streams outright).
-
-> ### ⚠️ `--strict`, and why you probably want it
->
-> The `digest`/`checksum` fields were added *after* Seam began emitting events. Events written before that
-> carry neither — and to a verifier reading bytes, such an event is **indistinguishable from an advisory
-> one**.
->
-> So by default they are **skipped and counted**, and reported as `UNVERIFIABLE`. If you ignore that line,
-> a green result is a claim about history that was *never actually checked*.
->
-> `--strict` refuses the stream instead. **Use it, unless you know exactly why you are not.**
+**A non-advisory event with no chain fields fails the stream.** An event with no `digest`/`checksum`
+that is not advisory is either a stripped link or history this tool cannot check: the next link catches
+an interior strip, but a *tail-strip* (chain fields stripped after the last attested head) has no next
+link to catch it. The two look the same from bytes, so `chain` refuses it with `UNCHAINED EVENT` and exit
+2, in every mode. There is no `--strict` flag and no lenient default (seam-runtime deep-cleanup S9-O7).
 
 #### ANCHORED START — `chain <FILE> --issuer <AID> --from-anchor <FILE>`
 
@@ -501,7 +488,7 @@ The six steps run in the spec's order and the first failure refuses with exit 2,
    `anchor.json` are listed, `commitment.json`/`binding.json` come as a pair, and `disclosed` agrees with
    `files`. A listed member that is missing is a refusal, not an IO error.
 2. **Chain** — the window, through exactly the code `chain events.jsonl --issuer <AID> --from-anchor
-   anchor.json --strict` runs: the anchor's signature, every link, every attestation, a covering one.
+   anchor.json` runs: the anchor's signature, every link, every attestation, a covering one.
 3. **Inclusion** — exactly one chained `DECISION_SEALED` for the manifest's decision, in its tenant, whose
    checksum is `inclusion.record_checksum`.
 4. **Commitment** — first the **voters** (seam-runtime#1687, D-045): every `vote`, `ballot` and
@@ -565,7 +552,7 @@ Stated plainly, because a verifier that oversells itself is worse than none:
 * **It cannot prove a bundle disclosed everything.** Withheld items are listed with a reason, and the
   participation list is always withheld. A v1 verifier also does not check a disclosure file the v1 spec
   does not define; an unknown `format` is refused.
-* **It cannot verify pre-cutover history** (see `--strict` above). It will say so rather than pretend.
+* **It cannot verify an event with no chain fields** (see above). It refuses the stream rather than pretend.
 * **It cannot tell you which flow an event belongs to.** `flow_ref` is unsealed attribution (see above);
   a `FLOW_REF_CONFLICT` warning means two stamps disagree, and no stamp is proved by the seal.
 * **It cannot tell a newer entry domain from a rewrite.** No entry domain is carried on the wire, and the

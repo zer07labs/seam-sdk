@@ -5,7 +5,7 @@
 //! it is written from the published specs, takes bytes and a public key, and answers yes or no.
 //!
 //! ```text
-//! seam-verify chain <FILE> [--strict]              # the seam-event.v1 hash chain, from the stream alone
+//! seam-verify chain <FILE>                         # the seam-event.v1 hash chain, from the stream alone
 //! seam-verify chain <FILE> --issuer <AID>          # + AUTHENTICITY: every issuer-signed head verifies
 //! seam-verify chain <FILE> --issuer <AID> --allow-uncovered  # diagnostic report; never exit 0 over one
 //! seam-verify erasure-cert <FILE> --issuer <AID>   # a GDPR erasure certificate, from the issuer AID alone
@@ -36,7 +36,7 @@ fn usage() -> ! {
         "seam-verify — check Seam's audit chain and erasure certificates without trusting Seam\n\
          \n\
          USAGE:\n    \
-             seam-verify chain <FILE> [--strict] [--issuer <AID>] [--from-anchor <FILE>]\n                             \
+             seam-verify chain <FILE> [--issuer <AID>] [--from-anchor <FILE>]\n                             \
              [--expect-anchor <FILE>] [--allow-uncovered] [--chain <SELECTOR>] [--json]\n    \
              seam-verify erasure-cert <FILE> --issuer <AID> [--json]\n    \
              seam-verify bundle <DIR> --issuer <AID> [--json]\n\
@@ -61,10 +61,8 @@ fn usage() -> ! {
                        genesis: cell | tenant:<T> | flow:<T>:<FLOW>:live | flow:<T>:<FLOW>:sandbox:<N>.\n                       \
                        Every other event is skipped and counted. No event of that chain is an error.\n\
          \n\
-             --strict  Refuse a stream containing any non-advisory event with no digest/checksum.\n              \
-                       Events written before Seam added those fields look exactly like advisory ones\n              \
-                       here: by default they are SKIPPED and counted, and a green result would then be\n              \
-                       a claim about history that was never actually checked.\n\
+             A non-advisory event with no digest/checksum FAILS the stream (exit 2): it is a\n    \
+             stripped link or history this tool cannot check, and the two look the same.\n\
          \n    \
              --issuer <AID>  Upgrade integrity to AUTHENTICITY. Every CHAIN_HEAD_ATTESTATION must verify\n                      \
                        against a PINNED issuer key AND sit at the head it attests, and at least one must\n                      \
@@ -80,7 +78,7 @@ fn usage() -> ! {
                        REPEATABLE: pass once per trusted issuer to verify a chain spanning a key ROTATION\n                      \
                        (an attestation passes iff it verifies against ANY pinned AID; one naming an issuer\n                      \
                        outside the pinned set is a FAIL).\n                      \
-                       TENANT BINDING (seam-runtime #835 step 4, with or without --strict): an attestation's\n                      \
+                       TENANT BINDING (seam-runtime #835 step 4): an attestation's\n                      \
                        payload tenant must EQUAL its envelope's, and its signature must verify under the\n                      \
                        one framing that tenant selects — v2 for a named tenant, v1 for the empty (system)\n                      \
                        partition. A tenant attestation minted before step 3 (v1) is REFUSED: verify that\n                      \
@@ -125,7 +123,7 @@ fn usage() -> ! {
              Verify a seam-evidence-bundle.v1 directory (docs/evidence-bundle.v1.md) against the pinned\n    \
              issuer AID, in the spec's order, refusing at the first failure: (1) the manifest: format,\n    \
              pinned issuer, every listed file's sha256 and size; (2) the window, exactly as `chain\n    \
-             events.jsonl --issuer AID --from-anchor anchor.json --strict`; (3) the decision's chained\n    \
+             events.jsonl --issuer AID --from-anchor anchor.json`; (3) the decision's chained\n    \
              DECISION_SEALED and its checksum; (4) the Commitment's TCT and seam-commitment-digest:v5;\n    \
              (5) the issuer's signed binding of that Commitment to the chain link; (6) the disclosed\n    \
              context.json and policy.json against the chained digests. Withheld items are printed.\n    \
@@ -231,7 +229,6 @@ fn load_anchor(
 #[allow(clippy::too_many_arguments)] // one parameter per CLI flag, each checked in main
 fn cmd_chain(
     path: &str,
-    strict: bool,
     json: bool,
     issuers: &[String],
     from_anchor: Option<&str>,
@@ -374,16 +371,6 @@ fn cmd_chain(
                     }
                     Err(err) => return fail(&err, json, "TRUNCATED STREAM"),
                 }
-            }
-            if strict && !r.unverifiable.is_empty() {
-                let msg = format!(
-                    "{} event(s) carry no digest/checksum and are not advisory (first seq: {}). They \
-                     predate the chain fields, so this tool CANNOT verify them — and --strict refuses to \
-                     report a green chain over history it never checked.",
-                    r.unverifiable.len(),
-                    r.unverifiable[0]
-                );
-                return fail(&msg, json, "REFUSED (--strict)");
             }
             // --issuer upgrades integrity → AUTHENTICITY: every chain-head attestation must verify against
             // the pinned key AND sit at the head it attests, and at least one covering attestation must be
@@ -568,13 +555,12 @@ fn cmd_chain(
                 };
                 println!(
                     "{{\"verified\":true,\"events\":{},\"links\":{},\"advisory\":{},\"duplicates\":{},\
-                     \"unverifiable\":{},\"unverified_content\":{},\"unmodelled_kinds\":{},\
+                     \"unverified_content\":{},\"unmodelled_kinds\":{},\
                      \"head\":\"{}\"{}{}{}{}{}{}}}",
                     r.events,
                     r.links,
                     r.advisory,
                     r.duplicates,
-                    r.unverifiable.len(),
                     r.unmodelled.len(),
                     q_arr(&{
                         let mut k: Vec<&str> = r.unmodelled.iter().map(|(_, k)| k.as_str()).collect();
@@ -706,13 +692,6 @@ fn cmd_chain(
                     println!(
                         "  duplicates        : {} (at-least-once retries)",
                         r.duplicates
-                    );
-                }
-                if !r.unverifiable.is_empty() {
-                    println!(
-                        "  UNVERIFIABLE      : {}  <- no digest/checksum; these predate the chain \
-                         fields. Re-run with --strict to refuse rather than skip them.",
-                        r.unverifiable.len()
                     );
                 }
                 if !r.chains.is_empty() {
@@ -938,7 +917,7 @@ fn main() -> ExitCode {
         usage();
     }
 
-    let (mut json, mut strict) = (false, false);
+    let mut json = false;
     // Repeatable: one `--issuer` per trusted AID, so a chain spanning an issuer-key rotation (attestations
     // from the retired key AND the new one) can be authenticated end-to-end. One --issuer behaves as before.
     let mut issuers: Vec<String> = Vec::new();
@@ -960,7 +939,6 @@ fn main() -> ExitCode {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--json" => json = true,
-            "--strict" => strict = true,
             "--allow-uncovered" => allow_uncovered = true,
             "--chain" => match it.next() {
                 Some(v) => {
@@ -1086,7 +1064,6 @@ fn main() -> ExitCode {
                 }
                 cmd_chain(
                     &p,
-                    strict,
                     json,
                     &issuers,
                     from_anchor.as_deref(),
@@ -1149,7 +1126,6 @@ fn main() -> ExitCode {
                 eprintln!("seam-verify: bundle requires a DIR and exactly one --issuer <AID>");
                 usage();
             };
-            // `--strict` is accepted and redundant: the bundle's chain step is always strict.
             cmd_bundle(&p, i, json)
         }
         o => {

@@ -1,4 +1,9 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 59cae17 (refreshed 2026-11-19).
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 312e84f tracking dc1-trains/s9-o7 (refreshed 2026-11-24).
+     seam-runtime deep-cleanup S9-O7, NOT yet on runtime main. Movement since 59cae17: §Verifying step 2 drops
+     `--strict` (the flag is gone; an unchained non-advisory event fails every run) and names that check. No
+     manifest, digest or member-format change. Re-pin to runtime main once it lands (D-048).
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 59cae17 (refreshed 2026-11-19).
      seam-runtime 0.97.0 (#1782, #1788), on runtime main. Movement since 780b1b7: the withheld table only. An
      erased record (key destroyed, or erasure decided with no legal hold) now withholds `context` too, even
      under `--disclose context`, and `commitment`/`binding` share one "the record is erased" reason. No
@@ -259,10 +264,10 @@ failure:
    listed file exists with the listed `sha256` and `bytes`. `events.jsonl` and `anchor.json` are
    listed. `commitment.json` and `binding.json` are both listed or both absent. `disclosed` agrees
    with `files`.
-2. **Chain.** `seam-verify chain events.jsonl --issuer <AID> --from-anchor anchor.json --strict`
-   passes: the anchor is signed by the pinned issuer, every link holds from the anchored head, every
-   `DECISION_SEALED` recomputes under record digest v4 (tags 10-17), and a covering attestation
-   authenticates the window.
+2. **Chain.** `seam-verify chain events.jsonl --issuer <AID> --from-anchor anchor.json` passes:
+   the anchor is signed by the pinned issuer, every link holds from the anchored head, every chained
+   kind carries its chain fields, every `DECISION_SEALED` recomputes under record digest v4 (tags
+   10-17), and a covering attestation authenticates the window.
 3. **Inclusion.** The window holds exactly one chained `DECISION_SEALED` for `decision_id`, in
    `tenant`, and its `checksum` is `inclusion.record_checksum`.
 4. **Commitment.** If `signed_artifact` is present, the TCT verifies against the pinned AID and its

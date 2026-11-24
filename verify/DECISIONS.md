@@ -484,3 +484,19 @@ and never from the runtime's Rust:
   selection paths are pinned by `conformance/selection_rule_v1_vectors.json` (`tests/selection_vectors.rs`)
   and by fail-closed edits of the `full` fixture (`tests/bundle.rs`).
 * **Vendored doc** `evidence-bundle.v1.md` is re-pinned `@ 780b1b7`; `selection-rule.v1.md` is not vendored.
+
+## D-048 — an unchained non-advisory event fails every run; `--strict` is gone (seam-runtime deep-cleanup S9-O7)
+
+**Decision.** `chain` refuses, with exit 2 and `UNCHAINED EVENT`, any non-advisory event that carries no
+`digest`/`checksum`, in every mode. The `--strict` flag is removed (passing it is a usage error, exit 1),
+the `unverifiable` count leaves the human report, the `--json` shape and `ChainReport`, and `bundle` keeps
+the same refusal through the shared walk.
+
+* **Why.** The lenient default existed for history written before the chain fields. Seam carries no such
+  history any more (owner constraint: prd/partner data is test data, no old formats are preserved), so
+  the only remaining source of such an event is a strip, and a strip of the LAST link has no next link
+  to catch it. A green over it is a claim about a link nobody checked.
+* **Lockstep.** seam-runtime's `seam-verify` makes the same change in the same train; its
+  `tests/differential.rs` pins both tools to exit 2 on `unchained-tail` and `stripped-last` with no flag.
+* **Vendored doc** `evidence-bundle.v1.md` is re-pinned to the seam-runtime branch carrying the step 2
+  wording change (no `--strict`).

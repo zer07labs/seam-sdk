@@ -69,11 +69,11 @@ fn the_vector_carries_exactly_one_session_cancelled_entry() {
     assert_eq!(cancels[0]["classification"], "Internal");
 }
 
-/// The whole stream authenticates under `--issuer --strict`: the cancel entry recomputes under
+/// The whole stream authenticates under `--issuer`: the cancel entry recomputes under
 /// `seam.audit.management.v1`, and nothing is left uncovered.
 #[test]
 fn the_cancel_chain_authenticates_with_nothing_uncovered() {
-    let (code, out) = run("strict", &golden(), &["--issuer", ISSUER, "--strict"]);
+    let (code, out) = run("issuer", &golden(), &["--issuer", ISSUER]);
     assert_eq!(code, VERIFIED, "{out}");
     assert!(
         out.starts_with("CHAIN AUTHENTICATED (integrity + issuer-signed head, per tenant)"),

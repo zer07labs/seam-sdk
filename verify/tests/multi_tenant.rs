@@ -1,6 +1,5 @@
 //! Per-tenant chain verification (U-RT-1/U-RT-3) — `chain_by_tenant` and
-//! `verify_authenticity_by_tenant`, driven mostly through the CLI (`chain [--issuer] [--strict]
-//! [--json]`), and through the library directly where the CLI's own single-file `--from-anchor` cannot
+//! `verify_authenticity_by_tenant`, driven mostly through the CLI (`chain [--issuer] [--json]`), and through the library directly where the CLI's own single-file `--from-anchor` cannot
 //! reach a scenario (see the `chain_by_tenant_*` test below). Nothing of Seam's is linked — see
 //! `Cargo.toml`.
 //!
@@ -168,12 +167,11 @@ fn a_mismatched_payload_tenant_is_refused_under_issuer() {
     assert!(out.contains("ATTESTATION TENANT MISMATCH"), "{out}");
 }
 
-// ── (4) legacy (pre-Phase-2) attestation: refused, with or without --strict (#835 step 4) ────────
+// ── (4) legacy (pre-Phase-2) attestation: refused (#835 step 4) ──────────────────────────────────
 
 /// The pre-U-RT-3-Phase-2 shape — a genuine v1 attestation, no payload tenant, envelope naming a
-/// tenant — used to be accepted on the envelope's word, counted as `tenant_unbound`, and refused only
-/// under `--strict`. Since #835 step 4 there is no back-compat: it is ATTESTATION TENANT MISMATCH either
-/// way, and relabelling its payload to the envelope's tenant does not help, because v1 never signs one.
+/// tenant — used to be accepted on the envelope's word, and counted as `tenant_unbound`. Since #835
+/// step 4 there is no back-compat: it is ATTESTATION TENANT MISMATCH, and relabelling its payload to the envelope's tenant does not help, because v1 never signs one.
 #[test]
 fn a_legacy_tenant_unbound_attestation_is_refused() {
     let sk = ed25519_dalek::SigningKey::from_bytes(&[0x07; 32]);
@@ -185,17 +183,11 @@ fn a_legacy_tenant_unbound_attestation_is_refused() {
     let mut legacy: serde_json::Value = serde_json::from_str(&v1).unwrap();
     legacy["chain_head_attestation"]["tenant"] = serde_json::Value::String(String::new());
     let legacy = format!("{l0}\n{l1}\n{legacy}");
-    for (name, args) in [
-        ("legacy-unbound", &["--issuer", ISSUER][..]),
-        (
-            "legacy-unbound-strict",
-            &["--issuer", ISSUER, "--strict"][..],
-        ),
-    ] {
-        let (code, out) = run(name, &legacy, args);
+    {
+        let (code, out) = run("legacy-unbound", &legacy, &["--issuer", ISSUER]);
         assert_eq!(
             code, FAILED,
-            "a legacy tenant-unbound attestation must be refused ({name}):\n{out}"
+            "a legacy tenant-unbound attestation must be refused:\n{out}"
         );
         assert!(out.contains("ATTESTATION TENANT MISMATCH"), "{out}");
     }
@@ -729,14 +721,10 @@ fn the_system_partition_is_attested_like_any_tenant() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    let (code, out) = run(
-        "system",
-        &system,
-        &["--issuer", ISSUER, "--strict", "--json"],
-    );
+    let (code, out) = run("system", &system, &["--issuer", ISSUER, "--json"]);
     assert_eq!(
         code, VERIFIED,
-        "a system-partition attestation must authenticate under --strict:\n{out}"
+        "a system-partition attestation must authenticate:\n{out}"
     );
     let v: serde_json::Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
     let sys = v["tenants"]
@@ -837,11 +825,7 @@ fn v2_stream(signed_tenant: &str) -> String {
 
 #[test]
 fn a_v2_attestation_authenticates_its_own_tenant() {
-    let (code, out) = run(
-        "v2-own-tenant",
-        &v2_stream("acme"),
-        &["--issuer", ISSUER, "--strict"],
-    );
+    let (code, out) = run("v2-own-tenant", &v2_stream("acme"), &["--issuer", ISSUER]);
     assert_eq!(
         code, VERIFIED,
         "a v2 attestation over its own tenant must authenticate:\n{out}"
