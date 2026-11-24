@@ -310,7 +310,7 @@ def test_call_sig_and_digest_verify_server_side(fake_server):
             req.tool_input_digest,
             req.tool_name,
             req.agent_id,
-            subject=req.subject,
+            subject="",  # the reserved field 8's v3 slot is always signed empty (S3-O4)
             subjects=list(req.subjects),
             client_request_id=req.client_request_id,
             session_id=req.session_id,
@@ -343,8 +343,8 @@ def test_optional_fields_ride_the_request(fake_server):
     )
     req = servicer.last_request
     assert dict(req.features) == {"amount_band": "high"}
-    # deep-cleanup 3.3 S3-O4: the retired singular `subject` (field 8) is never sent.
-    assert req.subject == ""
+    # deep-cleanup 3.3 S3-O4: the singular `subject` (field 8) is reserved, so it cannot be sent.
+    assert "subject" not in type(req).DESCRIPTOR.fields_by_name
     assert (
         req.session_id,
         list(req.subjects),
@@ -741,7 +741,7 @@ def test_request_canonical_bytes_round_trip(fake_server):
     assert json.loads(servicer.last_request.tool_input.decode()) == original
 
 
-# ── `subjects` (A-3/A-4): signature-neutral, additive to `subject` ─────────────────────────────
+# ── `subjects` (A-3/A-4): the only subject input (field 8 `subject` is reserved, S3-O4) ─────────
 
 
 def test_subjects_reach_the_wire_and_subject_stays_empty(fake_server):
@@ -750,7 +750,7 @@ def test_subjects_reach_the_wire_and_subject_stays_empty(fake_server):
     client.authorize(Agent(SEED), "t", {}, subjects=["a", "b"])
     req = servicer.last_request
     assert list(req.subjects) == ["a", "b"]
-    assert req.subject == ""
+    assert "subject" not in type(req).DESCRIPTOR.fields_by_name
 
 
 def test_subjects_change_call_sig_in_the_order_sent():

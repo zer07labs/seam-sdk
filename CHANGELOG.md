@@ -16,6 +16,19 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Removed (deep-cleanup 3.3, train 0.120.0 lockstep — breaking on the wire, version-locked to the runtime)
+
+- The regenerated stubs drop `AuthorizeRequest.subject` (field 8, S3-O4), `OpenSessionRequest.budget`
+  (field 3) and `AdminResumeRequest.budget` (field 5, S3-O3/S3-U4): runtime 0.120.0 reserves all three.
+  The hand-written clients already never sent them (subjects ride in `subjects`; budgets in
+  `limits` / `raise`), so no client signature changes. A caller that built a raw `AuthorizeRequest`
+  or `OpenSessionRequest` with those fields must drop them.
+- `call_sig` v3 is unchanged: the reserved subject slot stays in the preimage, signed as `""`.
+  `conformance/call_sig_v3_payload_vector.json` is re-copied from the runtime: the four cases that
+  carried a non-empty `subject` are re-cut with it empty; the other three are byte-identical.
+- Built against BSR label `pr-1956` (`contract/bsr-label`, seam-runtime#1956) until the runtime merges;
+  the label flips back to `main` with the 0.120.0 release.
+
 ## 0.118.0 — 2026-11-24
 
 ### Fixed — `seam-verify` 0.7.1 verifies pre-D-163 `CHAIN_MANIFEST`s (Flows W6, seam-runtime#1921)
