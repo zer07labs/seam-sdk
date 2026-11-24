@@ -238,6 +238,8 @@ def spawn_server(
 
     env = {
         **os.environ,
+        # seam-server also binds an HTTP data plane: an ephemeral loopback port per spawn.
+        "SEAM_LISTEN": "127.0.0.1:0",
         "SEAM_GRPC_LISTEN": f"127.0.0.1:{data_port}",
         "SEAM_DEV_INSECURE": "1",
         # The one explicit off switch (loopback only): since seam-runtime deep-cleanup D10 an unset

@@ -39,6 +39,7 @@ async function withPlanes(
     env: {
       ...process.env,
       ...governanceEnv(),
+      SEAM_LISTEN: "127.0.0.1:0", // seam-server also binds HTTP; an ephemeral port per spawn
       SEAM_GRPC_LISTEN: `127.0.0.1:${dataPort}`,
       SEAM_GRPC_MGMT_LISTEN: `127.0.0.1:${mgmtPort}`,
       SEAM_DEV_INSECURE: "1",
@@ -76,7 +77,7 @@ async function withServer(port: number, fn: (addr: string) => Promise<void>): Pr
   let proc: ReturnType<typeof spawn> | undefined;
   if (BIN && !process.env.SEAM_GRPC_ADDR) {
     proc = spawn(BIN, {
-      env: { ...process.env, ...governanceEnv(), SEAM_GRPC_LISTEN: addr, SEAM_DEV_INSECURE: "1", SEAM_ENFORCE_SUBJECT: "0" },
+      env: { ...process.env, ...governanceEnv(), SEAM_LISTEN: "127.0.0.1:0", SEAM_GRPC_LISTEN: addr, SEAM_DEV_INSECURE: "1", SEAM_ENFORCE_SUBJECT: "0" },
       stdio: "ignore",
     });
     await waitPort(Number(addr.split(":")[1]));
@@ -296,10 +297,12 @@ async function withDenyPlane(fn: (baseUrl: string) => Promise<void>): Promise<vo
     env: {
       ...process.env,
       ...governanceEnv(),
+      SEAM_LISTEN: "127.0.0.1:0", // seam-server also binds HTTP; an ephemeral port per spawn
       SEAM_GRPC_LISTEN: `127.0.0.1:${port}`,
       SEAM_DEV_INSECURE: "1",
       SEAM_ENFORCE_SUBJECT: "1",
       SEAM_GRPC_SUBJECT_HEADERS: "deny",
+      SEAM_SUBJECT_HEADERS: "deny", // seam-server judges its HTTP plane too (default since seam-runtime SEC1-P2)
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
