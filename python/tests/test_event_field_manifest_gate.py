@@ -425,9 +425,10 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
     # .chain (tag 29) with their FlowRef and ChainRef messages (DECISIONS 2026-11-21, CL C6). 169 since
     # Flows W4 (runtime 0.115.0): chain_bundle v2's SeamEvent.chain_manifest (tag 30), ChainManifest,
     # ChainManifestEntry, ChainHead, ErasureItem, attestation v3 and erasure certificate v2 fields, and
-    # FlowRef/ChainRef.version (DECISIONS 2026-11-23: carried, not verified).
-    assert len(fields) == 169, (
-        f"expected 169 declared event fields, found {len(fields)}"
+    # FlowRef/ChainRef.version (DECISIONS 2026-11-23: carried, not verified). 171 since Flows W5
+    # (seam-runtime#1910, 0.117.0): ChainManifest.tenant_len/tenant_head (D-163, DECISIONS 2026-11-24).
+    assert len(fields) == 171, (
+        f"expected 171 declared event fields, found {len(fields)}"
     )
     messages = {line.split("/")[0] for line in fields}
     assert messages == {

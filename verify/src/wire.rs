@@ -124,6 +124,58 @@ pub struct SeamEventPb {
     /// differing here are on different chains.
     #[prost(message, optional, tag = "29")]
     pub chain: Option<ChainRefPb>,
+    /// tag 30 — the `CHAIN_MANIFEST` payload (`chain_bundle` v2; domain v2 since runtime 0.117.0, D-163).
+    /// Modelled ([`crate::manifest`]) and part of the identity, like every modelled payload.
+    #[prost(message, optional, tag = "30")]
+    pub chain_manifest: Option<ChainManifestPb>,
+}
+
+/// `ChainManifest` (envelope tag 30), transcribed from `seam-event.v1.md` §CHAIN_MANIFEST. Fields 1-8,
+/// 10 and 11 are signed ([`crate::manifest::signed_preimage`]); 9 is the signature.
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct ChainManifestPb {
+    #[prost(string, tag = "1")]
+    pub stream_id: String,
+    #[prost(string, tag = "2")]
+    pub tenant: String,
+    #[prost(bytes = "vec", tag = "3")]
+    pub governing_doc_sha256: Vec<u8>,
+    #[prost(uint64, tag = "4")]
+    pub governing_generated_at: u64,
+    #[prost(uint64, tag = "5")]
+    pub manifest_at: u64,
+    #[prost(message, repeated, tag = "6")]
+    pub chains: Vec<ChainManifestEntryPb>,
+    #[prost(string, tag = "7")]
+    pub issuer_aid: String,
+    #[prost(uint32, tag = "8")]
+    pub digest_schema: u32,
+    #[prost(bytes = "vec", tag = "9")]
+    pub signature: Vec<u8>,
+    /// tag 10 (D-163) — the tenant chain's length before this manifest's entry.
+    #[prost(uint64, tag = "10")]
+    pub tenant_len: u64,
+    /// tag 11 (D-163) — that chain's head (`genesis(K)` when `tenant_len = 0`).
+    #[prost(bytes = "vec", tag = "11")]
+    pub tenant_head: Vec<u8>,
+}
+
+/// `ChainManifestEntry`: one declared flow chain. `(flow_id, env, version)` is the chain key's flow part;
+/// `state` 1 active, 2 retired, 3 moved_out, 4 destroyed.
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct ChainManifestEntryPb {
+    #[prost(string, tag = "1")]
+    pub flow_id: String,
+    #[prost(string, tag = "2")]
+    pub env: String,
+    #[prost(uint64, tag = "3")]
+    pub len: u64,
+    #[prost(bytes = "vec", tag = "4")]
+    pub head: Vec<u8>,
+    #[prost(uint32, tag = "5")]
+    pub state: u32,
+    #[prost(uint32, tag = "6")]
+    pub version: u32,
 }
 
 /// `FlowRef` (envelope tag 28): `{flow_id = 1, rev = 2, env = 3, version = 4}`. `version` is the CP flow
@@ -409,6 +461,9 @@ pub struct SeamEventJson {
     /// Tag 29; omitted when absent.
     #[serde(default)]
     pub chain: Option<ChainRefJson>,
+    /// Tag 30; omitted when absent.
+    #[serde(default)]
+    pub chain_manifest: Option<ChainManifestJson>,
     /// The five payloads this crate does not model (tags 14, 15, 17, 21, 26). **Presence only**, as on
     /// the protobuf side: [`OpaqueObject`] consumes the value without modelling it, and `Option` makes
     /// `null` read as absent — the same reading serde's `Option` gives it on the runtime side.
@@ -466,6 +521,51 @@ pub struct PayloadPresence {
     pub budget_breach: bool,
     pub session_lifecycle: bool,
     pub event_redriven: bool,
+}
+
+/// The JSON projection of tag 30: `bytes` base64, `u64` JSON numbers. Every member defaults, as a
+/// proto3 field does: a missing member reads as its zero value and then fails the structure or the
+/// signature, never the parse.
+#[derive(Deserialize)]
+pub struct ChainManifestJson {
+    #[serde(default)]
+    pub stream_id: String,
+    #[serde(default)]
+    pub tenant: String,
+    #[serde(default)]
+    pub governing_doc_sha256: String,
+    #[serde(default)]
+    pub governing_generated_at: u64,
+    #[serde(default)]
+    pub manifest_at: u64,
+    #[serde(default)]
+    pub chains: Vec<ChainManifestEntryJson>,
+    #[serde(default)]
+    pub issuer_aid: String,
+    #[serde(default)]
+    pub digest_schema: u32,
+    #[serde(default)]
+    pub signature: String,
+    #[serde(default)]
+    pub tenant_len: u64,
+    #[serde(default)]
+    pub tenant_head: String,
+}
+
+#[derive(Deserialize)]
+pub struct ChainManifestEntryJson {
+    #[serde(default)]
+    pub flow_id: String,
+    #[serde(default)]
+    pub env: String,
+    #[serde(default)]
+    pub len: u64,
+    #[serde(default)]
+    pub head: String,
+    #[serde(default)]
+    pub state: u32,
+    #[serde(default)]
+    pub version: u32,
 }
 
 #[derive(Deserialize)]
@@ -629,6 +729,8 @@ pub struct Event {
     pub cert: Option<Cert>,
     /// The `CHAIN_HEAD_ATTESTATION` payload, when this event is one. `None` otherwise.
     pub attestation: Option<Attestation>,
+    /// The `CHAIN_MANIFEST` payload (tag 30), when this event is one. `None` otherwise.
+    pub manifest: Option<ChainManifestPb>,
     /// The `DECISION_SEALED` payload — read only for the digest-v4 recompute under `--issuer`.
     pub decision: Option<Decision>,
     /// Presence of the five payloads this crate does not model — read only by the kind/payload
@@ -879,6 +981,36 @@ impl Event {
                         tenant: a.tenant,
                     })
                 });
+            let manifest = j
+                .chain_manifest
+                .map(|m| -> Result<ChainManifestPb, String> {
+                    Ok(ChainManifestPb {
+                        stream_id: m.stream_id,
+                        tenant: m.tenant,
+                        governing_doc_sha256: b64(&m.governing_doc_sha256)?,
+                        governing_generated_at: m.governing_generated_at,
+                        manifest_at: m.manifest_at,
+                        chains: m
+                            .chains
+                            .into_iter()
+                            .map(|c| -> Result<ChainManifestEntryPb, String> {
+                                Ok(ChainManifestEntryPb {
+                                    flow_id: c.flow_id,
+                                    env: c.env,
+                                    len: c.len,
+                                    head: b64(&c.head)?,
+                                    state: c.state,
+                                    version: c.version,
+                                })
+                            })
+                            .collect::<Result<_, _>>()?,
+                        issuer_aid: m.issuer_aid,
+                        digest_schema: m.digest_schema,
+                        signature: b64(&m.signature)?,
+                        tenant_len: m.tenant_len,
+                        tenant_head: b64(&m.tenant_head)?,
+                    })
+                });
             let decision = j.payload.map(|p| -> Result<Decision, String> {
                 Ok(Decision {
                     decision_id: p.decision_id,
@@ -986,6 +1118,7 @@ impl Event {
                 }),
                 cert: cert.transpose()?,
                 attestation: attestation.transpose()?,
+                manifest: manifest.transpose()?,
                 decision: decision.transpose()?,
                 presence: PayloadPresence {
                     learning_decision: j.learning_decision.is_some(),
@@ -1055,6 +1188,7 @@ impl Event {
                 signature: a.signature,
                 tenant: a.tenant,
             }),
+            manifest: pb.chain_manifest,
             decision: pb.payload.map(|p| Decision {
                 decision_id: p.decision_id,
                 tenant: p.tenant,
@@ -1177,6 +1311,7 @@ impl Event {
             }),
             digest: self.digest.clone(),
             checksum: self.checksum.clone(),
+            chain_manifest: self.manifest.clone(),
             chain_head_attestation: self.attestation.as_ref().map(|a| ChainHeadAttestationPb {
                 attested_len: a.attested_len,
                 attested_head: a.attested_head.clone(),
@@ -1282,6 +1417,9 @@ pub const MODELLED_KINDS: &[&str] = &[
     "SESSION_LIFECYCLE",
     "AUTHORIZE_EVALUATED",
     "POLICY_DENIED",
+    // Chained on the tenant chain (`chain_bundle` v2): payload, signature, entry digest and the D-163
+    // tenant-head position are all checked (`crate::manifest`).
+    "CHAIN_MANIFEST",
     // Advisory, like the four above with no slot on `Event`: no digest, so content coverage does not
     // arise. Its `event` bytes are a verbatim copy of a row this walk verifies in place — never decoded here.
     "EVENT_REDRIVEN",
@@ -1395,6 +1533,7 @@ mod tests {
             "AUTHORIZE_EVALUATED",
             "POLICY_DENIED",
             "EVENT_REDRIVEN",
+            "CHAIN_MANIFEST",
         ]
         .into();
         let ours: BTreeSet<&str> = MODELLED_KINDS.iter().copied().collect();
@@ -1406,16 +1545,8 @@ mod tests {
         // Layer 2 — the spec itself. Same source, same override, same no-skip rule as the advisory
         // tripwire; see `spec_event_kinds` for why there is no environment in which this cannot read.
         //
-        // The one recorded gap: `CHAIN_MANIFEST` (chain_bundle v2, W4 train 1). Its payload check is W5
-        // multi-chain verify; until then it is linked by field presence and disclosed as unverified
-        // content (`ChainReport::unmodelled`), never folded into a green claim. No writer emits it
-        // before the partner scheme switch. Remove the entry when W5 models the payload.
-        const RECORDED_UNMODELLED: &[&str] = &["CHAIN_MANIFEST"];
-        let (spec_path, spec_set) = spec_event_kinds(|l| {
-            !RECORDED_UNMODELLED
-                .iter()
-                .any(|k| l.trim_start().starts_with(k))
-        });
+        // No recorded gap: `CHAIN_MANIFEST`, the last one (W4 train 1), is modelled since W5 (rt#1910).
+        let (spec_path, spec_set) = spec_event_kinds(|_| true);
         let ours: BTreeSet<String> = MODELLED_KINDS.iter().map(|s| (*s).to_owned()).collect();
         assert_eq!(
             ours,
@@ -1565,6 +1696,7 @@ mod tests {
                 chain: None,
                 cert: None,
                 attestation: None,
+                manifest: None,
                 decision: None,
                 presence: PayloadPresence::default(),
                 bytes: Vec::new(),

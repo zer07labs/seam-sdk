@@ -178,8 +178,24 @@ not pair with `--from-anchor` / `--expect-anchor`, because an anchor attests a p
 
 This build checks **integrity only** for keyed chains. Authenticity over them needs attestation v3, which
 this build carries but does not verify, so `--issuer` and `bundle` refuse a window that contains a keyed
-chain rather than vouch for it. `CHAIN_MANIFEST` events are linked, but their payload is not modelled yet,
-so they are disclosed as unverified content.
+chain rather than vouch for it.
+
+**`CHAIN_MANIFEST`** (0.7.0, Flows W5, D-163; runtime 0.117.0). The tenant's signed list of its flow chains
+(tag 30) is modelled on both transports. The integrity walk checks, for each one:
+
+- its structure: chains strictly ascending, each entry a valid flow key, `state` 1-4, an empty chain at
+  `genesis(K)` (`MALFORMED MANIFEST (<rule>)`);
+- its entry digest, recomputed from its own fields under `seam.audit.chain-manifest-entry.v1` over the
+  domain **v2** preimage and the signature, with the envelope classification `Internal` (`ENTRY REWRITE`);
+- that it sits on its tenant chain at `tenant_len`, after `tenant_head` (`MANIFEST_TENANT_HEAD_MISMATCH`);
+- V7: every chain it lists has its listed head at its listed length (`MANIFEST_HEAD_MISMATCH`), and a
+  listed non-empty chain is in the stream (`CHAIN_MISSING`). `--chain` skips V7, since the chains a tenant
+  manifest lists are outside the selection.
+
+The domain v2 signature is checked against a pinned issuer by `seam_verify::manifest::verify_signature`.
+The CLI cannot reach it yet, because `--issuer` still refuses keyed chains. A domain v1 manifest (no fields
+10-11) does not verify. Not checked: V9 `CHAIN_UNDECLARED` completeness, V10 `MANIFEST_STALE`, and the
+governing-doc checks that need the CP-signed doc history.
 
 #### AUTHENTICITY — `chain <FILE> --issuer <AID>`
 
@@ -560,7 +576,7 @@ Stated plainly, because a verifier that oversells itself is worse than none:
 | `docs/erasure-certificate.v1.md` | the certificate signing framing — **normative** |
 | `docs/evidence-bundle.v1.md` | the evidence bundle and its binding framing — **normative**, a verbatim pinned copy of the runtime's spec (see Drift) |
 | `docs/audit-anchor.md` | the out-of-band anchor |
-| `proto/seam/event/v1/seam_event.proto` | the canonical protobuf schema, a byte-verbatim copy of seam-runtime `crates/seam-api/proto/seam/event/v1/seam_event.proto` @ `ddbfa6ff` (runtime main; unchanged since seam-runtime#1873, 0.114.0) (it has no header to carry a pin, so the commit is recorded here; not checked by `check_vendored_spec.py`) |
+| `proto/seam/event/v1/seam_event.proto` | the canonical protobuf schema, a byte-verbatim copy of seam-runtime `crates/seam-api/proto/seam/event/v1/seam_event.proto` @ `a196a6c1` (seam-runtime#1910, the Flows W5 train, 0.117.0: `ChainManifest` fields 10/11) (it has no header to carry a pin, so the commit is recorded here; not checked by `check_vendored_spec.py`) |
 | `fixtures/erasure_certificate_vector.json` | a real signed certificate to check against |
 | `fixtures/evidence-bundle/` | four real bundles from the runtime's exporter (byte-exact: `.gitattributes` keeps git off them) |
 | `src/` | the reference implementation |

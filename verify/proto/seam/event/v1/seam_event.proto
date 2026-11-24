@@ -230,7 +230,9 @@ message ChainRef {
 
 // Flows train 1 — the CHAIN_MANIFEST payload (`SeamEvent.chain_manifest`, tag 30; `chain_bundle` v2).
 // Appended to the TENANT chain. `signature` is Ed25519 by the issuer key over SHA-256 of the framed fields
-// 1-8 under domain "seam.audit.chain-manifest.v1" (`docs/specs/seam-event.v1.md` §CHAIN_MANIFEST).
+// 1-8, 10 and 11 under domain "seam.audit.chain-manifest.v2" (`docs/specs/seam-event.v1.md` §CHAIN_MANIFEST).
+// W5 D-163: `tenant_len`/`tenant_head` are the tenant chain this manifest follows (its entry's `prev`), so
+// a verified manifest also covers the tenant chain up to that head.
 message ChainManifest {
   string stream_id = 1;
   string tenant = 2;
@@ -241,6 +243,8 @@ message ChainManifest {
   string issuer_aid = 7;
   uint32 digest_schema = 8;
   bytes signature = 9;
+  uint64 tenant_len = 10;                   // the tenant chain's length before this manifest's entry
+  bytes tenant_head = 11;                   // that chain's head (genesis(K) when tenant_len = 0)
 }
 
 // One flow chain in a `ChainManifest`. `(flow_id, env, version)` is the chain key's flow part.

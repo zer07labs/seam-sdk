@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:2325-2347` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:2340-2362` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:2353` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:2368` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3441,3 +3441,35 @@ release.
 **v6 voter-vector step 3** was already done in seam-runtime #1859 (`SEAM_SDK_REF` 14cf4ceb,
 `FIXTURE_PAIRS` row for `commitment_digest_v6_voter_vector.json`). The vector is byte-identical on runtime
 main, at that pin, and here. seam-sdk has nothing left to do for it.
+
+## 2026-11-24 — Flows W5 pre-vendor for seam-runtime#1910 (0.117.0): `CHAIN_MANIFEST` domain v2 verified in `verify/` (plans/flows-w5-prevendor-1910.md)
+
+**Carry and verify tag 30, including `tenant_len`/`tenant_head` (D-163).** The event-field gate refused the two
+new fields (exit 8), which is the decision #88 asks for. `verify/` now models the payload and checks it in
+the integrity walk: structure, the entry digest recomputed from its fields (envelope `Internal`), the
+D-163 position (`tenant_len` = `chain.seq`, `tenant_head` = `prev_checksum`, tenant chain), and V7 over
+the walked chains. The hand-written clients have no chain verifier, so they carry the fields only in the
+generated stubs. Reversible: the walk only refuses streams the runtime's own verifier refuses, or a
+manifest whose fields do not recompute its stored digest. The runtime checks that body under `--issuer`
+only, but here the fields V7 and D-163 read must be the ones the chain commits to. An honest stream
+always recomputes.
+
+**The signature is a library check, not a CLI one.** `manifest::verify_signature` checks it against a
+pinned issuer and is pinned by the runtime vectors. The CLI still refuses `--issuer` over keyed chains,
+because attestation v3 is not verified here (DECISIONS 2026-11-23). V9 `CHAIN_UNDECLARED` and V10 are not
+ported: V9 needs a manifest in every flow-env window, and the existing keyed-chain vectors carry none.
+
+**`--chain` skips V7** (`verify::chain_selected`): the chains a tenant manifest lists are outside a
+one-chain selection by construction, so V7 there would refuse every selected tenant chain.
+
+**Not carried: `fixtures/seam_event_descriptor.json` and `golden_seam_events_pb.b64`.** Nothing in this
+repo reads either.
+
+**Merge order: after rt#1910, not before.** The contract job builds stubs from BSR `main`, which gains
+fields 10/11 only when #1910 merges and pushes. Before that, CI's event gate refuses the manifest lines
+(stubs MISSING them, exit 8). A merge before the runtime is impossible on green, and a merge without the
+manifest lines would turn main red at the BSR push and lose the dispatch. This is the order DECISIONS
+2026-11-04 names for a spec-touching train: merge right after the runtime merge, then re-fire the
+dispatch if it was refused. Locally, against `a196a6c1` (`make generate-local` from an export), the full
+gate set is green and `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exits 0. Decided by: Opus
+(reversible), under the waves flows W5 brief.

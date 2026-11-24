@@ -100,6 +100,12 @@ pub struct ChainReport {
     /// anchored keyed chain needs attestation v3 (`chain_bundle` v2, W5). Empty on every stream written
     /// today, since no producer emits tag 29 before W4.
     pub chains: BTreeMap<ChainKey, TenantChain>,
+    /// **`CHAIN_MANIFEST`s (`chain_bundle` v2, D-163)**, `(seq, manifest)` in stream order. Each one here
+    /// passed the walk's manifest checks: well-formed, its entry digest recomputed from its own fields,
+    /// and sitting on its tenant chain at `tenant_len` right after `tenant_head`. Unless the window was
+    /// verified with [`chain_selected`], each listed chain also has the head the manifest lists (V7).
+    /// The signature is checked only against a pinned issuer ([`crate::manifest::verify_signature`]).
+    pub manifests: Vec<(u64, crate::wire::ChainManifestPb)>,
 }
 
 /// One tenant's independent hash-chain state within a [`ChainReport`] — the per-tenant analogue of
@@ -138,7 +144,7 @@ pub struct TenantChain {
 /// map one side's diagnosis onto the other's.
 pub fn check_kind_payload(e: &Event) -> Result<(), String> {
     let p = &e.presence;
-    let fields: [(&str, bool, &str); 11] = [
+    let fields: [(&str, bool, &str); 12] = [
         ("payload (tag 13)", e.decision.is_some(), "DECISION_SEALED"),
         (
             "learning_decision (tag 14)",
@@ -181,6 +187,11 @@ pub fn check_kind_payload(e: &Event) -> Result<(), String> {
             "event_redriven (tag 26)",
             p.event_redriven,
             "EVENT_REDRIVEN",
+        ),
+        (
+            "chain_manifest (tag 30)",
+            e.manifest.is_some(),
+            "CHAIN_MANIFEST",
         ),
     ];
     // Rule 1: "each payload field belongs to exactly one kind, so an event carries only its own kind's
@@ -356,6 +367,22 @@ pub fn chain_by_tenant(
     events: &[Event],
     anchors: &BTreeMap<String, (u64, Vec<u8>)>,
 ) -> Result<ChainReport, String> {
+    walk(events, anchors, true)
+}
+
+/// [`chain`] over a window holding **one selected chain** (`seam-verify chain --chain`): every check runs
+/// except V7, a manifest's listed heads, because the chains a tenant manifest lists are outside the
+/// selection by construction. A manifest in the window is still well-formed, recomputed and at its signed
+/// tenant head (D-163).
+pub fn chain_selected(events: &[Event]) -> Result<ChainReport, String> {
+    walk(events, &BTreeMap::new(), false)
+}
+
+fn walk(
+    events: &[Event],
+    anchors: &BTreeMap<String, (u64, Vec<u8>)>,
+    manifest_heads: bool,
+) -> Result<ChainReport, String> {
     let mut tenants: BTreeMap<String, TenantChain> = BTreeMap::new();
     let mut unconsumed_anchors: BTreeMap<String, u64> = anchors
         .iter()
@@ -376,6 +403,7 @@ pub fn chain_by_tenant(
         tenants: BTreeMap::new(),
         unconsumed_anchors: BTreeMap::new(),
         chains: BTreeMap::new(),
+        manifests: Vec::new(),
     };
     let mut keyed: BTreeMap<ChainKey, TenantChain> = BTreeMap::new();
 
@@ -455,6 +483,10 @@ pub fn chain_by_tenant(
                     hex(checksum)
                 ));
             }
+            if let Some(m) = &e.manifest {
+                check_manifest_entry(e, m, cref, digest)?;
+                r.manifests.push((e.seq, m.clone()));
+            }
             chain.head = checksum.clone();
             chain.links += 1;
             chain.heads.push(chain.head.clone());
@@ -470,6 +502,13 @@ pub fn chain_by_tenant(
             continue;
         }
 
+        if e.manifest.is_some() {
+            return Err(format!(
+                "tenant '{}': seq {}: MANIFEST_TENANT_HEAD_MISMATCH — a CHAIN_MANIFEST with no ChainRef \
+                 (tag 29): it belongs on its tenant's chain-keyed chain at the position it signs.",
+                e.tenant, e.seq
+            ));
+        }
         let is_fresh_partition = !tenants.contains_key(&e.tenant);
         let chain = tenants.entry(e.tenant.clone()).or_insert_with(|| {
             let (base_len, base_head) = anchors
@@ -549,6 +588,9 @@ pub fn chain_by_tenant(
     r.tenants = tenants;
     r.unconsumed_anchors = unconsumed_anchors;
     r.chains = keyed;
+    if manifest_heads {
+        check_manifest_heads(&r)?;
+    }
     // Single-tenant mirror (§0): every window this crate verified before U-RT-1/U-RT-3, and any
     // genuinely single-tenant window today, hits exactly one entry here — and the top-level scalar
     // fields below reproduce that one entry's values byte-for-byte, so this is NOT a behaviour change
@@ -569,6 +611,91 @@ pub fn chain_by_tenant(
         r.base_len = only.base_len;
     }
     Ok(r)
+}
+
+/// The per-entry `CHAIN_MANIFEST` checks, on a link that has already verified (spec §CHAIN_MANIFEST):
+///
+/// 1. the structural rules ([`crate::manifest::check_structure`]);
+/// 2. the envelope `classification` is `Internal`, and the stored digest is the manifest's entry digest
+///    recomputed from its own fields — so the fields the next two checks read are the ones the chain
+///    commits to (a rewritten manifest with its old digest left in place is refused here, not trusted);
+/// 3. D-163: it sits on the tenant chain (`kind = 1`) at `tenant_len`, its `prev_checksum` the signed
+///    `tenant_head` (`MANIFEST_TENANT_HEAD_MISMATCH`), as seam-runtime `crates/seam-verify/src/chains.rs`
+///    checks it.
+fn check_manifest_entry(
+    e: &Event,
+    m: &crate::wire::ChainManifestPb,
+    cref: &crate::wire::ChainRefPb,
+    digest: &[u8],
+) -> Result<(), String> {
+    crate::manifest::check_structure(m).map_err(|rule| {
+        format!(
+            "tenant '{}': seq {}: MALFORMED MANIFEST ({rule}) — the CHAIN_MANIFEST's chain list breaks \
+             §CHAIN_MANIFEST.",
+            e.tenant, e.seq
+        )
+    })?;
+    if e.classification != "Internal" {
+        return Err(format!(
+            "tenant '{}': seq {}: ENTRY REWRITE — a CHAIN_MANIFEST's envelope classification is {:?}, \
+             not \"Internal\".",
+            e.tenant, e.seq, e.classification
+        ));
+    }
+    let expect = crate::manifest::entry_digest(m);
+    if digest != expect.as_slice() {
+        return Err(format!(
+            "tenant '{}': seq {}: ENTRY REWRITE — the CHAIN_MANIFEST's fields do not recompute its \
+             digest (seam.audit.chain-manifest-entry.v1 over the v2 preimage and signature).\n  \
+             expected {}\n  got      {}",
+            e.tenant,
+            e.seq,
+            hex(&expect),
+            hex(digest)
+        ));
+    }
+    if cref.kind != 1 || m.tenant_len != cref.seq || m.tenant_head != e.prev_checksum {
+        return Err(format!(
+            "tenant '{}': seq {}: MANIFEST_TENANT_HEAD_MISMATCH — the manifest signs tenant chain length \
+             {}, but it sits at chain kind {} position {} or after another head.",
+            e.tenant, e.seq, m.tenant_len, cref.kind, cref.seq
+        ));
+    }
+    Ok(())
+}
+
+/// V7 over a walked window: each chain a manifest lists has at least `len` links and its head at `len`
+/// (`genesis(K)` at 0) — `MANIFEST_HEAD_MISMATCH`; a listed non-empty chain with no link in the window is
+/// `CHAIN_MISSING`. Chain-keyed chains always start at genesis, so `heads[len]` is the head at `len`.
+fn check_manifest_heads(r: &ChainReport) -> Result<(), String> {
+    for (seq, m) in &r.manifests {
+        for c in &m.chains {
+            let key = ChainKey::new(2, &m.stream_id, &m.tenant, &c.flow_id, &c.env, c.version)
+                .map_err(|rule| format!("seq {seq}: MALFORMED MANIFEST ({rule})"))?;
+            let at = match r.chains.get(&key) {
+                Some(tc) => usize::try_from(c.len)
+                    .ok()
+                    .and_then(|n| tc.heads.get(n))
+                    .cloned(),
+                None if c.len == 0 => Some(key.genesis().to_vec()),
+                None => {
+                    return Err(format!(
+                        "tenant '{}': seq {seq}: CHAIN_MISSING — the manifest lists chain {:?} {:?} v{} at \
+                         length {}, but the stream holds none of it.",
+                        m.tenant, c.flow_id, c.env, c.version, c.len
+                    ))
+                }
+            };
+            if at.as_deref() != Some(c.head.as_slice()) {
+                return Err(format!(
+                    "tenant '{}': seq {seq}: MANIFEST_HEAD_MISMATCH — chain {:?} {:?} v{} at length {} does \
+                     not have the head the manifest lists.",
+                    m.tenant, c.flow_id, c.env, c.version, c.len
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Verify the hash chain from the stream alone, from an **anchored start** (spec clause (f)):
@@ -1675,6 +1802,88 @@ pub fn hex(b: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// V7 over a synthetic report: one walked flow chain of two links, and a manifest listing it.
+    fn v7(
+        len: u64,
+        head: Vec<u8>,
+        extra: Option<crate::wire::ChainManifestEntryPb>,
+    ) -> Result<(), String> {
+        use crate::wire::{ChainManifestEntryPb, ChainManifestPb};
+        let key = ChainKey::new(2, "cell-a", "acme", "f", "live", 0).unwrap();
+        let g = key.genesis().to_vec();
+        let h1 = link(&g, &[1; 32]);
+        let h2 = link(&h1, &[2; 32]);
+        let mut r = chain(&[]).unwrap();
+        r.chains.insert(
+            key,
+            TenantChain {
+                head: h2.clone(),
+                links: 2,
+                heads: vec![g, h1, h2],
+                max_schema_by_link: vec![0, 0, 0],
+                base_len: 0,
+            },
+        );
+        let mut chains = vec![ChainManifestEntryPb {
+            flow_id: "f".into(),
+            env: "live".into(),
+            len,
+            head,
+            state: 1,
+            version: 0,
+        }];
+        chains.extend(extra);
+        r.manifests.push((
+            9,
+            ChainManifestPb {
+                stream_id: "cell-a".into(),
+                tenant: "acme".into(),
+                chains,
+                ..Default::default()
+            },
+        ));
+        check_manifest_heads(&r)
+    }
+
+    #[test]
+    fn v7_checks_each_listed_head_at_its_length() {
+        let key = ChainKey::new(2, "cell-a", "acme", "f", "live", 0).unwrap();
+        let g = key.genesis().to_vec();
+        let h1 = link(&g, &[1; 32]);
+        let h2 = link(&h1, &[2; 32]);
+        // A manifest may list a chain at any length the walk reached, genesis at 0 included.
+        v7(2, h2.clone(), None).unwrap();
+        v7(1, h1.clone(), None).unwrap();
+        v7(0, g, None).unwrap();
+        // Another head at that length, or a length past the walk, mismatches.
+        assert!(v7(1, h2.clone(), None)
+            .unwrap_err()
+            .contains("MANIFEST_HEAD_MISMATCH"));
+        assert!(v7(3, h2.clone(), None)
+            .unwrap_err()
+            .contains("MANIFEST_HEAD_MISMATCH"));
+        // A listed chain with no link in the window: missing when non-empty, its genesis when empty.
+        let sandbox = |len: u64, head: Vec<u8>| crate::wire::ChainManifestEntryPb {
+            flow_id: "f".into(),
+            env: "sandbox".into(),
+            len,
+            head,
+            state: 1,
+            version: 1,
+        };
+        let sg = ChainKey::new(2, "cell-a", "acme", "f", "sandbox", 1)
+            .unwrap()
+            .genesis()
+            .to_vec();
+        v7(2, h2.clone(), Some(sandbox(0, sg))).unwrap();
+        assert!(v7(2, h2.clone(), Some(sandbox(0, vec![0; 32])))
+            .unwrap_err()
+            .contains("MANIFEST_HEAD_MISMATCH"));
+        assert!(v7(2, h2, Some(sandbox(1, vec![0; 32])))
+            .unwrap_err()
+            .contains("CHAIN_MISSING"));
+    }
 
     /// Pin `chain_head_attestation_payload`'s framing byte-for-byte against the runtime's committed
     /// `chain_head_attestation` KAT (seam-client/tests/conformance_vectors.json): the precomputed signature

@@ -16,6 +16,21 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — `seam-verify` 0.7.0 verifies `CHAIN_MANIFEST` domain v2 (Flows W5, D-163, seam-runtime#1910)
+
+- **Pairs with runtime 0.117.0.** Its manifests sign `tenant_len`/`tenant_head` (`ChainManifest` fields 10/11)
+  under `seam.audit.chain-manifest.v2`. A domain v1 manifest does not verify, and the spec records that none
+  survive the W4R reset.
+- The integrity walk now models tag 30 on both transports and in the dedup identity. It checks each
+  manifest's structure, recomputes its entry digest, and checks its signed tenant head
+  (`MANIFEST_TENANT_HEAD_MISMATCH`) and the heads it lists (V7, `MANIFEST_HEAD_MISMATCH` / `CHAIN_MISSING`;
+  skipped under `--chain`). `CHAIN_MANIFEST` is no longer disclosed as unverified content.
+- New: `seam_verify::manifest` (`signed_preimage`, `signed_digest`, `entry_digest`, `check_structure`,
+  `verify_signature`) and `verify::chain_selected`. `ChainReport` gains `manifests`.
+- Pinned by `conformance/chain/chain_manifest_vectors.json`, byte for byte from the runtime. The vendored
+  `seam_event.proto` and `seam-event.v1.md` are re-pinned to `a196a6c1`.
+- The generated `seam.event.v1` stubs carry the two new fields. The hand-written clients do not read them.
+
 ## 0.116.0 — 2026-11-23
 
 ## 0.115.1 — 2026-11-23
