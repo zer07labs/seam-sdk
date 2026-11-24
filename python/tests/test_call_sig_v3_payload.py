@@ -104,7 +104,7 @@ def test_authorize_requests_are_signed_v3_over_their_own_wire_fields() -> None:
         req.tool_input_digest,
         req.tool_name,
         req.agent_id,
-        subject=req.subject,
+        subject="",  # the reserved field 8's v3 slot is always signed empty (S3-O4)
         subjects=list(req.subjects),
         client_request_id=req.client_request_id,
         session_id=req.session_id,
@@ -138,8 +138,8 @@ def test_features_sort_by_utf8_bytes_not_utf16_order() -> None:
 
 
 def test_the_retired_subject_slot_is_signed_empty() -> None:
-    """deep-cleanup 3.3 S3-O4: the builder never sends `AuthorizeRequest.subject` (field 8) and signs
-    its v3 preimage slot as the constant empty string, so the runtime can reserve the field."""
+    """deep-cleanup 3.3 S3-O4: `AuthorizeRequest.subject` (field 8) is reserved since runtime 0.120.0, and
+    the builder signs its v3 preimage slot as the constant empty string."""
     req = build_authorize_request(
         ticket=b"\x02" * 16,
         agent_seed=SEED,
@@ -147,7 +147,7 @@ def test_the_retired_subject_slot_is_signed_empty() -> None:
         tool_input={},
         subjects=["user-1"],
     )
-    assert req.subject == ""
+    assert "subject" not in type(req).DESCRIPTOR.fields_by_name
     payload = call_sig_v3_payload(
         req.ticket,
         req.tool_input_digest,

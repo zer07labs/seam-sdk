@@ -957,7 +957,7 @@ const VERDICT_NAMES: Partial<Record<AuthorizeVerdict, AuthorizeResult["verdict"]
 
 /**
  * Multi-dimension session budget (enterprise 6.2). Every field is optional; an unset dimension is
- * unlimited. `messages`, when set, overrides the legacy `budget` count. `softPct` is the soft-warning
+ * unlimited. `messages` is the message budget (unset ⇒ the server default, 32). `softPct` is the soft-warning
  * threshold as a percent of any limit (server default 80). `uint64` dimensions are `bigint`.
  */
 export interface BudgetLimits {
@@ -1213,9 +1213,6 @@ export class SeamClient {
         toolInputDigest: digest,
         toolName,
         agentId: opts?.agentId ?? "",
-        // The retired `AuthorizeRequest.subject` (field 8) is never sent; v3 keeps its preimage slot
-        // and signs it as the constant empty string (deep-cleanup 3.3 S3-O4).
-        subject: "",
         subjects: opts?.subjects ?? [],
         clientRequestId: opts?.clientRequestId ?? "",
         sessionId: opts?.sessionId ?? "",
@@ -1224,7 +1221,9 @@ export class SeamClient {
       return {
         ...wire,
         toolInput: opts?.digestOnly ? new Uint8Array(0) : canonical,
-        callSig: callSigV3(agent.seed, wire),
+        // `AuthorizeRequest.subject` (field 8) is reserved since runtime 0.120.0; v3 keeps its
+        // preimage slot and signs it as the constant empty string (deep-cleanup 3.3 S3-O4).
+        callSig: callSigV3(agent.seed, { ...wire, subject: "" }),
       };
     };
 

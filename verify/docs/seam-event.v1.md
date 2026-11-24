@@ -1,4 +1,4 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 253f4995 (refreshed 2026-11-24).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 0e3e0e29 (refreshed 2026-11-24).
      seam-runtime#1921 (Flows W6, 0.118.0): LEARNING_* carry flow_ref (tag 28) when the decision's session had one.
      Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 37cb8115 (refreshed 2026-11-24).
@@ -361,13 +361,12 @@ a lower `digest_schema` would be issuing, under the issuer key, exactly the down
 exists to prevent.
 
 **Triggers.** Emitted at **boot** (every restart leaves a signed head immediately, covering restart gaps),
-**every N chain entries** (`SEAM_CHAIN_ATTEST_EVERY`, default 1000; `0` disables the whole worker — the
-every-N worker is **ON by default**, unlike the opt-in retention worker, because an authenticity root that
-is opt-in is the gap persisting by default), **once per UTC day** (#1556: on the worker's tick, when
-`floor(now_ms / (max_age·1000)) > floor(last_attested_ms / (max_age·1000))` with
-`SEAM_CHAIN_ATTEST_MAX_AGE_SECS`, default 86400, so the first tick at or after 00:00Z attests every non-empty
-partition; the boot attestation seeds `last_attested_ms`, so a same-day restart adds no second daily one; a
-failed pass retries next tick; `0` disables only this trigger), and at **every anchor boundary** (attest-then-anchor, so the externally
+**on growth** (`attest::EVERY` = 1: within one 60 s tick of any new chain entry, so a notary anchor on a quiet chain is covered by a signed head; the worker is **always on**, because an authenticity
+root that can be switched off is the gap waiting for one variable), **once per UTC day** (#1556: on the
+worker's tick, when `floor(now_ms / (max_age·1000)) > floor(last_attested_ms / (max_age·1000))` with
+`attest::MAX_AGE_SECS` = 86400, so the first tick at or after 00:00Z attests every non-empty partition; the
+boot attestation seeds `last_attested_ms`, so a same-day restart adds no second daily one; a failed pass
+retries next tick), and at **every anchor boundary** (attest-then-anchor, so the externally
 notarized `(len, head)` transitively pins an issuer-signed head — see `audit-anchor.md`). The empty chain
 (`attested_len == 0`) is never signed (no genesis attestation).
 
@@ -1403,9 +1402,9 @@ The outbox is **garbage-collected against the relay's durably-consumed cursor**,
 operator ack-drain's `published` flag. A consumer relaying the outbox (e.g. `seam-connectors`) reports its
 progress with `SeamEvents.ReportEventsConsumed(consumed_cursor)`; the runtime keeps a durable, **monotone**
 high-water from it (a lower re-report is ignored) and prunes a row only when it is **both** below that
-cursor **and** older than the retention window (`SEAM_OUTBOX_RETENTION_MILLIS`, default **8 days**, never
-less — #1176: an operator re-drive by reference needs the original row for as long as the DLQ keeps the
-letter, 7 days, plus a day of delivery lag; a smaller configured value is raised to the floor), always
+cursor **and** older than the fixed retention window (**8 days** — #1176: an operator re-drive by
+reference needs the original row for as long as the DLQ keeps the letter, 7 days, plus a day of delivery
+lag), always
 retaining the current max-`seq` row so the `seq` allocator cannot regress.
 
 - **Never pruned below what the relay needs.** Because prune deletes only `offset < consumed_cursor`, a row

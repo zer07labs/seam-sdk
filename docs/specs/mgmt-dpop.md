@@ -1,4 +1,4 @@
-<!-- Pinned copy of seam-runtime/docs/specs/mgmt-dpop.md @ 7ea99e96 (vendored 2026-10-27 for seam-sdk#290).
+<!-- Pinned copy of seam-runtime/docs/specs/mgmt-dpop.md @ b0b8f140 (vendored 2026-10-27 for seam-sdk#290).
      The normative grammar for the operator DPoP signer every SDK ships (`OperatorDpopKey`, the proof
      primitive, the gRPC interceptor and the HTTP header helper). Its Golden vector table is the source of
      `conformance/mgmt_dpop_vector.json`'s `golden` group; the vector's `derived` group is SDK-computed. -->
@@ -23,9 +23,9 @@ boot (`MgmtBindPosture::dpop` in `crates/seamd/src/boot.rs`):
 - The management listeners never take a client CA. One inherited from the shared `SEAM_TLS_*` or
   `SEAM_GRPC_TLS_*` family is dropped, so a data-plane mTLS CA never puts a certificate request on the
   management plane.
-- R3 (mgmt mTLS retired): a set `SEAM_MGMT_TLS_CLIENT_CA` or `SEAM_MGMT_TLS_CLIENT_CA_PEM` refuses boot by
-  name (`TlsConfig::check_retired_mgmt_client_ca` in `crates/seamd/src/config.rs`). There is no mTLS
-  rollback; a caller that cannot send DPoP is fixed at the caller.
+- R3 (mgmt mTLS retired): the runtime reads no management client CA. `SEAM_MGMT_TLS_CLIENT_CA` and
+  `SEAM_MGMT_TLS_CLIENT_CA_PEM` are not configuration (their boot refusal was dropped in the
+  zero-compat cleanup). There is no mTLS rollback; a caller that cannot send DPoP is fixed at the caller.
 
 Source: `crates/seam-trust-aitp/src/mgmt_dpop.rs` (the pure check and the reference minter),
 `Seam::verify_mgmt_dpop` in `crates/seamd/src/lib.rs` (the binding decision and the burn),

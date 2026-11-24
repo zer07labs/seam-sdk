@@ -1,6 +1,6 @@
 // Server-free wrapper plumbing over a recording fake Transport: per-call deadlines (data plane 2s,
 // management plane 30s, streams unbounded), the SeamAdmin grant/party wrappers, the proto-owned
-// budget default (0, never a client-side 32), the coalescing ticket refresh (adopt, don't stampede),
+// budget default (the server's, never a client-side 32), the coalescing ticket refresh (adopt, don't stampede),
 // the TRANSFORM protocol-violation error, and streamEvents' drain-only ack guard + AbortSignal
 // cancellation. Mirrors the Python suite's test_lifecycle_and_timeouts / test_ticket_lifecycle.
 

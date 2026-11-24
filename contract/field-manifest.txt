@@ -181,7 +181,6 @@ AdminCancelResponse/already_terminal
 AdminCancelResponse/decision_id
 AdminCancelResponse/state
 AdminResumeRequest/approver
-AdminResumeRequest/budget
 AdminResumeRequest/namespace
 AdminResumeRequest/raise
 AdminResumeRequest/session_id
@@ -222,7 +221,6 @@ AuthorizeRequest/client_request_id
 AuthorizeRequest/features
 AuthorizeRequest/presentation
 AuthorizeRequest/session_id
-AuthorizeRequest/subject
 AuthorizeRequest/subjects
 AuthorizeRequest/ticket
 AuthorizeRequest/tool_input
@@ -394,7 +392,6 @@ ObjectionRequest/reason
 ObjectionRequest/session_id
 ObjectionRequest/severity
 ObjectionRequest/usage
-OpenSessionRequest/budget
 OpenSessionRequest/context_refs
 OpenSessionRequest/contexts
 OpenSessionRequest/expected_flow

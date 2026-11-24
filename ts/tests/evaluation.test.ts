@@ -141,7 +141,7 @@ test("submitCommit omits supersedes when absent, and sends it when given (#141)"
 
 // ── `subjects` plumbing on `authorize` (A-3/A-4) ────────────────────────────────────────────────
 
-test("authorize sends subjects alongside the deprecated singular subject, and signs them (call_sig v3)", async () => {
+test("authorize sends subjects, never the reserved singular subject, and signs them (call_sig v3)", async () => {
   const agent = new Agent(SEED);
 
   const calls1: Recorded[] = [];
@@ -150,7 +150,8 @@ test("authorize sends subjects alongside the deprecated singular subject, and si
   });
   const withSubjects = calls1.find((c) => c.method === "Authorize")!;
   assert.deepEqual(withSubjects.input.subjects, ["a", "b"]);
-  assert.equal(withSubjects.input.subject, "");
+  // `AuthorizeRequest.subject` (field 8) is reserved since runtime 0.120.0 (deep-cleanup 3.3 S3-O4).
+  assert.ok(!("subject" in withSubjects.input), "the reserved subject key must not be sent");
 
   const calls2: Recorded[] = [];
   await new SeamClient(fakeTransport(calls2)).authorize(agent, "tool", { k: 1 });
