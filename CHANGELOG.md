@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.118.0 — 2026-11-24
+
 ### Fixed — `seam-verify` 0.7.1 verifies pre-D-163 `CHAIN_MANIFEST`s (Flows W6, seam-runtime#1921)
 
 - `seam-verify` 0.7.0 recomputed every manifest under the domain v2 preimage. A manifest sealed by runtime
