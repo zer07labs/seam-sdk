@@ -237,7 +237,6 @@ class SeamClient:
         digest_only: bool = False,
         features: Optional[Mapping[str, str]] = None,
         session_id: str = "",
-        subject: str = "",
         subjects: Sequence[str] = (),
         agent_id: str = "",
         client_request_id: str = "",
@@ -256,12 +255,9 @@ class SeamClient:
         and the two derivations can disagree across the gap between them (seam-sdk#60). The two
         parameters are mutually exclusive; passing both is an error rather than a precedence rule.
 
-        ``subjects`` supersedes the deprecated singular ``subject``: the server takes the union of
-        both, drops empty entries, dedupes first-wins, and caps the effective set at 16. **Today the
-        server refuses an effective subject set larger than one** — supplying more than one is the
-        server's ``INVALID_ARGUMENT`` until Phase B ships ``AuthorizeEvaluated.subject_digests``; this
-        parameter exists now so callers can migrate off ``subject`` one at a time. Both are signed by
-        ``call_sig`` v3, in the order passed.
+        ``subjects`` names the call's end-user data subjects: the server dedupes first-wins and caps the
+        set at 16, and each one is signed by ``call_sig`` v3, in the order passed. The retired singular
+        ``subject`` is gone (deep-cleanup 3.3 S3-O4); pass ``subjects=[s]``.
         """
         # Canonicalized ONCE, before the admit and outside the closure — see the sync twin in
         # client.py for why. It matters MORE here: an aio client is the one most likely to have
@@ -285,7 +281,6 @@ class SeamClient:
                 digest_only=digest_only,
                 features=features,
                 session_id=session_id,
-                subject=subject,
                 subjects=list(subjects),
                 agent_id=agent_id,
                 client_request_id=client_request_id,
@@ -475,7 +470,6 @@ class SeamClient:
         session_id: str,
         participants: Sequence[str],
         *,
-        budget: int = 0,
         limits: Optional[BudgetLimits] = None,
         mode: str = "",
         on_behalf_of: Sequence[str] = (),
@@ -487,7 +481,6 @@ class SeamClient:
         req = pb.OpenSessionRequest(
             session_id=session_id,
             participants=list(participants),
-            budget=budget,
             mode=mode,
             presentation=await self._presentation(agent, timeout),
             on_behalf_of=list(on_behalf_of),

@@ -15,9 +15,9 @@ import { test } from "node:test";
 import { ed25519 } from "@noble/curves/ed25519";
 
 import {
-  CALL_SIG_CONTEXT,
+  CALL_SIG_V3_CONTEXT,
   REQUEST_SIG_CONTEXT,
-  callSigPayload,
+  callSigV3Payload,
   requestSig,
   requestSigPayload,
 } from "../src/crypto.js";
@@ -62,7 +62,7 @@ test("the vector is present and populated", () => {
 
 test("the domain tag matches the vector, and differs from the Authorize call_sig tag", () => {
   assert.equal(REQUEST_SIG_CONTEXT, VECTOR.domain);
-  assert.notEqual(REQUEST_SIG_CONTEXT, CALL_SIG_CONTEXT);
+  assert.notEqual(REQUEST_SIG_CONTEXT, CALL_SIG_V3_CONTEXT);
 });
 
 test("every payload is byte-exact against the runtime", () => {
@@ -161,7 +161,20 @@ test("a signature verifies over the payload", () => {
 test("a call_sig payload signature does not verify against a request_sig payload", () => {
   const seed = new Uint8Array(Array.from({ length: 32 }, (_, i) => i));
   const enc = new TextEncoder();
-  const sig = ed25519.sign(callSigPayload(enc.encode("t"), "d", "n", "a"), seed);
+  const sig = ed25519.sign(
+    callSigV3Payload({
+      ticket: enc.encode("t"),
+      toolInputDigest: "d",
+      toolName: "n",
+      agentId: "a",
+      subject: "",
+      subjects: [],
+      clientRequestId: "",
+      sessionId: "",
+      features: {},
+    }),
+    seed,
+  );
   assert.ok(
     !ed25519.verify(
       sig,

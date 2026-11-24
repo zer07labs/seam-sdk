@@ -69,8 +69,6 @@ from .selection import (
 from .crypto import (
     aid_from_pubkey,
     build_presentation,
-    call_sig,
-    call_sig_payload,
     call_sig_v3,
     call_sig_v3_payload,
     EnrollProof,
@@ -263,8 +261,6 @@ __all__ = [
     "DEFAULT_ADMIN_TIMEOUT_S",
     "jcs_canonicalize",
     "tool_input_digest",
-    "call_sig",
-    "call_sig_payload",
     "call_sig_v3",
     "call_sig_v3_payload",
     # Enrolment proof-of-possession (#205) — EnrollTenantRequest.pop
