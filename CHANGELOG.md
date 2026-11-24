@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.120.0 — 2026-11-24
+
 ## 0.119.0 — 2026-11-24
 
 ### Removed (deep-cleanup 3.3, train 0.120.0 lockstep — breaking on the wire, version-locked to the runtime)
