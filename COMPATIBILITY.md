@@ -66,7 +66,7 @@ boundary above, that means an SDK ≥ 0.33.2 needs a runtime image built from se
 
 **One caveat on this row: the lockfile number is not a real resolution.**
 `seam-adapters/uv.lock:4217` resolved `seam-sdk` **0.17.0** when this row was first verified. That
-was inside the range declared then and is outside the one declared now (raised to `>=0.43.3,<0.44` in
+was inside the range declared then and is outside the one declared now (the row above; first raised past it to `>=0.43.3,<0.44` in
 seam-adapters a46209f), and the lock was never evidence either way: `seam-adapters/pyproject.toml:59` overrides the dependency
 with an unconditional editable path source (`{ path = "../seam-sdk/python", editable = true }`), so
 the lock records the sibling checkout rather than a resolved release. A reader should not take
@@ -318,7 +318,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2403-2425`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2391-2413`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
