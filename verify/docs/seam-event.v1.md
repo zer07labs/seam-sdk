@@ -1,4 +1,7 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 37cb8115 (refreshed 2026-11-24).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 253f4995 (refreshed 2026-11-24).
+     seam-runtime#1921 (Flows W6, 0.118.0): LEARNING_* carry flow_ref (tag 28) when the decision's session had one.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 37cb8115 (refreshed 2026-11-24).
      Re-pinned to runtime main: 37cb8115 is #1910 squash-merged; body byte-identical to the a196a6c1 pin below.
      Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ a196a6c1 tracking lanes/w5-train-2 (refreshed 2026-11-24).
@@ -878,6 +881,7 @@ decision by the envelope `decision_id`. They are **purely additive** — a `DECI
 bytes are byte-identical to the pre-learning schema (the new payloads live at fresh prost **tags 14/15**,
 absent on a decision event). The external `seam-learning` plane consumes them; ordinary connectors that
 don't understand them ignore them (tolerant-reader rule). Consumers dedup by `event_id`.
+`LEARNING_*` carry `flow_ref` (tag 28) when the decision's session had one; see §Flow attribution.
 
 ```
 LearningDecision {                         // payload at SeamEvent tag 14
@@ -1144,7 +1148,8 @@ message ChainRef { string flow_id = 1; string env = 2; uint64 seq = 3; uint32 ki
   transitively, through the chain genesis (`chain_bundle` v1).
 - **`flow_ref` (tag 28)** — attribution: the flow the event's session (or namespace) belongs to. `env` is
   `"sandbox"` or `"live"`. On session-bound kinds; may also ride a tenant-chain entry (attribution, not chain
-  membership).
+  membership). `LEARNING_*` carry `flow_ref` when the decision's session had one (the session's open-time
+  `FlowRef`); absent otherwise.
 - **`chain` (tag 29)** — the chain this CHAINED event belongs to (DECISION_SEALED, AUDIT_ENTRY,
   ERASURE_CERTIFICATE, CHAIN_HEAD_ATTESTATION, CHAIN_MANIFEST); absent on advisory kinds. `kind`: `0` = cell, `1` = tenant,
   `2` = flow; `flow_id`/`env` are empty unless `kind = 2`. `version` (train 1) is the chain key's version

@@ -1,6 +1,6 @@
 //! The two things worth verifying, implemented from the published specs alone.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use sha2::{Digest, Sha256};
 
@@ -102,7 +102,9 @@ pub struct ChainReport {
     pub chains: BTreeMap<ChainKey, TenantChain>,
     /// **`CHAIN_MANIFEST`s (`chain_bundle` v2, D-163)**, `(seq, manifest)` in stream order. Each one here
     /// passed the walk's manifest checks: well-formed, its entry digest recomputed from its own fields,
-    /// and sitting on its tenant chain at `tenant_len` right after `tenant_head`. Unless the window was
+    /// and (v2) sitting on its tenant chain at `tenant_len` right after `tenant_head`; a v1 manifest
+    /// (before D-163) signs no tenant head and never follows a v2 one on its chain, so it does not
+    /// cover the tenant chain: never count one toward tenant-chain coverage. Unless the window was
     /// verified with [`chain_selected`], each listed chain also has the head the manifest lists (V7).
     /// The signature is checked only against a pinned issuer ([`crate::manifest::verify_signature`]).
     pub manifests: Vec<(u64, crate::wire::ChainManifestPb)>,
@@ -408,6 +410,8 @@ fn walk(
         manifests: Vec::new(),
     };
     let mut keyed: BTreeMap<ChainKey, TenantChain> = BTreeMap::new();
+    // `(stream_id, tenant)` chains that already hold a v2 (D-163) manifest: a v1 one cannot follow.
+    let mut covering_tenants: BTreeSet<(String, String)> = BTreeSet::new();
 
     for e in events {
         // First, before the link/advisory split and before any `unverifiable` counting — as the runtime
@@ -486,7 +490,7 @@ fn walk(
                 ));
             }
             if let Some(m) = &e.manifest {
-                check_manifest_entry(e, m, cref, digest)?;
+                check_manifest_entry(e, m, cref, digest, &mut covering_tenants)?;
                 r.manifests.push((e.seq, m.clone()));
             }
             chain.head = checksum.clone();
@@ -618,17 +622,21 @@ fn walk(
 /// The per-entry `CHAIN_MANIFEST` checks, on a link that has already verified (spec §CHAIN_MANIFEST):
 ///
 /// 1. the structural rules ([`crate::manifest::check_structure`]);
-/// 2. the envelope `classification` is `Internal`, and the stored digest is the manifest's entry digest
+/// 2. the envelope `classification` is `Internal`, the signed `tenant` is the envelope's, and the stored digest is the manifest's entry digest
 ///    recomputed from its own fields — so the fields the next two checks read are the ones the chain
 ///    commits to (a rewritten manifest with its old digest left in place is refused here, not trusted);
-/// 3. D-163: it sits on the tenant chain (`kind = 1`) at `tenant_len`, its `prev_checksum` the signed
-///    `tenant_head` (`MANIFEST_TENANT_HEAD_MISMATCH`), as seam-runtime `crates/seam-verify/src/chains.rs`
-///    checks it.
+/// 3. D-163, a v2 manifest: it sits on the tenant chain (`kind = 1`) at `tenant_len`, its `prev_checksum`
+///    the signed `tenant_head` (`MANIFEST_TENANT_HEAD_MISMATCH`). A v1 manifest (sealed before D-163,
+///    [`crate::manifest::is_v1`]) signs no tenant head, so it gets no tenant-head check, but once a v2
+///    manifest is on its `(stream_id, tenant)` chain a v1 one is `MANIFEST_DOWNGRADE` (the runtime never
+///    goes back, so it is a forgery or a rollback). As seam-runtime `crates/seam-verify/src/chains.rs`
+///    checks it @ `253f4995`.
 fn check_manifest_entry(
     e: &Event,
     m: &crate::wire::ChainManifestPb,
     cref: &crate::wire::ChainRefPb,
     digest: &[u8],
+    covering_tenants: &mut BTreeSet<(String, String)>,
 ) -> Result<(), String> {
     crate::manifest::check_structure(m).map_err(|rule| {
         format!(
@@ -644,17 +652,38 @@ fn check_manifest_entry(
             e.tenant, e.seq, e.classification
         ));
     }
+    // The signed tenant is the envelope's (seam-runtime `crates/seam-verify/src/entry.rs` @ `253f4995`). A
+    // v1 manifest signs no tenant head, so this is its only binding to the chain it sits on.
+    if m.tenant != e.tenant {
+        return Err(format!(
+            "tenant '{}': seq {}: ENTRY REWRITE — the CHAIN_MANIFEST signs tenant {:?}, not its \
+             envelope's.",
+            e.tenant, e.seq, m.tenant
+        ));
+    }
     let expect = crate::manifest::entry_digest(m);
     if digest != expect.as_slice() {
         return Err(format!(
             "tenant '{}': seq {}: ENTRY REWRITE — the CHAIN_MANIFEST's fields do not recompute its \
-             digest (seam.audit.chain-manifest-entry.v1 over the v2 preimage and signature).\n  \
+             digest (seam.audit.chain-manifest-entry.v1 over the {} preimage and signature).\n  \
              expected {}\n  got      {}",
             e.tenant,
             e.seq,
+            if crate::manifest::is_v1(m) { "v1" } else { "v2" },
             hex(&expect),
             hex(digest)
         ));
+    }
+    let tenant = (e.stream_id.clone(), e.tenant.clone());
+    if crate::manifest::is_v1(m) {
+        if covering_tenants.contains(&tenant) {
+            return Err(format!(
+                "tenant '{}': seq {}: MANIFEST_DOWNGRADE — a v1 manifest (no signed tenant head) after a \
+                 v2 manifest on the same tenant chain.",
+                e.tenant, e.seq
+            ));
+        }
+        return Ok(());
     }
     if cref.kind != 1 || m.tenant_len != cref.seq || m.tenant_head != e.prev_checksum {
         return Err(format!(
@@ -663,6 +692,7 @@ fn check_manifest_entry(
             e.tenant, e.seq, m.tenant_len, cref.kind, cref.seq
         ));
     }
+    covering_tenants.insert(tenant);
     Ok(())
 }
 

@@ -186,15 +186,24 @@ chain rather than vouch for it.
 - its structure: chains strictly ascending, each entry a valid flow key, `state` 1-4, an empty chain at
   `genesis(K)` (`MALFORMED MANIFEST (<rule>)`);
 - its entry digest, recomputed from its own fields under `seam.audit.chain-manifest-entry.v1` over the
-  domain **v2** preimage and the signature, with the envelope classification `Internal` (`ENTRY REWRITE`);
-- that it sits on its tenant chain at `tenant_len`, after `tenant_head` (`MANIFEST_TENANT_HEAD_MISMATCH`);
+  preimage of the domain it was sealed with and the signature, with the envelope classification `Internal`
+  (`ENTRY REWRITE`);
+- for a domain v2 manifest, that it sits on its tenant chain at `tenant_len`, after `tenant_head`
+  (`MANIFEST_TENANT_HEAD_MISMATCH`);
+- for a domain v1 manifest, that no v2 manifest precedes it on its tenant chain (`MANIFEST_DOWNGRADE`);
 - V7: every chain it lists has its listed head at its listed length (`MANIFEST_HEAD_MISMATCH`), and a
   listed non-empty chain is in the stream (`CHAIN_MISSING`). `--chain` skips V7, since the chains a tenant
   manifest lists are outside the selection.
 
-The domain v2 signature is checked against a pinned issuer by `seam_verify::manifest::verify_signature`.
-The CLI cannot reach it yet, because `--issuer` still refuses keyed chains. A domain v1 manifest (no fields
-10-11) does not verify. Not checked: V9 `CHAIN_UNDECLARED` completeness, V10 `MANIFEST_STALE`, and the
+**Domain v1** (0.7.1, runtime 0.115-0.116, before D-163). Those manifests are still on live streams. They
+signed fields 1-8 only, under `seam.audit.chain-manifest.v1`. The wire carries no version, so a manifest
+with `tenant_len` 0 and an empty `tenant_head` is v1: a v2 manifest always signs a 32-byte head. The choice
+is signed, not trusted. A v2 manifest stripped to that shape no longer recomputes its digest. 0.7.0 refused
+every v1 manifest as `ENTRY REWRITE`.
+
+The signature, under either domain, is checked against a pinned issuer by
+`seam_verify::manifest::verify_signature`. The CLI cannot reach it yet, because `--issuer` still refuses
+keyed chains. Not checked: V9 `CHAIN_UNDECLARED` completeness, V10 `MANIFEST_STALE`, and the
 governing-doc checks that need the CP-signed doc history.
 
 #### AUTHENTICITY — `chain <FILE> --issuer <AID>`
