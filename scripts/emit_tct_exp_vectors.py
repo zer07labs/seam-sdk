@@ -40,6 +40,13 @@ are CONTROLS — if the framing drifted, the statement would stop matching and t
 before any `expect: false` case could start passing for the wrong reason. A consumer of this vector
 must therefore keep at least one `expect: true` case, or every refusal it asserts becomes free.
 
+SEAL-KEY SHAPE (seam-runtime #2031, deep-cleanup S-4, runtime 0.123.0): every token is signed by a
+short-lived **seal key** the pinned issuer certifies, exactly as the runtime mints a commitment TCT
+(`seam-runtime/docs/specs/seam-commitment-digest.v6.md` §Seal key). `iss == sub == aud` is the seal key's
+untagged `aid:pubkey:` AID, `cnf.jkt` its thumbprint, `iat = 0`, and `ext` carries the certificate as a
+second member, `{"cert", "sig"}`, over the window `[0, 900_000]` ms (so `iat·1000` is covered). The
+issuer (seed 9×32) signs nothing but the certificate. Only `exp` varies between cases.
+
 Run: `python scripts/emit_tct_exp_vectors.py` (writes conformance/tct_exp_extended.json)
 """
 
@@ -59,6 +66,17 @@ OUT = REPO / "conformance" / "tct_exp_extended.json"
 
 #: A fixed seed, so the vector is reproducible: re-running this script must not churn the file.
 SEED = bytes.fromhex("0909090909090909090909090909090909090909090909090909090909090909")
+
+#: The seal key's seed: the runtime's test derivation (`SeededSealKeys`), `sha256("seam.seal-key.fixed.v1"
+#: ‖ issuer_seed)`, so it is reproducible too.
+SEAL_SEED = hashlib.sha256(b"seam.seal-key.fixed.v1" + SEED).digest()
+
+#: The certificate window, in ms. `iat = 0` lies inside it; the width is well under the 3_630_000 ms cap.
+NOT_BEFORE_MS = 0
+NOT_AFTER_MS = 900_000
+
+#: The `ext` member that carries the seal-key certificate (runtime `SEAL_KEY_CERT_EXT_KEY`).
+SEAL_KEY_CERT_EXT_KEY = "com.zer07labs.seam.seal-key-cert"
 
 COMMITMENT = {
     "id": "c-exp-vector",
@@ -247,20 +265,58 @@ def _commitment_digest(c: dict) -> str:
     ).hexdigest()
 
 
+def _framed(b: bytes) -> bytes:
+    """The runtime's chain framing primitive: `u32le(len) ‖ bytes`."""
+    return len(b).to_bytes(4, "little") + b
+
+
+def _seal_key_cert(seal_pk: bytes, issuer_aid: str) -> bytes:
+    """`framed("seam.seal-key-cert.v1") ‖ framed(seal_pk) ‖ le64(not_before_ms) ‖ le64(not_after_ms) ‖
+    framed(issuer_aid)` — `seam_types::chain::seal_key_cert_preimage`, re-derived here on purpose."""
+    return (
+        _framed(b"seam.seal-key-cert.v1")
+        + _framed(seal_pk)
+        + NOT_BEFORE_MS.to_bytes(8, "little")
+        + NOT_AFTER_MS.to_bytes(8, "little")
+        + _framed(issuer_aid.encode())
+    )
+
+
+def _jkt(pk: bytes) -> str:
+    """RFC 7638 thumbprint of an Ed25519 key, the AITP `cnf.jkt`."""
+    jwk = '{"crv":"Ed25519","kty":"OKP","x":"' + _b64(pk) + '"}'
+    return _b64(hashlib.sha256(jwk.encode()).digest())
+
+
 def main() -> None:
     sk = Ed25519PrivateKey.from_private_bytes(SEED)
+    # The PINNED issuer: it signs the seal-key certificate and nothing else.
     aid = "aid:pubkey:ed25519:" + _b64(sk.public_key().public_bytes_raw())
+    seal = Ed25519PrivateKey.from_private_bytes(SEAL_SEED)
+    seal_pk = seal.public_key().public_bytes_raw()
+    seal_aid = "aid:pubkey:" + _b64(seal_pk)
+    cert = _seal_key_cert(seal_pk, aid)
+    cert_member = {
+        "cert": _b64(cert),
+        "sig": _b64(sk.sign(hashlib.sha256(cert).digest())),
+    }
     # The RFC-AITP-0005 self-attestation shape: one grant, the statement under `ext`.
     statement = {"type": "seam:commitment", "commitment_digest": _commitment_digest(COMMITMENT)}
 
     cases = []
     for name, exp, now, why in CASES:
         payload: dict = {
-            "iss": aid,
-            "sub": aid,
-            "aud": aid,
+            "ver": "aitp/0.3",
+            "iss": seal_aid,
+            "sub": seal_aid,
+            "aud": seal_aid,
+            "cnf": {"jkt": _jkt(seal_pk)},
+            "iat": 0,
             "grants": ["aitp.attestation"],
-            "ext": {"com.zer07labs.seam": statement},
+            "ext": {
+                "com.zer07labs.seam": statement,
+                SEAL_KEY_CERT_EXT_KEY: cert_member,
+            },
         }
         if exp is not ABSENT:
             payload["exp"] = exp
@@ -270,7 +326,7 @@ def main() -> None:
             ).encode()
         )
         p = _b64(json.dumps(payload, separators=(",", ":")).encode())
-        jws = f"{h}.{p}.{_b64(sk.sign(f'{h}.{p}'.encode()))}"
+        jws = f"{h}.{p}.{_b64(seal.sign(f'{h}.{p}'.encode()))}"
         cases.append(
             {
                 "name": name,
@@ -304,8 +360,13 @@ def main() -> None:
                     "coerces to 1 in Python and JS, so at a realistic clock it reads as expired and a",
                     "vector written that way would assert agreement that was accidental. At 0 a wrongly",
                     "typed truthy `exp` is ACCEPTED unless the type rule is real.",
+                    "",
+                    "SEAL-KEY SHAPE (seam-runtime #2031, S-4): each token is signed by a seal key that",
+                    "`issuer_aid` certifies; `iss == sub == aud == seal_aid`, `iat = 0`, and `ext` carries",
+                    "the certificate member beside the statement. Verify against `issuer_aid`, the pin.",
                 ],
                 "issuer_aid": aid,
+                "seal_aid": seal_aid,
                 "commitment": COMMITMENT,
                 "cases": cases,
             },

@@ -728,10 +728,211 @@ object SeamCrypto {
         return sha256(h.toByteArray()).joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
+    // ── The seal key (seam-runtime #2031, deep-cleanup S-4, runtime 0.123.0) ──────────────────
+    //
+    // Normative: seam-runtime docs/specs/seam-commitment-digest.v6.md §Seal key. The pinned issuer no
+    // longer signs commitment TCTs: it certifies a short-lived in-memory seal key, and the TCT is a
+    // self-attestation by that key carrying the certificate in a second ext member. Pinned by
+    // conformance/seal_key_cert_vector.json. No backward compatibility: an issuer-signed TCT is refused.
+
+    /** The TCT `ext` member that carries the seal-key certificate. */
+    const val SEAL_KEY_CERT_EXT_KEY = "com.zer07labs.seam.seal-key-cert"
+
+    /** Domain tag, the certificate's first frame. */
+    const val SEAL_KEY_CERT_DOMAIN = "seam.seal-key-cert.v1"
+
+    /** The widest certificate window accepted, `not_after - not_before`: 1 h plus 30 s skew. */
+    const val SEAL_KEY_MAX_WINDOW_MS = 3_630_000L
+
+    private const val SEAL_KEY_ISSUER_AID_MAX = 62
+
+    /** A parsed seal-key certificate. [notBeforeMs]/[notAfterMs] are within [0, Long.MAX_VALUE]. */
+    class SealKeyCert(val sealPk: ByteArray, val notBeforeMs: Long, val notAfterMs: Long, val issuerAid: String) {
+        /** The seal key's untagged `aid:pubkey:` AID: the commitment TCT's `iss == sub == aud`. */
+        val sealAid: String get() = "aid:pubkey:" + b64urlNoPad(sealPk)
+
+        /** `notBeforeMs <= iat*1000 <= notAfterMs`, no grace; an overflowing `iat` is outside. */
+        fun covers(iatSecs: Long): Boolean {
+            val t = try {
+                Math.multiplyExact(iatSecs, 1000L)
+            } catch (e: ArithmeticException) {
+                return false
+            }
+            return notBeforeMs <= t && t <= notAfterMs
+        }
+    }
+
+    /** `framed(x)`: `u32le(len) ‖ x` — the runtime's chain framing primitive. */
+    private fun framedPut(out: ByteArrayOutputStream, b: ByteArray) {
+        out.write(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(b.size).array())
+        out.write(b)
+    }
+
     /**
-     * Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only:
-     * the EdDSA JWS (`typ` `aitp-tct+jwt`) against the pinned issuer AID's key; the self-issued
-     * claims (`iss == sub == aud == issuerAid`); `exp`; that `grants` is exactly
+     * `framed("seam.seal-key-cert.v1") ‖ framed(seal_pk) ‖ le64(not_before_ms) ‖ le64(not_after_ms) ‖
+     * framed(issuer_aid)` — the bytes the issuer signs SHA-256 of.
+     */
+    fun sealKeyCertPreimage(sealPk: ByteArray, notBeforeMs: Long, notAfterMs: Long, issuerAid: String): ByteArray {
+        val out = ByteArrayOutputStream()
+        framedPut(out, SEAL_KEY_CERT_DOMAIN.toByteArray(Charsets.US_ASCII))
+        framedPut(out, sealPk)
+        out.write(ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN).putLong(notBeforeMs).putLong(notAfterMs).array())
+        framedPut(out, issuerAid.toByteArray(Charsets.UTF_8))
+        return out.toByteArray()
+    }
+
+    private fun framedGet(b: ByteArray, pos: IntArray): ByteArray? {
+        if (b.size - pos[0] < 4) return null
+        val len = Integer.toUnsignedLong(ByteBuffer.wrap(b, pos[0], 4).order(ByteOrder.LITTLE_ENDIAN).int)
+        if (len > (b.size - pos[0] - 4).toLong()) return null
+        val out = b.copyOfRange(pos[0] + 4, pos[0] + 4 + len.toInt())
+        pos[0] += 4 + len.toInt()
+        return out
+    }
+
+    /**
+     * Parse a certificate; `null` on a wrong tag, a key that is not 32 bytes, a short read, trailing
+     * bytes, an inverted window, a time beyond `Long.MAX_VALUE` ms, a window wider than
+     * [SEAL_KEY_MAX_WINDOW_MS], or an issuer AID that is longer than 62 bytes or not UTF-8.
+     */
+    fun parseSealKeyCert(b: ByteArray): SealKeyCert? {
+        val pos = intArrayOf(0)
+        val tag = framedGet(b, pos) ?: return null
+        if (!tag.contentEquals(SEAL_KEY_CERT_DOMAIN.toByteArray(Charsets.US_ASCII))) return null
+        val pk = framedGet(b, pos) ?: return null
+        if (pk.size != 32) return null
+        if (b.size - pos[0] < 16) return null
+        val le = ByteBuffer.wrap(b, pos[0], 16).order(ByteOrder.LITTLE_ENDIAN)
+        val nb = le.long
+        val na = le.long
+        pos[0] += 16
+        val aid = framedGet(b, pos) ?: return null
+        if (pos[0] != b.size || aid.size > SEAL_KEY_ISSUER_AID_MAX) return null
+        // Unsigned u64 in a signed Long: a negative value is > i64::MAX, refused.
+        if (nb < 0 || na < 0 || nb > na || na - nb > SEAL_KEY_MAX_WINDOW_MS) return null
+        val issuer = try {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(aid))
+                .toString()
+        } catch (e: java.nio.charset.CharacterCodingException) {
+            return null
+        }
+        return SealKeyCert(pk, nb, na, issuer)
+    }
+
+    /**
+     * Verify a certificate under the PINNED issuer AID: it must name exactly that AID, and the issuer's
+     * strict Ed25519 signature over `sha256(cert)` must hold. `null` on any failure.
+     */
+    fun verifySealKeyCert(pinnedIssuerAid: String, cert: ByteArray, sig: ByteArray): SealKeyCert? =
+        try {
+            val f = parseSealKeyCert(cert)
+            if (f == null || pinnedIssuerAid != f.issuerAid) {
+                null
+            } else {
+                val pub = aidToPubkey(pinnedIssuerAid)
+                if (pub.size != 32 || sig.size != 64 || !ed25519VerifyStrict(pub, sha256(cert), sig)) null else f
+            }
+        } catch (e: RuntimeException) {
+            null
+        }
+
+    /**
+     * The 32-byte encodings that decode to an Ed25519 point of small order (the 8-torsion), canonical
+     * and not. ed25519-dalek's `verify_strict` refuses a small-order public key and a small-order `R`;
+     * Bouncy Castle checks neither, so this list closes the gap. Every other strictness (canonical `S`,
+     * `R` compared by encoding) is Bouncy Castle's own.
+     */
+    private val SMALL_ORDER_ENCODINGS = setOf(
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000080",
+        "0100000000000000000000000000000000000000000000000000000000000000",
+        "0100000000000000000000000000000000000000000000000000000000000080",
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    )
+
+    private fun smallOrder(enc32: ByteArray): Boolean =
+        enc32.joinToString("") { "%02x".format(it.toInt() and 0xff) } in SMALL_ORDER_ENCODINGS
+
+    /** Ed25519 verify with dalek `verify_strict`'s extra refusals (small-order key or R). */
+    internal fun ed25519VerifyStrict(pub: ByteArray, msg: ByteArray, sig: ByteArray): Boolean {
+        if (pub.size != 32 || sig.size != 64) return false
+        if (smallOrder(pub) || smallOrder(sig.copyOfRange(0, 32))) return false
+        return ed25519Verify(pub, msg, sig)
+    }
+
+    /**
+     * Strict unpadded base64url: alphabet `[A-Za-z0-9_-]` only, no `=`, a length that is not 1 mod 4,
+     * and canonical trailing bits (re-encoding the bytes gives the input back). `null` when refused.
+     */
+    internal fun b64urlDecodeStrict(s: String): ByteArray? {
+        if (s.length % 4 == 1) return null
+        if (!s.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it == '-' || it == '_' }) return null
+        val b = try {
+            b64urlDecode(s)
+        } catch (e: IllegalArgumentException) {
+            return null
+        }
+        return if (b64urlNoPad(b) == s) b else null
+    }
+
+    /** RFC 7638 thumbprint of an Ed25519 key: the AITP `cnf.jkt`. */
+    internal fun ed25519Jkt(pk: ByteArray): String {
+        val jwk = "{\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":\"" + b64urlNoPad(pk) + "\"}"
+        return b64urlNoPad(sha256(jwk.toByteArray(Charsets.US_ASCII)))
+    }
+
+    private val JSON_INTEGER = Regex("-?(0|[1-9][0-9]*)")
+
+    /** A top-level JSON integer member, or `null` if absent or not a plain integer literal. */
+    private fun topLevelInteger(json: String, name: String): Long? =
+        try {
+            JsonReader(StringReader(json)).use { r ->
+                r.strictness = Strictness.STRICT
+                r.beginObject()
+                var out: Long? = null
+                while (r.hasNext()) {
+                    if (r.nextName() != name) {
+                        r.skipValue()
+                        continue
+                    }
+                    if (r.peek() != JsonToken.NUMBER) return null
+                    val lit = r.nextString()
+                    // A JSON integer: no fraction, no exponent (serde refuses 1.0 and 1e3 as an i64).
+                    if (!JSON_INTEGER.matches(lit)) return null
+                    out = lit.toLong()
+                    break
+                }
+                out
+            }
+        } catch (e: IOException) {
+            null
+        } catch (e: RuntimeException) {
+            null
+        }
+
+    /**
+     * Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only.
+     *
+     * **Seal key (seam-runtime #2031, S-4; runtime 0.123.0+).** The TCT is signed by a seal key the
+     * pinned issuer certifies, never by the issuer itself: (1) `ext["com.zer07labs.seam.seal-key-cert"]`
+     * is exactly `{cert, sig}`, strict base64url; (2) the certificate parses ([parseSealKeyCert]), names
+     * exactly `issuerAid`, and the issuer's strict Ed25519 signature over `sha256(cert)` holds; (3) the
+     * JWS verifies under the seal key, `iss == sub == aud ==` the seal AID and `cnf.jkt` is its
+     * thumbprint; (4) `not_before <= iat*1000 <= not_after`, no grace. An issuer-signed TCT (every TCT
+     * before S-4) is refused: no backward compatibility. The checks below are otherwise unchanged:
+     * `exp`; that `grants` is exactly
      * `["aitp.attestation"]`; and that `ext` is exactly
      * `{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":<hex>}}` with the hex equal
      * to the recomputed `seam-commitment-digest:v5` of this exact commitment (the decided content, the
@@ -748,30 +949,44 @@ object SeamCrypto {
         return try {
             val parts = tctJws.split(".")
             if (parts.size != 3) return false
-            val pub = try {
-                aidToPubkey(issuerAid)
-            } catch (e: RuntimeException) {
-                return false
-            }
-            if (pub.size != 32) return false
-            if (!ed25519Verify(pub, "${parts[0]}.${parts[1]}".toByteArray(Charsets.US_ASCII), b64urlDecode(parts[2]))) {
-                return false
-            }
             val headerJson = String(b64urlDecode(parts[0]), Charsets.UTF_8)
             val payloadJson = String(b64urlDecode(parts[1]), Charsets.UTF_8)
             if (hasDuplicateKey(headerJson) || hasDuplicateKey(payloadJson)) return false
             val header: Map<String, Any?> = gson.fromJson(headerJson, mapType) ?: return false
             val payload: Map<String, Any?> = gson.fromJson(payloadJson, mapType) ?: return false
-            if (header["alg"] != "EdDSA" || header["typ"] != "aitp-tct+jwt") return false
-            if (!(payload["iss"] == issuerAid && payload["sub"] == issuerAid && payload["aud"] == issuerAid)) {
+            // S-4 (1) + (2): peek the certificate member from the not-yet-verified payload and verify
+            // it under the PINNED issuer; it names the seal key that must have signed the token.
+            val peekExt = payload["ext"] as? Map<*, *> ?: return false
+            val member = peekExt[SEAL_KEY_CERT_EXT_KEY] as? Map<*, *> ?: return false
+            if (member.size != 2) return false
+            val certB64 = member["cert"] as? String ?: return false
+            val sigB64 = member["sig"] as? String ?: return false
+            val certBytes = b64urlDecodeStrict(certB64) ?: return false
+            val certSig = b64urlDecodeStrict(sigB64) ?: return false
+            val cert = verifySealKeyCert(issuerAid, certBytes, certSig) ?: return false
+            val sealAid = cert.sealAid
+            // (3) the token is a self-attestation by the certified seal key.
+            if (!ed25519Verify(cert.sealPk, "${parts[0]}.${parts[1]}".toByteArray(Charsets.US_ASCII), b64urlDecode(parts[2]))) {
                 return false
             }
+            if (header["alg"] != "EdDSA" || header["typ"] != "aitp-tct+jwt") return false
+            if (!(payload["iss"] == sealAid && payload["sub"] == sealAid && payload["aud"] == sealAid)) {
+                return false
+            }
+            val cnf = payload["cnf"] as? Map<*, *> ?: return false
+            if (cnf["jkt"] != ed25519Jkt(cert.sealPk)) return false
+            val verifiedExt = payload["ext"] as? Map<*, *> ?: return false
+            if (verifiedExt[SEAL_KEY_CERT_EXT_KEY] != member) return false
+            // (4) iat is a JSON integer inside the certificate window, no grace.
+            val iat = topLevelInteger(payloadJson, "iat") ?: return false
+            if (!cert.covers(iat)) return false
             val exp = payload["exp"] as? Number ?: return false
             if (nowS >= exp.toLong()) return false // RFC 7519: reject at/after expiry
             val grants = payload["grants"] as? List<*> ?: return false
             if (grants.size != 1 || grants[0] != ATTESTATION_GRANT) return false
+            // ext is exactly the statement and the certificate member, nothing else.
             val ext = payload["ext"] as? Map<*, *> ?: return false
-            if (ext.size != 1) return false
+            if (ext.size != 2 || !ext.containsKey(SEAL_KEY_CERT_EXT_KEY)) return false
             // Flows W2: the statement's exact member set selects v5 or v6 (the duplicate-member guard
             // ran over the raw payload above, so it covers every depth of ext). Recompute under that
             // version only: never both, never a fallback.

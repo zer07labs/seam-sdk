@@ -202,27 +202,14 @@ def _issuer() -> str:
 
 
 def _tct(issuer: str, digest: str) -> str:
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    """A seal-key TCT (seam-runtime #2031, S-4) certified by ``_SEED`` under ``issuer``."""
+    from seal_key_tokens import mint
 
-    h = json.dumps({"alg": "EdDSA", "typ": "aitp-tct+jwt"}).encode()
-    p = json.dumps(
-        {
-            "iss": issuer,
-            "sub": issuer,
-            "aud": issuer,
-            "exp": 4_000_000_000,
-            "grants": ["aitp.attestation"],
-            "ext": {
-                "com.zer07labs.seam": {
-                    "type": "seam:commitment",
-                    "commitment_digest": digest,
-                }
-            },
-        }
-    ).encode()
-    si = f"{_b64(h)}.{_b64(p)}"
-    sig = Ed25519PrivateKey.from_private_bytes(_SEED).sign(si.encode())
-    return f"{si}.{_b64(sig)}"
+    return mint(
+        _SEED,
+        {"type": "seam:commitment", "commitment_digest": digest},
+        issuer_aid=issuer,
+    )
 
 
 def _selection_commitment(block=None, action=None) -> dict:

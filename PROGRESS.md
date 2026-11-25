@@ -156,7 +156,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 > checkpoint trail lives in git history (`git log -p -- PROGRESS.md`); nothing here carries over.
 >
 > **Done in Phase 1 (2026-08-31).** Delivery was verified against this tree — `record_digest_v3` (since the
-> protocol pass, `record_digest_v4`) at `python/seam_sdk/crypto.py:943`, `ts/src/crypto.ts:1490`, `verify/src/verify.rs:648`; the 6a/6b
+> protocol pass, `record_digest_v4`) at `python/seam_sdk/crypto.py:1122`, `ts/src/crypto.ts:1666`, `verify/src/verify.rs:648`; the 6a/6b
 > streamed arms live at `python/seam_sdk/admin.py:141` and `ts/src/admin.ts:162`; KATs at
 > `conformance/vectors.json:70` — and the plan is now `plans/archive/record-digest-v3.md`.
 > `plans/authorize-single-canonicalization.md` turned out to be delivered too (issue #60, closed
@@ -273,7 +273,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   `python/pyproject.toml` and `ts/package.json` (version stamps) — no line number cited anywhere in
   the plan moved. Merge commit `68e92c2`; branch `feat/publish-integrity-and-tracking-state`.
 - **Delivery verified against code, not status tables** (the whole point of the phase):
-  `record_digest_v3` at `python/seam_sdk/crypto.py:868`, `ts/src/crypto.ts:1490`,
+  `record_digest_v3` at `python/seam_sdk/crypto.py:868`, `ts/src/crypto.ts:1666`,
   `verify/src/verify.rs:648`; streamed v3 arms at `python/seam_sdk/admin.py:141` (with `:107`
   refusing `schema_version > 3`) and `ts/src/admin.ts:162` (with `:109` the matching ceiling
   refusal); KATs at `conformance/vectors.json:70`;
@@ -4084,7 +4084,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2447`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2481`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4599,7 +4599,7 @@ green before any code changed.
      unknown-event-tag audit (relayed to seam-runtime, closed): no SDK verifier re-serializes a
      whole decoded `seam.event.v1` message to compute a digest/chain hash — Rust
      (`verify/src/wire.rs:16-80,161-211`, `verify/src/verify.rs:559-585`), Python
-     (`python/seam_sdk/crypto.py:648-685,695`), and TypeScript (`ts/src/crypto.ts:1490`) all
+     (`python/seam_sdk/crypto.py:648-685,695`), and TypeScript (`ts/src/crypto.ts:1666`) all
      hand-build their preimage from an explicit, spec-transcribed field list. An unsealed,
      non-preimage field just flows through harmlessly, same conclusion as that audit reached for
      the sealed-vs-unsealed question in general.

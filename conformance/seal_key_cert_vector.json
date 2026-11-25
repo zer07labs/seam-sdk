@@ -1,0 +1,19 @@
+{
+  "spec": "docs/specs/seam-commitment-digest.v6.md §Seal key",
+  "generator": "crates/seam-trust-aitp/tests/seal_key_cert_vector.rs (SEAM_REGEN_VECTORS=1)",
+  "domain": "seam.seal-key-cert.v1",
+  "issuer_seed_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+  "issuer_aid": "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+  "seal_seed_hex": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+  "seal_pk_hex": "8146640f02493af4fbc54fe33388e75dc2c937ae0b7727cc2b2afb1b75199a3e",
+  "seal_aid": "aid:pubkey:gUZkDwJJOvT7xU_jM4jnXcLJN64LdyfMKyr7G3UZmj4",
+  "not_before_ms": 1699999970000,
+  "not_after_ms": 1700000870000,
+  "cert_hex": "150000007365616d2e7365616c2d6b65792d636572742e7631200000008146640f02493af4fbc54fe33388e75dc2c937ae0b7727cc2b2afb1b75199a3ed0f2e4cf8b01000070aef2cf8b010000360000006169643a7075626b65793a366b7073592d4b635567712d39564237457937462d5a56486471362d766e75535168377161525247306977",
+  "cert_digest_hex": "8d50c2775da9fca7035a4d8c7c11c5e1f4f59b00234983b71267fd02e66a1e5f",
+  "sig_hex": "854c0805bb141c4e7b83620c939c3d1ccc1dd4946241dd76828539afa1e30c12783dcf251c2ee589dea71d3b5803153761b0f81618f07ce365a405970f9be709",
+  "ext_member": {
+    "cert": "FQAAAHNlYW0uc2VhbC1rZXktY2VydC52MSAAAACBRmQPAkk69PvFT-MziOddwsk3rgt3J8wrKvsbdRmaPtDy5M-LAQAAcK7yz4sBAAA2AAAAYWlkOnB1YmtleTo2a3BzWS1LY1VncS05VkI3RXk3Ri1aVkhkcTYtdm51U1FoN3FhUlJHMGl3",
+    "sig": "hUwIBbsUHE57g2IMk5w9HMwd1JRiQd12goU5r6HjDBJ4Pc8lHC7lid6nHTtYAxU3YbD4FhjwfONlpAWXD5vnCQ"
+  }
+}

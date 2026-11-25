@@ -3,9 +3,6 @@ package com.zer07labs.seam
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.io.File
-import java.util.Base64
-import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
-import org.bouncycastle.crypto.signers.Ed25519Signer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -349,30 +346,30 @@ class CommitmentDigestV5Test {
 
     private val tctIssuer get() = tct["issuer_aid"] as String
 
-    private fun b64(b: ByteArray) = Base64.getUrlEncoder().withoutPadding().encodeToString(b)
 
-    private fun sign(payloadJson: String): String {
+    private val tctSeed: ByteArray get() {
         val seedHex = tctInputs["issuer_seed_hex"] as String
-        val seed = ByteArray(seedHex.length / 2) { seedHex.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
-        val input = b64("""{"alg":"EdDSA","typ":"aitp-tct+jwt"}""".toByteArray()) + "." + b64(payloadJson.toByteArray())
-        val msg = input.toByteArray(Charsets.US_ASCII)
-        val s = Ed25519Signer()
-        s.init(true, Ed25519PrivateKeyParameters(seed, 0))
-        s.update(msg, 0, msg.size)
-        return input + "." + b64(s.generateSignature())
+        return ByteArray(seedHex.length / 2) { seedHex.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
     }
+
+    /** S-4: the token is signed by the test seal key; the tct block's issuer seed only certifies it. */
+    private fun sign(payloadJson: String): String = SealKeyTokens.jws(SealKeyTokens.SEAL_SEED, payloadJson)
+
+    /** `ext`: the statement plus the seal-key certificate member, under the tct block's issuer. */
+    private fun ext(statement: Any?): MutableMap<String, Any?> = linkedMapOf(
+        SeamCrypto.COMMITMENT_EXT_NAMESPACE to statement,
+        SeamCrypto.SEAL_KEY_CERT_EXT_KEY to SealKeyTokens.member(tctSeed, tctIssuer),
+    )
 
     private fun statement(digest: String) =
         mutableMapOf<String, Any?>("type" to SeamCrypto.COMMITMENT_STATEMENT, "commitment_digest" to digest)
 
-    private fun payload(digest: String) = mutableMapOf<String, Any?>(
-        "iss" to tctIssuer,
-        "sub" to tctIssuer,
-        "aud" to tctIssuer,
-        "exp" to 4_853_600_000L,
-        "grants" to listOf(SeamCrypto.ATTESTATION_GRANT),
-        "ext" to mapOf(SeamCrypto.COMMITMENT_EXT_NAMESPACE to statement(digest)),
-    )
+    /** The seal-key payload: iss/sub/aud are the SEAL AID; the pinned issuer only certifies. */
+    private fun payload(digest: String) = SealKeyTokens.claims(SealKeyTokens.SEAL_SEED, SealKeyTokens.IAT).apply {
+        this["exp"] = 4_853_600_000L
+        this["grants"] = listOf(SeamCrypto.ATTESTATION_GRANT)
+        this["ext"] = ext(statement(digest))
+    }
 
     @Test
     fun wellFormedSelfAttestationVerifies() {
@@ -397,11 +394,11 @@ class CommitmentDigestV5Test {
             "iss != aud" to { p -> p["aud"] = other },
             "sub != iss" to { p -> p["sub"] = other },
             "ext absent" to { p -> p.remove("ext") },
-            "extra ext key" to { p -> p["ext"] = mapOf(ns to statement(digest), "com.example" to emptyMap<String, Any>()) },
-            "wrong type" to { p -> p["ext"] = mapOf(ns to statement(digest).also { it["type"] = "seam:other" }) },
-            "extra statement field" to { p -> p["ext"] = mapOf(ns to statement(digest).also { it["x"] = "y" }) },
-            "uppercase digest" to { p -> p["ext"] = mapOf(ns to statement(digest.uppercase())) },
-            "wrong digest" to { p -> p["ext"] = mapOf(ns to statement("0".repeat(64))) },
+            "extra ext key" to { p -> p["ext"] = ext(statement(digest)).also { it["com.example"] = emptyMap<String, Any>() } },
+            "wrong type" to { p -> p["ext"] = ext(statement(digest).also { it["type"] = "seam:other" }) },
+            "extra statement field" to { p -> p["ext"] = ext(statement(digest).also { it["x"] = "y" }) },
+            "uppercase digest" to { p -> p["ext"] = ext(statement(digest.uppercase())) },
+            "wrong digest" to { p -> p["ext"] = ext(statement("0".repeat(64))) },
         )
         for ((why, mutate) in mutations) {
             val p = payload(digest)
@@ -419,17 +416,21 @@ class CommitmentDigestV5Test {
         val c = tctCommitment
         val digest = SeamCrypto.seamCommitmentDigest(c)
         val iss = tctIssuer
-        val head = """{"iss":"$iss","sub":"$iss","aud":"$iss","exp":4853600000,"grants":["aitp.attestation"],"""
-        val good = """"ext":{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"$digest"}}}"""
+        val seal = SealKeyTokens.sealAid(SealKeyTokens.SEAL_SEED)
+        val jkt = SealKeyTokens.jkt(SealKeyTokens.pub(SealKeyTokens.SEAL_SEED))
+        val cert = ""","com.zer07labs.seam.seal-key-cert":""" + Gson().toJson(SealKeyTokens.member(tctSeed, iss))
+        val head = """{"iss":"$seal","sub":"$seal","aud":"$seal","cnf":{"jkt":"$jkt"},"iat":${SealKeyTokens.IAT},""" +
+            """"exp":4853600000,"grants":["aitp.attestation"],"""
+        val good = """"ext":{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"$digest"}$cert}}"""
         assertTrue(SeamCrypto.verifyTct(iss, sign(head + good), c, TCT_NOW_S), "the hand-written control payload must verify")
         val zeros = "0".repeat(64)
         val decoy = """{"type":"seam:commitment","commitment_digest":"$zeros"}"""
         val bodies = mapOf(
             "duplicate namespace key" to
-                """"ext":{"com.zer07labs.seam":$decoy,"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"$digest"}}}""",
+                """"ext":{"com.zer07labs.seam":$decoy,"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"$digest"}$cert}}""",
             "duplicate statement key" to
-                """"ext":{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"$zeros","commitment_digest":"$digest"}}}""",
-            "duplicate ext" to """"ext":{"com.zer07labs.seam":$decoy},$good""",
+                """"ext":{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"$zeros","commitment_digest":"$digest"}$cert}}""",
+            "duplicate ext" to """"ext":{"com.zer07labs.seam":$decoy$cert},$good""",
         )
         for ((why, body) in bodies) {
             assertFalse(SeamCrypto.verifyTct(iss, sign(head + body), c, TCT_NOW_S), "$why must be refused")

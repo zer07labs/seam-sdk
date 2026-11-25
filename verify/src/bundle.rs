@@ -793,19 +793,29 @@ pub fn verify_bundle(dir: &Path, pinned: &str, now_secs: u64) -> Result<BundleRe
                     .into(),
             );
         } else {
-            commitment::verify_tct(pinned, &c.signed_artifact, &digest, now_secs).map_err(|e| {
+            // S-4 (seam-runtime #2031): the TCT's self-asserted `iat` must be the chained link's
+            // `sealed_at` (record-digest bound), so a token backdated with a leaked seal key does not
+            // verify here (evidence-bundle.v1 step 4, commitment-digest v6 §Seal key step 6).
+            commitment::verify_tct_sealed_at(
+                pinned,
+                &c.signed_artifact,
+                &digest,
+                now_secs,
+                payload.sealed_at,
+            )
+            .map_err(|e| {
                 failed(
                     4,
                     format!(
                         "commitment.json: the TCT does not verify against the pinned issuer for this \
-                         Commitment: {e}"
+                         Commitment at the chained seal time: {e}"
                     ),
                 )
             })?;
             tct_verified = Some(true);
             checks.push(
-                "the Commitment's TCT verifies against the pinned issuer and binds its \
-                 seam-commitment-digest:v5"
+                "the Commitment's TCT verifies against the pinned issuer's certified seal key, issued \
+                 at the chained seal time, and binds its seam-commitment-digest:v5"
                     .into(),
             );
         }

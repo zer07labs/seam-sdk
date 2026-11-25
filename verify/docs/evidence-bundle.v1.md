@@ -1,4 +1,11 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ e790cb5 on runtime main (refreshed 2026-11-24).
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ a61adee tracking dc3/s4-seal-key-v2 (refreshed 2026-11-25).
+     seam-runtime deep-cleanup S-4 (runtime#2031, the 0.123.0 train), not yet on main. Movement since e790cb5: §Verifying
+     step 4 only. The TCT is signed by a seal key the pinned issuer certifies (commitment-digest v6 §Seal key):
+     the certificate in its `ext` verifies under the pinned AID, the TCT under the seal AID it names, its `iat`
+     lies in the certificate window and must equal `floor(sealed_at / 1000)` of the chained payload. No
+     manifest, digest or member-format change.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ e790cb5 on runtime main (refreshed 2026-11-24).
      seam-runtime deep-cleanup S9-O7 (runtime#1967). Movement since 59cae17: §Verifying step 2 drops
      `--strict` (the flag is gone; an unchained non-advisory event fails every run) and names that check. No
      manifest, digest or member-format change (D-048).
@@ -271,7 +278,12 @@ failure:
 3. **Inclusion.** The window holds exactly one chained `DECISION_SEALED` for `decision_id`, in
    `tenant`, and its `checksum` is `inclusion.record_checksum`.
 4. **Commitment.** If `signed_artifact` is present, the TCT verifies against the pinned AID and its
-   grant carries this Commitment's digest. The Commitment's `supersedes` equals the chained payload's.
+   grant carries this Commitment's digest. Since S-4 the TCT is signed by a seal key the pinned issuer
+   certifies: the certificate in its `ext` verifies under the pinned AID, the TCT verifies under the seal
+   AID it names, and its `iat` lies in the certificate window. Its `iat` must also equal
+   `floor(sealed_at / 1000)` for the **chained** payload's `sealed_at` (step 6 of
+   [commitment-digest v6 §Seal key](seam-commitment-digest.v6.md#seal-key)): `iat` is self-asserted, so
+   this is what stops a token backdated with a leaked seal key. The Commitment's `supersedes` equals the chained payload's.
    (Informative, not checked by `seam-verify`: an auditor holding the record can recompute the TCT
    `jti` — `id` = `decision_id`, the record id, not `Commitment.id`; `seal_ms` = `sealed_at` in ms,
    never the TCT's `iat` — see [authorize.v1, *TCT `jti`*](authorize.v1.md#admission-checks-p8-w3-a1a4-p9-w3-a5).

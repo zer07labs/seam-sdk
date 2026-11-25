@@ -11,8 +11,9 @@ Pinned against `conformance/vectors.json` (generated from the Rust reference):
 
 - **`admission`** — the pinned-key admission presentation (Ed25519 proof-of-possession, AID
   derivation, deterministic message id `derivedUuid("seam-pop-mid-v1", nonce)`).
-- **`tct`** — independent verification of a sealed commitment's rooted TCT (EdDSA JWS, self-issued
-  claims, truncated-seconds `exp`, the single `aitp.attestation` grant, and the
+- **`tct`** — independent verification of a sealed commitment's rooted TCT (EdDSA JWS signed by a seal
+  key the pinned issuer certifies in `ext["com.zer07labs.seam.seal-key-cert"]`, runtime 0.123.0+; claims
+  self-issued by that seal key, truncated-seconds `exp`, the single `aitp.attestation` grant, and the
   `ext["com.zer07labs.seam"]` statement binding `seam-commitment-digest:v5` over the committer, the
   governing document digest (field 11) and the sealed explanation, `seam-explanation-digest:v2` with each vote/ballot/objection's voter record).
 
