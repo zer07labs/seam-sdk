@@ -465,12 +465,12 @@ directory, produced by `seam-ops export-evidence --decision <id> --bundle <DIR>`
 | `context.json`, `policy.json` | opt-in disclosures of what the decision consumed and which rules gated it |
 
 ```
-EVIDENCE BUNDLE VERIFIED (seam-evidence-bundle.v1)
+EVIDENCE BUNDLE VERIFIED (seam-evidence-bundle.v2)
   decision  : dec:d1
   tenant    : design-partner
   head      : f8c1…
   selection : not a selection decision
-  - manifest: seam-evidence-bundle.v1, issuer is the pinned AID, every listed file matches its SHA-256 and size
+  - manifest: seam-evidence-bundle.v2, issuer is the pinned AID, every listed file matches its SHA-256 and size
   - window authenticated from the issuer-signed anchor (base_len 2): 4 link(s), 1 covering attestation(s)
   - decision 'dec:d1' is a chained link of tenant 'design-partner' inside the authenticated window
   - 2 voter verification record(s) re-verify offline (seam-voter-pop-v1), all addressed to the pinned issuer from this decision's session
@@ -483,14 +483,17 @@ EVIDENCE BUNDLE VERIFIED (seam-evidence-bundle.v1)
 
 The six steps run in the spec's order and the first failure refuses with exit 2, naming the step:
 
-1. **Manifest** — `format` is `seam-evidence-bundle.v1` (any other is refused), `issuer.aid` is the AID
+1. **Manifest** — `format` is `seam-evidence-bundle.v2` (any other is refused), `issuer.aid` is the AID
    **you** pinned, every listed file exists with its listed SHA-256 and size, `events.jsonl` and
    `anchor.json` are listed, `commitment.json`/`binding.json` come as a pair, and `disclosed` agrees with
    `files`. A listed member that is missing is a refusal, not an IO error.
 2. **Chain** — the window, through exactly the code `chain events.jsonl --issuer <AID> --from-anchor
    anchor.json` runs: the anchor's signature, every link, every attestation, a covering one.
 3. **Inclusion** — exactly one chained `DECISION_SEALED` for the manifest's decision, in its tenant, whose
-   checksum is `inclusion.record_checksum`.
+   checksum is `inclusion.record_checksum`. S-3 (seam-runtime#2039): the manifest's `record_digest`,
+   `leaf_index`, `leaf_count` and `inclusion_path` are the link's own and fold to the entry its checksum
+   names (a pre-S-3 link: index 0, count 0, no path, the digest itself), and `chain_index` /
+   `batch_boundary` put every window link of that chain on its side of the chain's S-3 history boundary.
 4. **Commitment** — first the **voters** (seam-runtime#1687, D-045): every `vote`, `ballot` and
    `objection` carries a sealed voter verification record and no `evaluation` does; every record is
    addressed to the pinned issuer (compared by key); all come from one `(tenant, namespace, session,

@@ -1,5 +1,5 @@
 {
-  "format": "seam-evidence-bundle.v1",
+  "format": "seam-evidence-bundle.v2",
   "scope": "decision",
   "decision_id": "dec:design-partner:d3-allocated-000000000",
   "tenant": "design-partner",
@@ -12,6 +12,12 @@
   "inclusion": {
     "decision_offset": 9,
     "record_checksum": "CpHATNUqnI72xWHUr5NViFUBrSGPKB4o4GT9iPNfUOY=",
+    "record_digest": "6oxrh0vY/btlTemejcg3Tm+3yUwA/q/VB4H882XheM4=",
+    "leaf_index": 0,
+    "leaf_count": 0,
+    "inclusion_path": [],
+    "chain_index": 6,
+    "batch_boundary": null,
     "anchor_offset": 7,
     "anchor_attested_len": 5,
     "window_events": 3,
