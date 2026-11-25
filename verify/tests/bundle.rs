@@ -1,4 +1,26 @@
-//! `seam-verify bundle` against **real** `seam-evidence-bundle.v1` directories.
+//! `seam-verify bundle` against **real** `seam-evidence-bundle.v2` directories.
+//!
+//! **Moved to `seam-evidence-bundle.v2` for S-3 (seam-runtime#2039 @ `64ec782c4`, Merkle batch sealing with a
+//! per-chain history boundary): only each `manifest.json` changed.** These exports' chains predate S-3, so
+//! every link is pre-S-3 (`leaf_count` 0) and their chains have no boundary. The runtime's v2 exporter
+//! (`crates/seamd/src/evidence.rs`) writes, after `record_checksum`, the decision link's own `record_digest`,
+//! `leaf_index` 0, `leaf_count` 0, `inclusion_path` `[]`, its tenant-chain position `chain_index`
+//! (`anchor_attested_len` + its index among the window's links) and `batch_boundary` `null`; the format tag
+//! became `seam-evidence-bundle.v2`. That is exactly the edit made here, mechanically, to each manifest. A
+//! fresh export is still not an option (see `tests/bundle_seal_key.rs`: the runtime mints commitment v6),
+//! and the manifest is an unsigned index, so the edit forges nothing: step 3 checks every new field against
+//! the chained link. Batched windows are exercised end to end by the runtime's own `seamd` evidence-bundle
+//! tests run against this verifier (`SEAM_SDK_DIR`).
+//!
+//! **`shredded/` is a fresh export** from seam-runtime#2039 @ `eba2f32f8` (0.123.0 merged in), not an edit:
+//! issuer seed 7×32, the same `d0`/anchor/`d1`/`d2`/attestation history as the other fixtures, `d1`'s
+//! DEK destroyed, exported with `disclose_context`. Its chain is S-3 batched (`leaf_count` 1, boundary 0),
+//! so it is the fixture that walks real batch links through `bundle`. It is the only one that can be
+//! re-exported: the other four carry a Commitment, and the runtime now mints `seam-commitment-digest:v6`
+//! TCTs, which this verifier's bundle reader does not read yet (v5 only: `src/bundle.rs` `parse_commitment`,
+//! `commitment::commitment_digest`, `commitment::verify_tct_sealed_at`; DECISIONS.md A-FW2-3). Each
+//! fails a fresh export at step 4 and passes steps 1-3, so they stay the mechanical v2 edits above until
+//! that reader lands.
 //!
 //! **Re-exported for #1711 (commitment digest v5, the seam-sdk 0.88.0 train): every directory below was
 //! rewritten by the runtime's own exporter at seam-runtime@c2817d8d (PR #1727, branch
@@ -162,7 +184,7 @@ fn a_full_runtime_bundle_verifies_every_step() {
     let (code, out) = verify(&fixture("full"), ISSUER);
     assert_eq!(code, VERIFIED, "{out}");
     for want in [
-        "EVIDENCE BUNDLE VERIFIED (seam-evidence-bundle.v1)",
+        "EVIDENCE BUNDLE VERIFIED (seam-evidence-bundle.v2)",
         &format!("decision  : {D1}"),
         "window authenticated from the issuer-signed anchor (base_len 2)",
         "is a chained link of tenant 'design-partner'",
@@ -220,7 +242,7 @@ fn a_shredded_record_verifies_its_link_and_says_why_the_commitment_is_missing() 
     let (code, out) = verify(&fixture("shredded"), ISSUER);
     assert_eq!(code, VERIFIED, "{out}");
     assert!(
-        out.contains("withheld: commitment (the record is crypto-shredded"),
+        out.contains("withheld: commitment (the record is erased"),
         "{out}"
     );
     assert!(!out.contains("TCT"), "{out}");
@@ -319,7 +341,7 @@ fn step_1_manifest_tampers_are_refused() {
             (
                 "unknown format",
                 Box::new(|d: &Path| {
-                    edit_manifest(d, |m| m["format"] = "seam-evidence-bundle.v2".into())
+                    edit_manifest(d, |m| m["format"] = "seam-evidence-bundle.v3".into())
                 }),
                 "a verifier refuses a format it does not know",
             ),
@@ -590,7 +612,7 @@ fn allocated_record_bundle_verifies() {
     let (code, out) = verify(&fixture("allocated"), ISSUER);
     assert_eq!(code, VERIFIED, "{out}");
     for want in [
-        "EVIDENCE BUNDLE VERIFIED (seam-evidence-bundle.v1)",
+        "EVIDENCE BUNDLE VERIFIED (seam-evidence-bundle.v2)",
         &format!("decision  : {D3}"),
         "TCT verifies against the pinned issuer",
         "signed binding ties this Commitment",
@@ -796,6 +818,85 @@ fn step_3_inclusion_tampers_are_refused() {
                 "manifest names another tenant",
                 Box::new(|d: &Path| edit_manifest(d, |m| m["tenant"] = "acme".into())),
                 "the manifest says 'acme'",
+            ),
+        ],
+    );
+}
+
+/// S-3: the inclusion proof is the link's own, and `chain_index` / `batch_boundary` put every window link of
+/// the decision's chain on its side of the history boundary.
+#[test]
+fn step_3_batch_inclusion_tampers_are_refused() {
+    let inc = |k: &'static str, v: serde_json::Value| -> Edit {
+        Box::new(move |d: &Path| edit_manifest(d, |m| m["inclusion"][k] = v.clone()))
+    };
+    assert_refused(
+        "full",
+        vec![
+            (
+                "a claimed batch count",
+                inc("leaf_count", 1.into()),
+                "is not the decision link's own",
+            ),
+            (
+                "a claimed leaf index",
+                inc("leaf_index", 1.into()),
+                "is not the decision link's own",
+            ),
+            (
+                "a claimed path",
+                inc(
+                    "inclusion_path",
+                    serde_json::json!(["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="]),
+                ),
+                "is not the decision link's own",
+            ),
+            (
+                "another record digest",
+                inc(
+                    "record_digest",
+                    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into(),
+                ),
+                "is not the decision link's own",
+            ),
+            (
+                "a boundary moved onto the decision",
+                inc("batch_boundary", 3.into()),
+                "batch_boundary: the link at chain position 3",
+            ),
+            (
+                "a boundary moved below the window",
+                inc("batch_boundary", 0.into()),
+                "batch_boundary: the link at chain position 2",
+            ),
+            (
+                "the boundary dropped",
+                Box::new(|d: &Path| {
+                    edit_manifest(d, |m| {
+                        m["inclusion"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("batch_boundary");
+                    })
+                }),
+                "batch_boundary is missing",
+            ),
+            (
+                "a chain index below the window",
+                inc("chain_index", 0.into()),
+                "chain_index is below the window's start",
+            ),
+            (
+                "no chain index",
+                Box::new(|d: &Path| {
+                    edit_manifest(d, |m| {
+                        m["inclusion"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("chain_index");
+                    })
+                }),
+                "chain_index is missing",
             ),
         ],
     );

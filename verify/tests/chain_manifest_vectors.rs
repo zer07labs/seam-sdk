@@ -1,14 +1,15 @@
-//! `CHAIN_MANIFEST` domain v2 (Flows W5, D-163, seam-runtime#1910) against the runtime's
-//! `conformance/chain/chain_manifest_vectors.json`, copied byte for byte from seam-runtime `fixtures/chain/`
-//! at `a196a6c1`:
+//! `CHAIN_MANIFEST` domain v3 (S-3 history boundary, seam-runtime#2039) and v2 (Flows W5, D-163,
+//! seam-runtime#1910) against the runtime's `conformance/chain/chain_manifest_vectors.json`, copied byte for
+//! byte from seam-runtime `fixtures/chain/` at `64ec782c4`:
 //!
-//! * the `manifest` row decoded from BOTH projections (same event), its signed preimage, signed digest,
+//! * each `manifest` row (v3 `manifest_every_state`, v2 `manifest_v2_before_the_boundary`) decoded from BOTH projections (same event), its signed preimage, signed digest,
 //!   entry digest and Ed25519 signature under the vector's TEST issuer;
 //! * every `manifest_refusal` row refused by its rule name (structure before signature);
 //! * end to end: the manifest appended to the runtime's own tenant chain (`chain_link_vectors.json` row
 //!   `tenant`, whose head is the manifest's `tenant_head`) beside the flow chains it lists — D-163, the
 //!   entry-digest recompute and V7 against real runtime bytes.
 
+use base64::Engine;
 use seam_verify::manifest::{
     check_structure, entry_digest, signed_digest, signed_preimage, verify_signature,
 };
@@ -53,6 +54,7 @@ fn from_fields(f: &Value, signature_hex: &str) -> ChainManifestPb {
                 head: unhex(c["head_hex"].as_str().unwrap()),
                 state: c["state"].as_u64().unwrap() as u32,
                 version: c["version"].as_u64().unwrap() as u32,
+                batch_boundary: c["batch_boundary"].as_u64(),
             })
             .collect(),
         issuer_aid: f["issuer_aid"].as_str().unwrap().into(),
@@ -60,21 +62,31 @@ fn from_fields(f: &Value, signature_hex: &str) -> ChainManifestPb {
         signature: unhex(signature_hex),
         tenant_len: f["tenant_len"].as_u64().unwrap(),
         tenant_head: unhex(f["tenant_head_hex"].as_str().unwrap()),
+        manifest_version: f["manifest_version"].as_u64().unwrap_or(0) as u32,
+        tenant_batch_boundary: f["tenant_batch_boundary"].as_u64(),
     }
 }
 
-fn the_manifest_row(v: &Value) -> &Value {
+fn manifest_row<'a>(v: &'a Value, name: &str) -> &'a Value {
     v["cases"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|c| c["type"] == "manifest")
-        .expect("the vectors carry a manifest row")
+        .find(|c| c["type"] == "manifest" && c["name"] == name)
+        .unwrap_or_else(|| panic!("the vectors carry manifest row {name}"))
 }
 
-/// The vector's manifest event, decoded from both projections.
+/// The v3 manifest row (the runtime writes v3 only).
+fn the_manifest_row(v: &Value) -> &Value {
+    manifest_row(v, "manifest_every_state")
+}
+
+/// The vector's v3 manifest event, decoded from both projections.
 fn manifest_event(v: &Value) -> Event {
-    let row = the_manifest_row(v);
+    event_of(the_manifest_row(v))
+}
+
+fn event_of(row: &Value) -> Event {
     let j = Event::parse(row["event"]["json"].as_str().unwrap()).unwrap();
     let p = Event::parse(row["event"]["pb_b64"].as_str().unwrap()).unwrap();
     assert_eq!(j.bytes, p.bytes, "JSON and pb decode to the same event");
@@ -86,9 +98,21 @@ fn manifest_event(v: &Value) -> Event {
 fn the_manifest_row_matches_byte_for_byte() {
     let v = load("chain_manifest_vectors.json");
     assert_eq!(v["bundle_version"], 2);
-    let row = the_manifest_row(&v);
+    for (name, domain) in [
+        ("manifest_every_state", "seam.audit.chain-manifest.v3"),
+        (
+            "manifest_v2_before_the_boundary",
+            "seam.audit.chain-manifest.v2",
+        ),
+    ] {
+        manifest_row_matches(&v, name, domain);
+    }
+}
+
+fn manifest_row_matches(v: &Value, name: &str, domain: &str) {
+    let row = manifest_row(v, name);
     let out = &row["out"];
-    let e = manifest_event(&v);
+    let e = event_of(row);
     assert_eq!(e.kind, "CHAIN_MANIFEST");
     let m = e.manifest.as_ref().expect("the event carries tag 30");
 
@@ -98,7 +122,9 @@ fn the_manifest_row_matches_byte_for_byte() {
     assert_eq!(m.tenant_len, 3);
 
     assert_eq!(hex(&signed_preimage(m)), out["preimage_hex"]);
-    assert!(signed_preimage(m).starts_with(b"\x1c\0\0\0seam.audit.chain-manifest.v2"));
+    let mut framed = (domain.len() as u32).to_le_bytes().to_vec();
+    framed.extend_from_slice(domain.as_bytes());
+    assert!(signed_preimage(m).starts_with(&framed), "{name}");
     assert_eq!(hex(&signed_digest(m)), out["signed_digest_hex"]);
     assert_eq!(hex(&entry_digest(m)), out["entry_digest_hex"]);
     assert_eq!(e.digest.as_deref(), Some(&entry_digest(m)[..]));
@@ -155,7 +181,7 @@ fn every_refusal_row_refuses_by_its_rule() {
             assert!(err.contains(rule), "{name}: {err}");
         }
     }
-    assert_eq!(n, 5);
+    assert_eq!(n, 8);
 }
 
 /// The runtime's tenant chain (row `tenant`) and the flow chains (rows `flow_*`) the manifest lists,
@@ -164,7 +190,11 @@ fn stream() -> Vec<Event> {
     let links = load("chain_link_vectors.json");
     let mut events: Vec<Event> = Vec::new();
     for row in links["cases"].as_array().unwrap() {
-        if row["type"] != "chain" || row["name"] == "cell" {
+        // The chains the manifest lists (the batch and boundary rows reuse flow_live's key).
+        if row["type"] != "chain"
+            || !["tenant", "flow_sandbox_v1", "flow_sandbox_v2", "flow_live"]
+                .contains(&row["name"].as_str().unwrap())
+        {
             continue;
         }
         for e in row["entries"].as_array().unwrap() {
@@ -211,7 +241,14 @@ fn a_manifest_off_its_signed_tenant_head_fails() {
     assert_eq!(m.kind, "CHAIN_MANIFEST");
     let dropped = events.pop().unwrap();
     m.prev_checksum = dropped.prev_checksum.clone();
-    m.checksum = Some(link(&m.prev_checksum, m.digest.as_ref().unwrap()));
+    let entry = seam_verify::merkle::entry_digest(
+        m.digest.as_ref().unwrap(),
+        m.leaf_index,
+        m.leaf_count,
+        &m.inclusion_path,
+    )
+    .expect("a batch of one");
+    m.checksum = Some(link(&m.prev_checksum, &entry));
     m.chain.as_mut().unwrap().seq -= 1;
     m.seq = dropped.seq;
     events.push(m);
@@ -246,4 +283,65 @@ fn the_payload_binds_to_its_kind_and_its_chain() {
     e.chain = None;
     let err = chain(&[e]).err().unwrap();
     assert!(err.contains("MANIFEST_TENANT_HEAD_MISMATCH"), "{err}");
+}
+
+/// A manifest event moved onto the tenant chain right after the last one, as a batch of one, with its
+/// digest recomputed from its (edited) fields — the walk checks the fields, `--issuer` the signature.
+fn appended(events: &mut Vec<Event>, row: &Value, edit: impl Fn(&mut Value)) {
+    let last = events
+        .iter()
+        .rfind(|e| e.chain.as_ref().unwrap().kind == 1)
+        .unwrap()
+        .clone();
+    let mut j: Value = serde_json::from_str(row["event"]["json"].as_str().unwrap()).unwrap();
+    edit(&mut j);
+    let m = Event::parse(&j.to_string()).unwrap().manifest.unwrap();
+    let digest = entry_digest(&m);
+    let entry =
+        seam_verify::merkle::entry_digest(&digest, 0, 1, &[] as &[Vec<u8>]).expect("batch of one");
+    let prev = last.checksum.clone().unwrap();
+    let b64 = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
+    j["seq"] = (last.seq + 1).into();
+    j["chain"]["seq"] = (last.chain.as_ref().unwrap().seq + 1).into();
+    j["prev_checksum"] = b64(&prev).into();
+    j["digest"] = b64(&digest).into();
+    j["checksum"] = b64(&link(&prev, &entry)).into();
+    j["leaf_index"] = 0.into();
+    j["leaf_count"] = 1.into();
+    events.push(Event::parse(&j.to_string()).unwrap());
+}
+
+/// v2 is verify-only (its row is checked byte for byte above), and a v2 manifest after a v3 one on the
+/// same tenant chain is `MANIFEST_DOWNGRADE`.
+#[test]
+fn a_v2_manifest_after_a_v3_one_is_a_downgrade() {
+    let v = load("chain_manifest_vectors.json");
+    let v2 = manifest_row(&v, "manifest_v2_before_the_boundary");
+    let mut events = stream();
+    appended(&mut events, v2, |j| {
+        j["chain_manifest"]["tenant_len"] = 4.into();
+    });
+    let err = chain_selected(&events).err().unwrap();
+    assert!(err.contains("MANIFEST_DOWNGRADE"), "{err}");
+}
+
+/// A v3 manifest signs the tenant chain's S-3 boundary: a claim the walk does not agree with is
+/// `MANIFEST_BOUNDARY_MISMATCH` (the vectors' tenant chain is batched from genesis, boundary 0).
+#[test]
+fn a_tenant_boundary_the_walk_disagrees_with_is_refused() {
+    let v = load("chain_manifest_vectors.json");
+    for claim in [Value::Null, 2.into()] {
+        let mut events: Vec<Event> = stream()
+            .into_iter()
+            .filter(|e| e.kind != "CHAIN_MANIFEST")
+            .collect();
+        let row = the_manifest_row(&v);
+        appended(&mut events, row, |j| {
+            j["chain_manifest"]["tenant_batch_boundary"] = claim.clone();
+            j["chain_manifest"]["tenant_len"] = 3.into();
+        });
+        // `appended` puts it after the last tenant entry at position 3, where the original sat.
+        let err = chain_selected(&events).err().unwrap();
+        assert!(err.contains("MANIFEST_BOUNDARY_MISMATCH"), "{claim}: {err}");
+    }
 }

@@ -500,3 +500,18 @@ the same refusal through the shared walk.
   `tests/differential.rs` pins both tools to exit 2 on `unchained-tail` and `stripped-last` with no flag.
 * **Vendored doc** `evidence-bundle.v1.md` is re-pinned to the seam-runtime branch carrying the step 2
   wording change (no `--strict`).
+
+## D-049 — S-3 Merkle batch links with a per-chain history boundary (seam-runtime#2039)
+
+**Decision.** The link rule is chosen by the wire shape, exactly as the runtime's `seam-verify`
+(`crates/seam-verify/src/batch.rs` @ `64ec782c4`) chooses it: `leaf_count` 0 is a pre-S-3 link over the event's
+own digest (tags 31 and 33 absent), anything else a member of a Merkle batch whose proof must fold to the entry
+its checksum links. The switch is one-way per chain: a pre-S-3 link after the chain's first batch is
+`PRE_S3_ABOVE_BOUNDARY`. A walk from genesis needs no boundary input; an artifact that states one is held to the
+walk — a v3 `CHAIN_MANIFEST` (`MANIFEST_BOUNDARY_MISMATCH`, per listed chain and for the tenant chain; v2 is
+verify-only, `MANIFEST_DOWNGRADE` after a v3, `MANIFEST_VERSION` for boundary fields off v3) and a
+`seam-evidence-bundle.v2` manifest (`inclusion.chain_index` / `batch_boundary`, every window link on its side).
+
+* **Not a compatibility path.** Existing chains keep their history below the boundary; each side is strict.
+* **Lockstep.** Lands with seam-runtime #2039 (0.124.0 train); the differential and the `seamd`
+  evidence-bundle tests run against this verifier (`SEAM_SDK_DIR`).

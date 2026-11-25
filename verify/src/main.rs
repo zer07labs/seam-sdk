@@ -9,7 +9,7 @@
 //! seam-verify chain <FILE> --issuer <AID>          # + AUTHENTICITY: every issuer-signed head verifies
 //! seam-verify chain <FILE> --issuer <AID> --allow-uncovered  # diagnostic report; never exit 0 over one
 //! seam-verify erasure-cert <FILE> --issuer <AID>   # a GDPR erasure certificate, from the issuer AID alone
-//! seam-verify bundle <DIR> --issuer <AID>          # a seam-evidence-bundle.v1 directory, end to end
+//! seam-verify bundle <DIR> --issuer <AID>          # a seam-evidence-bundle.v2 directory, end to end
 //! ```
 //!
 //! `FILE` is one event per line — the JSON projection or base64 protobuf; `-` reads stdin.
@@ -120,7 +120,7 @@ fn usage() -> ! {
              signature mean anything: a forged certificate verifies perfectly against its own forger.\n\
          \n\
          bundle <DIR> --issuer <AID>\n    \
-             Verify a seam-evidence-bundle.v1 directory (docs/evidence-bundle.v1.md) against the pinned\n    \
+             Verify a seam-evidence-bundle.v2 directory (docs/evidence-bundle.v1.md) against the pinned\n    \
              issuer AID, in the spec's order, refusing at the first failure: (1) the manifest: format,\n    \
              pinned issuer, every listed file's sha256 and size; (2) the window, exactly as `chain\n    \
              events.jsonl --issuer AID --from-anchor anchor.json`; (3) the decision's chained\n    \

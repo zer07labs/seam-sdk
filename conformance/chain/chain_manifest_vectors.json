@@ -4,12 +4,13 @@
   "cases": [
     {
       "event": {
-        "json": "{\"schema_version\":\"seam-event.v1\",\"event_id\":\"cell-a/chain-manifest:3#23\",\"seq\":23,\"occurred_at\":1700000200000,\"tenant\":\"acme\",\"namespace\":\"\",\"classification\":\"Internal\",\"kind\":\"CHAIN_MANIFEST\",\"session_id\":null,\"decision_id\":\"chain-manifest:3\",\"cost_micros\":0,\"prev_checksum\":\"ABtQBo/fYu6ht91VagPu9gCTMzrbn4cHtskAD7Zhdw4=\",\"digest\":\"DDLSivt7/2k+OgX72FSWMgOq1CBOqDGJb3njyqPnog0=\",\"checksum\":\"Yzs9eythFLXq/0QMT4yLcyPp1w393Ro4DX88Pnp6H78=\",\"chain_manifest\":{\"stream_id\":\"cell-a\",\"tenant\":\"acme\",\"governing_doc_sha256\":\"zPwMPGCZZFRZzveIoJgFY3dYq3PRrg3IG4HdOK4FcF0=\",\"governing_generated_at\":1700000050000,\"manifest_at\":1700000200000,\"chains\":[{\"flow_id\":\"flow-b\",\"env\":\"live\",\"len\":7,\"head\":\"T3Yzm1BfjEBOXvtznge6F4AQbLhEFjEX7ZlTpu01XpI=\",\"state\":3,\"version\":0},{\"flow_id\":\"flow-b\",\"env\":\"sandbox\",\"len\":2,\"head\":\"IDPoQ1lVUVmlZAp3LmKbwjAP11HiZC+w1G27SYR4wB8=\",\"state\":4,\"version\":1},{\"flow_id\":\"flow-fraud\",\"env\":\"live\",\"len\":3,\"head\":\"gRDFeShVXKlUmeYxfmfDIL86xiN18Ee7f79bp/zEH+0=\",\"state\":1,\"version\":0},{\"flow_id\":\"flow-fraud\",\"env\":\"sandbox\",\"len\":3,\"head\":\"f2tLoViLkaF4oeZ9erZplCyJxioYdsV0aX6AgH8Qmxg=\",\"state\":2,\"version\":1},{\"flow_id\":\"flow-fraud\",\"env\":\"sandbox\",\"len\":3,\"head\":\"gWsD1QS2bRxbTqa/D21Lm9x3WH3kMShjFWLDyKThkXk=\",\"state\":1,\"version\":2},{\"flow_id\":\"flow-fraud\",\"env\":\"sandbox\",\"len\":0,\"head\":\"c903DOpEKhRDD6h/+H4nPmE6Wg3hCEQNyvDKmPQqiEY=\",\"state\":1,\"version\":3}],\"issuer_aid\":\"aid:pubkey:gUZkDwJJOvT7xU_jM4jnXcLJN64LdyfMKyr7G3UZmj4\",\"digest_schema\":4,\"signature\":\"iMdZO9uOzPPIaAsrHEw/Nd8nKC2L9s/H6XX6VpXnRRIdDpZpDLNwIXmO6DkFj83ZR2/HXVdkmOds1QrGv85ACQ==\",\"tenant_len\":3,\"tenant_head\":\"ABtQBo/fYu6ht91VagPu9gCTMzrbn4cHtskAD7Zhdw4=\"},\"stream_id\":\"cell-a\",\"chain\":{\"flow_id\":\"\",\"env\":\"\",\"seq\":3,\"kind\":1,\"version\":0}}",
-        "pb_b64": "Cg1zZWFtLWV2ZW50LnYxEhpjZWxsLWEvY2hhaW4tbWFuaWZlc3Q6MyMyMxgXIMDqof+8MSoEYWNtZToISW50ZXJuYWxCDkNIQUlOX01BTklGRVNUUhBjaGFpbi1tYW5pZmVzdDozYiAAG1AGj99i7qG33VVqA+72AJMzOtufhwe2yQAPtmF3DpoBIAwy0or7e/9pPjoF+9hUljIDqtQgTqgxiW9548qj56INogEgYzs9eythFLXq/0QMT4yLcyPp1w393Ro4DX88Pnp6H7/aAQZjZWxsLWHqAQQYAyAB8gHEBAoGY2VsbC1hEgRhY21lGiDM/Aw8YJlkVFnO94igmAVjd1irc9GuDcgbgd04rgVwXSDQ1pj/vDEowOqh/7wxMjQKBmZsb3ctYhIEbGl2ZRgHIiBPdjObUF+MQE5e+3OeB7oXgBBsuEQWMRftmVOm7TVekigDMjkKBmZsb3ctYhIHc2FuZGJveBgCIiAgM+hDWVVRWaVkCncuYpvCMA/XUeJkL7DUbbtJhHjAHygEMAEyOAoKZmxvdy1mcmF1ZBIEbGl2ZRgDIiCBEMV5KFVcqVSZ5jF+Z8MgvzrGI3XwR7t/v1un/MQf7SgBMj0KCmZsb3ctZnJhdWQSB3NhbmRib3gYAyIgf2tLoViLkaF4oeZ9erZplCyJxioYdsV0aX6AgH8QmxgoAjABMj0KCmZsb3ctZnJhdWQSB3NhbmRib3gYAyIggWsD1QS2bRxbTqa/D21Lm9x3WH3kMShjFWLDyKThkXkoATACMjsKCmZsb3ctZnJhdWQSB3NhbmRib3giIHPdNwzqRCoUQw+of/h+Jz5hOloN4QhEDcrwypj0KohGKAEwAzo2YWlkOnB1YmtleTpnVVprRHdKSk92VDd4VV9qTTRqblhjTEpONjRMZHlmTUt5cjdHM1VabWo0QARKQIjHWTvbjszzyGgLKxxMPzXfJygti/bPx+l1+laV50USHQ6WaQyzcCF5jug5BY/N2Udvx11XZJjnbNUKxr/OQAlQA1ogABtQBo/fYu6ht91VagPu9gCTMzrbn4cHtskAD7Zhdw4="
+        "json": "{\"schema_version\":\"seam-event.v1\",\"event_id\":\"cell-a/chain-manifest:3#23\",\"seq\":23,\"occurred_at\":1700000200000,\"tenant\":\"acme\",\"namespace\":\"\",\"classification\":\"Internal\",\"kind\":\"CHAIN_MANIFEST\",\"session_id\":null,\"decision_id\":\"chain-manifest:3\",\"cost_micros\":0,\"prev_checksum\":\"39wbLqYjAUd9APZCt3m6PVU6XVdBh5wbm4HmEA6oMU8=\",\"digest\":\"XA8mGFbQH5FI0p78RIVH6tPtmyUhPh0lOGR+3oODOsQ=\",\"checksum\":\"yuQt6M/vJ+YoGHUNUnXQ3RmHbZyM1s/aJp+LvqoiRP4=\",\"chain_manifest\":{\"stream_id\":\"cell-a\",\"tenant\":\"acme\",\"governing_doc_sha256\":\"zPwMPGCZZFRZzveIoJgFY3dYq3PRrg3IG4HdOK4FcF0=\",\"governing_generated_at\":1700000050000,\"manifest_at\":1700000200000,\"chains\":[{\"flow_id\":\"flow-b\",\"env\":\"live\",\"len\":7,\"head\":\"T3Yzm1BfjEBOXvtznge6F4AQbLhEFjEX7ZlTpu01XpI=\",\"state\":3,\"version\":0,\"batch_boundary\":4},{\"flow_id\":\"flow-b\",\"env\":\"sandbox\",\"len\":2,\"head\":\"IDPoQ1lVUVmlZAp3LmKbwjAP11HiZC+w1G27SYR4wB8=\",\"state\":4,\"version\":1},{\"flow_id\":\"flow-fraud\",\"env\":\"live\",\"len\":3,\"head\":\"XQTuaJMLrRSo/7VX7iXsnEQoaCvywrU6dRnx+v1ToHk=\",\"state\":1,\"version\":0,\"batch_boundary\":0},{\"flow_id\":\"flow-fraud\",\"env\":\"sandbox\",\"len\":3,\"head\":\"9KTYNqzwGyeIlVuT9E30YMJ0IgRWTD7mNNwbIHFHizg=\",\"state\":2,\"version\":1,\"batch_boundary\":0},{\"flow_id\":\"flow-fraud\",\"env\":\"sandbox\",\"len\":3,\"head\":\"6WWNFnlgYii8P+ECqf73GCIOutn2v8VOktxVDnkfzsI=\",\"state\":1,\"version\":2,\"batch_boundary\":0},{\"flow_id\":\"flow-fraud\",\"env\":\"sandbox\",\"len\":0,\"head\":\"c903DOpEKhRDD6h/+H4nPmE6Wg3hCEQNyvDKmPQqiEY=\",\"state\":1,\"version\":3}],\"issuer_aid\":\"aid:pubkey:gUZkDwJJOvT7xU_jM4jnXcLJN64LdyfMKyr7G3UZmj4\",\"digest_schema\":4,\"signature\":\"DK9GaWDsZj7U3cqLujr/rGuq6sL1fptc1Hl8aCrzl5y5IAQ7ZJat2w9QlWRIj9kNn7SdrCJZOm4EbGlz55MVBg==\",\"tenant_len\":3,\"tenant_head\":\"39wbLqYjAUd9APZCt3m6PVU6XVdBh5wbm4HmEA6oMU8=\",\"manifest_version\":3,\"tenant_batch_boundary\":0},\"stream_id\":\"cell-a\",\"chain\":{\"flow_id\":\"\",\"env\":\"\",\"seq\":3,\"kind\":1,\"version\":0},\"leaf_count\":1}",
+        "pb_b64": "Cg1zZWFtLWV2ZW50LnYxEhpjZWxsLWEvY2hhaW4tbWFuaWZlc3Q6MyMyMxgXIMDqof+8MSoEYWNtZToISW50ZXJuYWxCDkNIQUlOX01BTklGRVNUUhBjaGFpbi1tYW5pZmVzdDozYiDf3BsupiMBR30A9kK3ebo9VTpdV0GHnBubgeYQDqgxT5oBIFwPJhhW0B+RSNKe/ESFR+rT7ZslIT4dJThkft6DgzrEogEgyuQt6M/vJ+YoGHUNUnXQ3RmHbZyM1s/aJp+LvqoiRP7aAQZjZWxsLWHqAQQYAyAB8gHQBAoGY2VsbC1hEgRhY21lGiDM/Aw8YJlkVFnO94igmAVjd1irc9GuDcgbgd04rgVwXSDQ1pj/vDEowOqh/7wxMjYKBmZsb3ctYhIEbGl2ZRgHIiBPdjObUF+MQE5e+3OeB7oXgBBsuEQWMRftmVOm7TVekigDOAQyOQoGZmxvdy1iEgdzYW5kYm94GAIiICAz6ENZVVFZpWQKdy5im8IwD9dR4mQvsNRtu0mEeMAfKAQwATI6CgpmbG93LWZyYXVkEgRsaXZlGAMiIF0E7miTC60UqP+1V+4l7JxEKGgr8sK1OnUZ8fr9U6B5KAE4ADI/CgpmbG93LWZyYXVkEgdzYW5kYm94GAMiIPSk2Das8BsniJVbk/RN9GDCdCIEVkw+5jTcGyBxR4s4KAIwATgAMj8KCmZsb3ctZnJhdWQSB3NhbmRib3gYAyIg6WWNFnlgYii8P+ECqf73GCIOutn2v8VOktxVDnkfzsIoATACOAAyOwoKZmxvdy1mcmF1ZBIHc2FuZGJveCIgc903DOpEKhRDD6h/+H4nPmE6Wg3hCEQNyvDKmPQqiEYoATADOjZhaWQ6cHVia2V5OmdVWmtEd0pKT3ZUN3hVX2pNNGpuWGNMSk42NExkeWZNS3lyN0czVVptajRABEpADK9GaWDsZj7U3cqLujr/rGuq6sL1fptc1Hl8aCrzl5y5IAQ7ZJat2w9QlWRIj9kNn7SdrCJZOm4EbGlz55MVBlADWiDf3BsupiMBR30A9kK3ebo9VTpdV0GHnBubgeYQDqgxT2ADaACAAgE="
       },
       "fields": {
         "chains": [
           {
+            "batch_boundary": 4,
             "env": "live",
             "flow_id": "flow-b",
             "head_hex": "4f76339b505f8c404e5efb739e07ba1780106cb844163117ed9953a6ed355e92",
@@ -18,6 +19,7 @@
             "version": 0
           },
           {
+            "batch_boundary": null,
             "env": "sandbox",
             "flow_id": "flow-b",
             "head_hex": "2033e84359555159a5640a772e629bc2300fd751e2642fb0d46dbb498478c01f",
@@ -26,30 +28,34 @@
             "version": 1
           },
           {
+            "batch_boundary": 0,
             "env": "live",
             "flow_id": "flow-fraud",
-            "head_hex": "8110c57928555ca95499e6317e67c320bf3ac62375f047bb7fbf5ba7fcc41fed",
+            "head_hex": "5d04ee68930bad14a8ffb557ee25ec9c4428682bf2c2b53a7519f1fafd53a079",
             "len": 3,
             "state": 1,
             "version": 0
           },
           {
+            "batch_boundary": 0,
             "env": "sandbox",
             "flow_id": "flow-fraud",
-            "head_hex": "7f6b4ba1588b91a178a1e67d7ab669942c89c62a1876c574697e80807f109b18",
+            "head_hex": "f4a4d836acf01b2788955b93f44df460c2742204564c3ee634dc1b2071478b38",
             "len": 3,
             "state": 2,
             "version": 1
           },
           {
+            "batch_boundary": 0,
             "env": "sandbox",
             "flow_id": "flow-fraud",
-            "head_hex": "816b03d504b66d1c5b4ea6bf0f6d4b9bdc77587de43128631562c3c8a4e19179",
+            "head_hex": "e9658d1679606228bc3fe102a9fef718220ebad9f6bfc54e92dc550e791fcec2",
             "len": 3,
             "state": 1,
             "version": 2
           },
           {
+            "batch_boundary": null,
             "env": "sandbox",
             "flow_id": "flow-fraud",
             "head_hex": "73dd370cea442a14430fa87ff87e273e613a5a0de108440dcaf0ca98f42a8846",
@@ -63,17 +69,108 @@
         "governing_generated_at": 1700000050000,
         "issuer_aid": "aid:pubkey:gUZkDwJJOvT7xU_jM4jnXcLJN64LdyfMKyr7G3UZmj4",
         "manifest_at": 1700000200000,
+        "manifest_version": 3,
         "stream_id": "cell-a",
         "tenant": "acme",
-        "tenant_head_hex": "001b50068fdf62eea1b7dd556a03eef60093333adb9f8707b6c9000fb661770e",
+        "tenant_batch_boundary": 0,
+        "tenant_head_hex": "dfdc1b2ea62301477d00f642b779ba3d553a5d5741879c1b9b81e6100ea8314f",
         "tenant_len": 3
       },
       "name": "manifest_every_state",
       "out": {
-        "entry_digest_hex": "0c32d28afb7bff693e3a05fbd854963203aad4204ea831896f79e3caa3e7a20d",
-        "preimage_hex": "1c0000007365616d2e61756469742e636861696e2d6d616e69666573742e76320600000063656c6c2d610400000061636d6520000000ccfc0c3c6099645459cef788a09805637758ab73d1ae0dc81b81dd38ae05705d08000000502be6cf8b010000080000004075e8cf8b010000040000000600000006000000666c6f772d62040000006c69766500000000080000000700000000000000200000004f76339b505f8c404e5efb739e07ba1780106cb844163117ed9953a6ed355e92040000000300000006000000666c6f772d620700000073616e64626f780400000001000000080000000200000000000000200000002033e84359555159a5640a772e629bc2300fd751e2642fb0d46dbb498478c01f04000000040000000a000000666c6f772d6672617564040000006c69766500000000080000000300000000000000200000008110c57928555ca95499e6317e67c320bf3ac62375f047bb7fbf5ba7fcc41fed04000000010000000a000000666c6f772d66726175640700000073616e64626f780400000001000000080000000300000000000000200000007f6b4ba1588b91a178a1e67d7ab669942c89c62a1876c574697e80807f109b1804000000020000000a000000666c6f772d66726175640700000073616e64626f78040000000200000008000000030000000000000020000000816b03d504b66d1c5b4ea6bf0f6d4b9bdc77587de43128631562c3c8a4e1917904000000010000000a000000666c6f772d66726175640700000073616e64626f7804000000030000000800000000000000000000002000000073dd370cea442a14430fa87ff87e273e613a5a0de108440dcaf0ca98f42a88460400000001000000360000006169643a7075626b65793a67555a6b44774a4a4f76543778555f6a4d346a6e58634c4a4e36344c6479664d4b7972374733555a6d6a34040000000400000008000000030000000000000020000000001b50068fdf62eea1b7dd556a03eef60093333adb9f8707b6c9000fb661770e",
-        "signature_hex": "88c7593bdb8eccf3c8680b2b1c4c3f35df27282d8bf6cfc7e975fa5695e745121d0e96690cb37021798ee839058fcdd9476fc75d576498e76cd50ac6bfce4009",
-        "signed_digest_hex": "179f20356ee3b57c383ff5edac3f2279550d726baaf51589ce5266935cca23a8"
+        "entry_digest_hex": "5c0f261856d01f9148d29efc448547ead3ed9b25213e1d2538647ede83833ac4",
+        "preimage_hex": "1c0000007365616d2e61756469742e636861696e2d6d616e69666573742e76330600000063656c6c2d610400000061636d6520000000ccfc0c3c6099645459cef788a09805637758ab73d1ae0dc81b81dd38ae05705d08000000502be6cf8b010000080000004075e8cf8b010000040000000600000006000000666c6f772d62040000006c69766500000000080000000700000000000000200000004f76339b505f8c404e5efb739e07ba1780106cb844163117ed9953a6ed355e92040000000300000008000000040000000000000006000000666c6f772d620700000073616e64626f780400000001000000080000000200000000000000200000002033e84359555159a5640a772e629bc2300fd751e2642fb0d46dbb498478c01f0400000004000000000000000a000000666c6f772d6672617564040000006c69766500000000080000000300000000000000200000005d04ee68930bad14a8ffb557ee25ec9c4428682bf2c2b53a7519f1fafd53a07904000000010000000800000000000000000000000a000000666c6f772d66726175640700000073616e64626f78040000000100000008000000030000000000000020000000f4a4d836acf01b2788955b93f44df460c2742204564c3ee634dc1b2071478b3804000000020000000800000000000000000000000a000000666c6f772d66726175640700000073616e64626f78040000000200000008000000030000000000000020000000e9658d1679606228bc3fe102a9fef718220ebad9f6bfc54e92dc550e791fcec204000000010000000800000000000000000000000a000000666c6f772d66726175640700000073616e64626f7804000000030000000800000000000000000000002000000073dd370cea442a14430fa87ff87e273e613a5a0de108440dcaf0ca98f42a8846040000000100000000000000360000006169643a7075626b65793a67555a6b44774a4a4f76543778555f6a4d346a6e58634c4a4e36344c6479664d4b7972374733555a6d6a34040000000400000008000000030000000000000020000000dfdc1b2ea62301477d00f642b779ba3d553a5d5741879c1b9b81e6100ea8314f080000000000000000000000",
+        "signature_hex": "0caf466960ec663ed4ddca8bba3affac6baaeac2f57e9b5cd4797c682af3979cb920043b6496addb0f509564488fd90d9fb49dac22593a6e046c6973e7931506",
+        "signed_digest_hex": "9c9daea6fcc6beab285f305ada5abcfaf6956b187e93a28cd354eb1efc18a393"
+      },
+      "states": [
+        "active",
+        "retired",
+        "moved_out",
+        "destroyed"
+      ],
+      "type": "manifest"
+    },
+    {
+      "event": {
+        "json": "{\"schema_version\":\"seam-event.v1\",\"event_id\":\"cell-a/chain-manifest:3#23\",\"seq\":23,\"occurred_at\":1700000200000,\"tenant\":\"acme\",\"namespace\":\"\",\"classification\":\"Internal\",\"kind\":\"CHAIN_MANIFEST\",\"session_id\":null,\"decision_id\":\"chain-manifest:3\",\"cost_micros\":0,\"prev_checksum\":\"39wbLqYjAUd9APZCt3m6PVU6XVdBh5wbm4HmEA6oMU8=\",\"digest\":\"zEDIPLf5ZP7EpSuplmr7CALNq2M1n2DrfAHYksSM3w4=\",\"checksum\":\"bjJUqHPICAj5xyMWvbrRyX5LMnpSqWf0WThv3MW/90I=\",\"chain_manifest\":{\"stream_id\":\"cell-a\",\"tenant\":\"acme\",\"governing_doc_sha256\":\"zPwMPGCZZFRZzveIoJgFY3dYq3PRrg3IG4HdOK4FcF0=\",\"governing_generated_at\":1700000050000,\"manifest_at\":1700000200000,\"chains\":[{\"flow_id\":\"flow-b\",\"env\":\"live\",\"len\":7,\"head\":\"T3Yzm1BfjEBOXvtznge6F4AQbLhEFjEX7ZlTpu01XpI=\",\"state\":3,\"version\":0},{\"flow_id\":\"flow-b\",\"env\":\"sandbox\",\"len\":2,\"head\":\"IDPoQ1lVUVmlZAp3LmKbwjAP11HiZC+w1G27SYR4wB8=\",\"state\":4,\"version\":1},{\"flow_id\":\"flow-fraud\",\"env\":\"live\",\"len\":3,\"head\":\"XQTuaJMLrRSo/7VX7iXsnEQoaCvywrU6dRnx+v1ToHk=\",\"state\":1,\"version\":0},{\"flow_id\":\"flow-fraud\",\"env\":\"sandbox\",\"len\":3,\"head\":\"9KTYNqzwGyeIlVuT9E30YMJ0IgRWTD7mNNwbIHFHizg=\",\"state\":2,\"version\":1},{\"flow_id\":\"flow-fraud\",\"env\":\"sandbox\",\"len\":3,\"head\":\"6WWNFnlgYii8P+ECqf73GCIOutn2v8VOktxVDnkfzsI=\",\"state\":1,\"version\":2},{\"flow_id\":\"flow-fraud\",\"env\":\"sandbox\",\"len\":0,\"head\":\"c903DOpEKhRDD6h/+H4nPmE6Wg3hCEQNyvDKmPQqiEY=\",\"state\":1,\"version\":3}],\"issuer_aid\":\"aid:pubkey:gUZkDwJJOvT7xU_jM4jnXcLJN64LdyfMKyr7G3UZmj4\",\"digest_schema\":4,\"signature\":\"VYgAznU98++e0WGWFOl0Es3wQH+wgO5/UrSEJRxDCcwdaPf+Y2Rl7SRkMhgWZUI+b3PG1uJteZuLDmnk0IHEAA==\",\"tenant_len\":3,\"tenant_head\":\"39wbLqYjAUd9APZCt3m6PVU6XVdBh5wbm4HmEA6oMU8=\"},\"stream_id\":\"cell-a\",\"chain\":{\"flow_id\":\"\",\"env\":\"\",\"seq\":3,\"kind\":1,\"version\":0}}",
+        "pb_b64": "Cg1zZWFtLWV2ZW50LnYxEhpjZWxsLWEvY2hhaW4tbWFuaWZlc3Q6MyMyMxgXIMDqof+8MSoEYWNtZToISW50ZXJuYWxCDkNIQUlOX01BTklGRVNUUhBjaGFpbi1tYW5pZmVzdDozYiDf3BsupiMBR30A9kK3ebo9VTpdV0GHnBubgeYQDqgxT5oBIMxAyDy3+WT+xKUrqZZq+wgCzatjNZ9g63wB2JLEjN8OogEgbjJUqHPICAj5xyMWvbrRyX5LMnpSqWf0WThv3MW/90LaAQZjZWxsLWHqAQQYAyAB8gHEBAoGY2VsbC1hEgRhY21lGiDM/Aw8YJlkVFnO94igmAVjd1irc9GuDcgbgd04rgVwXSDQ1pj/vDEowOqh/7wxMjQKBmZsb3ctYhIEbGl2ZRgHIiBPdjObUF+MQE5e+3OeB7oXgBBsuEQWMRftmVOm7TVekigDMjkKBmZsb3ctYhIHc2FuZGJveBgCIiAgM+hDWVVRWaVkCncuYpvCMA/XUeJkL7DUbbtJhHjAHygEMAEyOAoKZmxvdy1mcmF1ZBIEbGl2ZRgDIiBdBO5okwutFKj/tVfuJeycRChoK/LCtTp1GfH6/VOgeSgBMj0KCmZsb3ctZnJhdWQSB3NhbmRib3gYAyIg9KTYNqzwGyeIlVuT9E30YMJ0IgRWTD7mNNwbIHFHizgoAjABMj0KCmZsb3ctZnJhdWQSB3NhbmRib3gYAyIg6WWNFnlgYii8P+ECqf73GCIOutn2v8VOktxVDnkfzsIoATACMjsKCmZsb3ctZnJhdWQSB3NhbmRib3giIHPdNwzqRCoUQw+of/h+Jz5hOloN4QhEDcrwypj0KohGKAEwAzo2YWlkOnB1YmtleTpnVVprRHdKSk92VDd4VV9qTTRqblhjTEpONjRMZHlmTUt5cjdHM1VabWo0QARKQFWIAM51PfPvntFhlhTpdBLN8EB/sIDuf1K0hCUcQwnMHWj3/mNkZe0kZDIYFmVCPm9zxtbibXmbiw5p5NCBxABQA1og39wbLqYjAUd9APZCt3m6PVU6XVdBh5wbm4HmEA6oMU8="
+      },
+      "fields": {
+        "chains": [
+          {
+            "batch_boundary": null,
+            "env": "live",
+            "flow_id": "flow-b",
+            "head_hex": "4f76339b505f8c404e5efb739e07ba1780106cb844163117ed9953a6ed355e92",
+            "len": 7,
+            "state": 3,
+            "version": 0
+          },
+          {
+            "batch_boundary": null,
+            "env": "sandbox",
+            "flow_id": "flow-b",
+            "head_hex": "2033e84359555159a5640a772e629bc2300fd751e2642fb0d46dbb498478c01f",
+            "len": 2,
+            "state": 4,
+            "version": 1
+          },
+          {
+            "batch_boundary": null,
+            "env": "live",
+            "flow_id": "flow-fraud",
+            "head_hex": "5d04ee68930bad14a8ffb557ee25ec9c4428682bf2c2b53a7519f1fafd53a079",
+            "len": 3,
+            "state": 1,
+            "version": 0
+          },
+          {
+            "batch_boundary": null,
+            "env": "sandbox",
+            "flow_id": "flow-fraud",
+            "head_hex": "f4a4d836acf01b2788955b93f44df460c2742204564c3ee634dc1b2071478b38",
+            "len": 3,
+            "state": 2,
+            "version": 1
+          },
+          {
+            "batch_boundary": null,
+            "env": "sandbox",
+            "flow_id": "flow-fraud",
+            "head_hex": "e9658d1679606228bc3fe102a9fef718220ebad9f6bfc54e92dc550e791fcec2",
+            "len": 3,
+            "state": 1,
+            "version": 2
+          },
+          {
+            "batch_boundary": null,
+            "env": "sandbox",
+            "flow_id": "flow-fraud",
+            "head_hex": "73dd370cea442a14430fa87ff87e273e613a5a0de108440dcaf0ca98f42a8846",
+            "len": 0,
+            "state": 1,
+            "version": 3
+          }
+        ],
+        "digest_schema": 4,
+        "governing_doc_sha256_hex": "ccfc0c3c6099645459cef788a09805637758ab73d1ae0dc81b81dd38ae05705d",
+        "governing_generated_at": 1700000050000,
+        "issuer_aid": "aid:pubkey:gUZkDwJJOvT7xU_jM4jnXcLJN64LdyfMKyr7G3UZmj4",
+        "manifest_at": 1700000200000,
+        "manifest_version": 0,
+        "stream_id": "cell-a",
+        "tenant": "acme",
+        "tenant_batch_boundary": null,
+        "tenant_head_hex": "dfdc1b2ea62301477d00f642b779ba3d553a5d5741879c1b9b81e6100ea8314f",
+        "tenant_len": 3
+      },
+      "name": "manifest_v2_before_the_boundary",
+      "out": {
+        "entry_digest_hex": "cc40c83cb7f964fec4a52ba9966afb0802cdab63359f60eb7c01d892c48cdf0e",
+        "preimage_hex": "1c0000007365616d2e61756469742e636861696e2d6d616e69666573742e76320600000063656c6c2d610400000061636d6520000000ccfc0c3c6099645459cef788a09805637758ab73d1ae0dc81b81dd38ae05705d08000000502be6cf8b010000080000004075e8cf8b010000040000000600000006000000666c6f772d62040000006c69766500000000080000000700000000000000200000004f76339b505f8c404e5efb739e07ba1780106cb844163117ed9953a6ed355e92040000000300000006000000666c6f772d620700000073616e64626f780400000001000000080000000200000000000000200000002033e84359555159a5640a772e629bc2300fd751e2642fb0d46dbb498478c01f04000000040000000a000000666c6f772d6672617564040000006c69766500000000080000000300000000000000200000005d04ee68930bad14a8ffb557ee25ec9c4428682bf2c2b53a7519f1fafd53a07904000000010000000a000000666c6f772d66726175640700000073616e64626f78040000000100000008000000030000000000000020000000f4a4d836acf01b2788955b93f44df460c2742204564c3ee634dc1b2071478b3804000000020000000a000000666c6f772d66726175640700000073616e64626f78040000000200000008000000030000000000000020000000e9658d1679606228bc3fe102a9fef718220ebad9f6bfc54e92dc550e791fcec204000000010000000a000000666c6f772d66726175640700000073616e64626f7804000000030000000800000000000000000000002000000073dd370cea442a14430fa87ff87e273e613a5a0de108440dcaf0ca98f42a88460400000001000000360000006169643a7075626b65793a67555a6b44774a4a4f76543778555f6a4d346a6e58634c4a4e36344c6479664d4b7972374733555a6d6a34040000000400000008000000030000000000000020000000dfdc1b2ea62301477d00f642b779ba3d553a5d5741879c1b9b81e6100ea8314f",
+        "signature_hex": "558800ce753df3ef9ed1619614e97412cdf0407fb080ee7f52b484251c4309cc1d68f7fe636465ed246432181665423e6f73c6d6e26d799b8b0e69e4d081c400",
+        "signed_digest_hex": "539481372a0328223ddd0762c3bdeb8f926aee5995a0d0b08ae5399252ccd5e0"
       },
       "states": [
         "active",
@@ -87,6 +184,7 @@
       "fields": {
         "chains": [
           {
+            "batch_boundary": 4,
             "env": "live",
             "flow_id": "flow-b",
             "head_hex": "4f76339b505f8c404e5efb739e07ba1780106cb844163117ed9953a6ed355e92",
@@ -95,6 +193,7 @@
             "version": 0
           },
           {
+            "batch_boundary": null,
             "env": "sandbox",
             "flow_id": "flow-b",
             "head_hex": "2033e84359555159a5640a772e629bc2300fd751e2642fb0d46dbb498478c01f",
@@ -103,30 +202,34 @@
             "version": 1
           },
           {
+            "batch_boundary": 0,
             "env": "live",
             "flow_id": "flow-fraud",
-            "head_hex": "8110c57928555ca95499e6317e67c320bf3ac62375f047bb7fbf5ba7fcc41fed",
+            "head_hex": "5d04ee68930bad14a8ffb557ee25ec9c4428682bf2c2b53a7519f1fafd53a079",
             "len": 3,
             "state": 1,
             "version": 0
           },
           {
+            "batch_boundary": 0,
             "env": "sandbox",
             "flow_id": "flow-fraud",
-            "head_hex": "7f6b4ba1588b91a178a1e67d7ab669942c89c62a1876c574697e80807f109b18",
+            "head_hex": "f4a4d836acf01b2788955b93f44df460c2742204564c3ee634dc1b2071478b38",
             "len": 3,
             "state": 2,
             "version": 1
           },
           {
+            "batch_boundary": 0,
             "env": "sandbox",
             "flow_id": "flow-fraud",
-            "head_hex": "816b03d504b66d1c5b4ea6bf0f6d4b9bdc77587de43128631562c3c8a4e19179",
+            "head_hex": "e9658d1679606228bc3fe102a9fef718220ebad9f6bfc54e92dc550e791fcec2",
             "len": 3,
             "state": 1,
             "version": 2
           },
           {
+            "batch_boundary": null,
             "env": "sandbox",
             "flow_id": "flow-fraud",
             "head_hex": "73dd370cea442a14430fa87ff87e273e613a5a0de108440dcaf0ca98f42a8846",
@@ -140,20 +243,23 @@
         "governing_generated_at": 1700000050000,
         "issuer_aid": "aid:pubkey:gUZkDwJJOvT7xU_jM4jnXcLJN64LdyfMKyr7G3UZmj4",
         "manifest_at": 1700000200000,
+        "manifest_version": 3,
         "stream_id": "cell-a",
         "tenant": "acme",
-        "tenant_head_hex": "001b50068fdf62eea1b7dd556a03eef60093333adb9f8707b6c9000fb661770e",
+        "tenant_batch_boundary": 0,
+        "tenant_head_hex": "dfdc1b2ea62301477d00f642b779ba3d553a5d5741879c1b9b81e6100ea8314f",
         "tenant_len": 3
       },
       "name": "refuse_state_tampered",
       "rule": "signature_invalid",
-      "signature_hex": "88c7593bdb8eccf3c8680b2b1c4c3f35df27282d8bf6cfc7e975fa5695e745121d0e96690cb37021798ee839058fcdd9476fc75d576498e76cd50ac6bfce4009",
+      "signature_hex": "0caf466960ec663ed4ddca8bba3affac6baaeac2f57e9b5cd4797c682af3979cb920043b6496addb0f509564488fd90d9fb49dac22593a6e046c6973e7931506",
       "type": "manifest_refusal"
     },
     {
       "fields": {
         "chains": [
           {
+            "batch_boundary": 4,
             "env": "live",
             "flow_id": "flow-b",
             "head_hex": "4f76339b505f8c404e5efb739e07ba1780106cb844163117ed9953a6ed355e92",
@@ -162,14 +268,16 @@
             "version": 0
           },
           {
+            "batch_boundary": 0,
             "env": "live",
             "flow_id": "flow-fraud",
-            "head_hex": "8110c57928555ca95499e6317e67c320bf3ac62375f047bb7fbf5ba7fcc41fed",
+            "head_hex": "5d04ee68930bad14a8ffb557ee25ec9c4428682bf2c2b53a7519f1fafd53a079",
             "len": 3,
             "state": 1,
             "version": 0
           },
           {
+            "batch_boundary": null,
             "env": "sandbox",
             "flow_id": "flow-b",
             "head_hex": "2033e84359555159a5640a772e629bc2300fd751e2642fb0d46dbb498478c01f",
@@ -178,22 +286,25 @@
             "version": 1
           },
           {
+            "batch_boundary": 0,
             "env": "sandbox",
             "flow_id": "flow-fraud",
-            "head_hex": "7f6b4ba1588b91a178a1e67d7ab669942c89c62a1876c574697e80807f109b18",
+            "head_hex": "f4a4d836acf01b2788955b93f44df460c2742204564c3ee634dc1b2071478b38",
             "len": 3,
             "state": 2,
             "version": 1
           },
           {
+            "batch_boundary": 0,
             "env": "sandbox",
             "flow_id": "flow-fraud",
-            "head_hex": "816b03d504b66d1c5b4ea6bf0f6d4b9bdc77587de43128631562c3c8a4e19179",
+            "head_hex": "e9658d1679606228bc3fe102a9fef718220ebad9f6bfc54e92dc550e791fcec2",
             "len": 3,
             "state": 1,
             "version": 2
           },
           {
+            "batch_boundary": null,
             "env": "sandbox",
             "flow_id": "flow-fraud",
             "head_hex": "73dd370cea442a14430fa87ff87e273e613a5a0de108440dcaf0ca98f42a8846",
@@ -207,20 +318,23 @@
         "governing_generated_at": 1700000050000,
         "issuer_aid": "aid:pubkey:gUZkDwJJOvT7xU_jM4jnXcLJN64LdyfMKyr7G3UZmj4",
         "manifest_at": 1700000200000,
+        "manifest_version": 3,
         "stream_id": "cell-a",
         "tenant": "acme",
-        "tenant_head_hex": "001b50068fdf62eea1b7dd556a03eef60093333adb9f8707b6c9000fb661770e",
+        "tenant_batch_boundary": 0,
+        "tenant_head_hex": "dfdc1b2ea62301477d00f642b779ba3d553a5d5741879c1b9b81e6100ea8314f",
         "tenant_len": 3
       },
       "name": "refuse_chains_not_ascending",
       "rule": "chains_not_ascending",
-      "signature_hex": "88c7593bdb8eccf3c8680b2b1c4c3f35df27282d8bf6cfc7e975fa5695e745121d0e96690cb37021798ee839058fcdd9476fc75d576498e76cd50ac6bfce4009",
+      "signature_hex": "0caf466960ec663ed4ddca8bba3affac6baaeac2f57e9b5cd4797c682af3979cb920043b6496addb0f509564488fd90d9fb49dac22593a6e046c6973e7931506",
       "type": "manifest_refusal"
     },
     {
       "fields": {
         "chains": [
           {
+            "batch_boundary": 4,
             "env": "live",
             "flow_id": "flow-b",
             "head_hex": "4f76339b505f8c404e5efb739e07ba1780106cb844163117ed9953a6ed355e92",
@@ -229,6 +343,7 @@
             "version": 0
           },
           {
+            "batch_boundary": null,
             "env": "sandbox",
             "flow_id": "flow-b",
             "head_hex": "2033e84359555159a5640a772e629bc2300fd751e2642fb0d46dbb498478c01f",
@@ -237,30 +352,34 @@
             "version": 1
           },
           {
+            "batch_boundary": 0,
             "env": "live",
             "flow_id": "flow-fraud",
-            "head_hex": "8110c57928555ca95499e6317e67c320bf3ac62375f047bb7fbf5ba7fcc41fed",
+            "head_hex": "5d04ee68930bad14a8ffb557ee25ec9c4428682bf2c2b53a7519f1fafd53a079",
             "len": 3,
             "state": 1,
             "version": 0
           },
           {
+            "batch_boundary": 0,
             "env": "sandbox",
             "flow_id": "flow-fraud",
-            "head_hex": "7f6b4ba1588b91a178a1e67d7ab669942c89c62a1876c574697e80807f109b18",
+            "head_hex": "f4a4d836acf01b2788955b93f44df460c2742204564c3ee634dc1b2071478b38",
             "len": 3,
             "state": 2,
             "version": 1
           },
           {
+            "batch_boundary": 0,
             "env": "sandbox",
             "flow_id": "flow-fraud",
-            "head_hex": "816b03d504b66d1c5b4ea6bf0f6d4b9bdc77587de43128631562c3c8a4e19179",
+            "head_hex": "e9658d1679606228bc3fe102a9fef718220ebad9f6bfc54e92dc550e791fcec2",
             "len": 3,
             "state": 1,
             "version": 2
           },
           {
+            "batch_boundary": null,
             "env": "sandbox",
             "flow_id": "flow-fraud",
             "head_hex": "73dd370cea442a14430fa87ff87e273e613a5a0de108440dcaf0ca98f42a8846",
@@ -274,20 +393,23 @@
         "governing_generated_at": 1700000050000,
         "issuer_aid": "aid:pubkey:gUZkDwJJOvT7xU_jM4jnXcLJN64LdyfMKyr7G3UZmj4",
         "manifest_at": 1700000200000,
+        "manifest_version": 3,
         "stream_id": "cell-a",
         "tenant": "acme",
-        "tenant_head_hex": "001b50068fdf62eea1b7dd556a03eef60093333adb9f8707b6c9000fb661770e",
+        "tenant_batch_boundary": 0,
+        "tenant_head_hex": "dfdc1b2ea62301477d00f642b779ba3d553a5d5741879c1b9b81e6100ea8314f",
         "tenant_len": 3
       },
       "name": "refuse_state_unknown",
       "rule": "state_unknown",
-      "signature_hex": "88c7593bdb8eccf3c8680b2b1c4c3f35df27282d8bf6cfc7e975fa5695e745121d0e96690cb37021798ee839058fcdd9476fc75d576498e76cd50ac6bfce4009",
+      "signature_hex": "0caf466960ec663ed4ddca8bba3affac6baaeac2f57e9b5cd4797c682af3979cb920043b6496addb0f509564488fd90d9fb49dac22593a6e046c6973e7931506",
       "type": "manifest_refusal"
     },
     {
       "fields": {
         "chains": [
           {
+            "batch_boundary": 4,
             "env": "live",
             "flow_id": "flow-b",
             "head_hex": "4f76339b505f8c404e5efb739e07ba1780106cb844163117ed9953a6ed355e92",
@@ -296,6 +418,7 @@
             "version": 0
           },
           {
+            "batch_boundary": null,
             "env": "sandbox",
             "flow_id": "flow-b",
             "head_hex": "2033e84359555159a5640a772e629bc2300fd751e2642fb0d46dbb498478c01f",
@@ -304,30 +427,34 @@
             "version": 1
           },
           {
+            "batch_boundary": 0,
             "env": "live",
             "flow_id": "flow-fraud",
-            "head_hex": "8110c57928555ca95499e6317e67c320bf3ac62375f047bb7fbf5ba7fcc41fed",
+            "head_hex": "5d04ee68930bad14a8ffb557ee25ec9c4428682bf2c2b53a7519f1fafd53a079",
             "len": 3,
             "state": 1,
             "version": 0
           },
           {
+            "batch_boundary": 0,
             "env": "sandbox",
             "flow_id": "flow-fraud",
-            "head_hex": "7f6b4ba1588b91a178a1e67d7ab669942c89c62a1876c574697e80807f109b18",
+            "head_hex": "f4a4d836acf01b2788955b93f44df460c2742204564c3ee634dc1b2071478b38",
             "len": 3,
             "state": 2,
             "version": 1
           },
           {
+            "batch_boundary": 0,
             "env": "sandbox",
             "flow_id": "flow-fraud",
-            "head_hex": "816b03d504b66d1c5b4ea6bf0f6d4b9bdc77587de43128631562c3c8a4e19179",
+            "head_hex": "e9658d1679606228bc3fe102a9fef718220ebad9f6bfc54e92dc550e791fcec2",
             "len": 3,
             "state": 1,
             "version": 2
           },
           {
+            "batch_boundary": null,
             "env": "sandbox",
             "flow_id": "flow-fraud",
             "head_hex": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -341,20 +468,23 @@
         "governing_generated_at": 1700000050000,
         "issuer_aid": "aid:pubkey:gUZkDwJJOvT7xU_jM4jnXcLJN64LdyfMKyr7G3UZmj4",
         "manifest_at": 1700000200000,
+        "manifest_version": 3,
         "stream_id": "cell-a",
         "tenant": "acme",
-        "tenant_head_hex": "001b50068fdf62eea1b7dd556a03eef60093333adb9f8707b6c9000fb661770e",
+        "tenant_batch_boundary": 0,
+        "tenant_head_hex": "dfdc1b2ea62301477d00f642b779ba3d553a5d5741879c1b9b81e6100ea8314f",
         "tenant_len": 3
       },
       "name": "refuse_empty_head_not_genesis",
       "rule": "empty_head_not_genesis",
-      "signature_hex": "88c7593bdb8eccf3c8680b2b1c4c3f35df27282d8bf6cfc7e975fa5695e745121d0e96690cb37021798ee839058fcdd9476fc75d576498e76cd50ac6bfce4009",
+      "signature_hex": "0caf466960ec663ed4ddca8bba3affac6baaeac2f57e9b5cd4797c682af3979cb920043b6496addb0f509564488fd90d9fb49dac22593a6e046c6973e7931506",
       "type": "manifest_refusal"
     },
     {
       "fields": {
         "chains": [
           {
+            "batch_boundary": 4,
             "env": "live",
             "flow_id": "flow-b",
             "head_hex": "4f76339b505f8c404e5efb739e07ba1780106cb844163117ed9953a6ed355e92",
@@ -363,6 +493,7 @@
             "version": 1
           },
           {
+            "batch_boundary": null,
             "env": "sandbox",
             "flow_id": "flow-b",
             "head_hex": "2033e84359555159a5640a772e629bc2300fd751e2642fb0d46dbb498478c01f",
@@ -371,30 +502,34 @@
             "version": 1
           },
           {
+            "batch_boundary": 0,
             "env": "live",
             "flow_id": "flow-fraud",
-            "head_hex": "8110c57928555ca95499e6317e67c320bf3ac62375f047bb7fbf5ba7fcc41fed",
+            "head_hex": "5d04ee68930bad14a8ffb557ee25ec9c4428682bf2c2b53a7519f1fafd53a079",
             "len": 3,
             "state": 1,
             "version": 0
           },
           {
+            "batch_boundary": 0,
             "env": "sandbox",
             "flow_id": "flow-fraud",
-            "head_hex": "7f6b4ba1588b91a178a1e67d7ab669942c89c62a1876c574697e80807f109b18",
+            "head_hex": "f4a4d836acf01b2788955b93f44df460c2742204564c3ee634dc1b2071478b38",
             "len": 3,
             "state": 2,
             "version": 1
           },
           {
+            "batch_boundary": 0,
             "env": "sandbox",
             "flow_id": "flow-fraud",
-            "head_hex": "816b03d504b66d1c5b4ea6bf0f6d4b9bdc77587de43128631562c3c8a4e19179",
+            "head_hex": "e9658d1679606228bc3fe102a9fef718220ebad9f6bfc54e92dc550e791fcec2",
             "len": 3,
             "state": 1,
             "version": 2
           },
           {
+            "batch_boundary": null,
             "env": "sandbox",
             "flow_id": "flow-fraud",
             "head_hex": "73dd370cea442a14430fa87ff87e273e613a5a0de108440dcaf0ca98f42a8846",
@@ -408,14 +543,241 @@
         "governing_generated_at": 1700000050000,
         "issuer_aid": "aid:pubkey:gUZkDwJJOvT7xU_jM4jnXcLJN64LdyfMKyr7G3UZmj4",
         "manifest_at": 1700000200000,
+        "manifest_version": 3,
         "stream_id": "cell-a",
         "tenant": "acme",
-        "tenant_head_hex": "001b50068fdf62eea1b7dd556a03eef60093333adb9f8707b6c9000fb661770e",
+        "tenant_batch_boundary": 0,
+        "tenant_head_hex": "dfdc1b2ea62301477d00f642b779ba3d553a5d5741879c1b9b81e6100ea8314f",
         "tenant_len": 3
       },
       "name": "refuse_live_entry_with_version",
       "rule": "live_key_has_version",
-      "signature_hex": "88c7593bdb8eccf3c8680b2b1c4c3f35df27282d8bf6cfc7e975fa5695e745121d0e96690cb37021798ee839058fcdd9476fc75d576498e76cd50ac6bfce4009",
+      "signature_hex": "0caf466960ec663ed4ddca8bba3affac6baaeac2f57e9b5cd4797c682af3979cb920043b6496addb0f509564488fd90d9fb49dac22593a6e046c6973e7931506",
+      "type": "manifest_refusal"
+    },
+    {
+      "fields": {
+        "chains": [
+          {
+            "batch_boundary": 5,
+            "env": "live",
+            "flow_id": "flow-b",
+            "head_hex": "4f76339b505f8c404e5efb739e07ba1780106cb844163117ed9953a6ed355e92",
+            "len": 7,
+            "state": 3,
+            "version": 0
+          },
+          {
+            "batch_boundary": null,
+            "env": "sandbox",
+            "flow_id": "flow-b",
+            "head_hex": "2033e84359555159a5640a772e629bc2300fd751e2642fb0d46dbb498478c01f",
+            "len": 2,
+            "state": 4,
+            "version": 1
+          },
+          {
+            "batch_boundary": 0,
+            "env": "live",
+            "flow_id": "flow-fraud",
+            "head_hex": "5d04ee68930bad14a8ffb557ee25ec9c4428682bf2c2b53a7519f1fafd53a079",
+            "len": 3,
+            "state": 1,
+            "version": 0
+          },
+          {
+            "batch_boundary": 0,
+            "env": "sandbox",
+            "flow_id": "flow-fraud",
+            "head_hex": "f4a4d836acf01b2788955b93f44df460c2742204564c3ee634dc1b2071478b38",
+            "len": 3,
+            "state": 2,
+            "version": 1
+          },
+          {
+            "batch_boundary": 0,
+            "env": "sandbox",
+            "flow_id": "flow-fraud",
+            "head_hex": "e9658d1679606228bc3fe102a9fef718220ebad9f6bfc54e92dc550e791fcec2",
+            "len": 3,
+            "state": 1,
+            "version": 2
+          },
+          {
+            "batch_boundary": null,
+            "env": "sandbox",
+            "flow_id": "flow-fraud",
+            "head_hex": "73dd370cea442a14430fa87ff87e273e613a5a0de108440dcaf0ca98f42a8846",
+            "len": 0,
+            "state": 1,
+            "version": 3
+          }
+        ],
+        "digest_schema": 4,
+        "governing_doc_sha256_hex": "ccfc0c3c6099645459cef788a09805637758ab73d1ae0dc81b81dd38ae05705d",
+        "governing_generated_at": 1700000050000,
+        "issuer_aid": "aid:pubkey:gUZkDwJJOvT7xU_jM4jnXcLJN64LdyfMKyr7G3UZmj4",
+        "manifest_at": 1700000200000,
+        "manifest_version": 3,
+        "stream_id": "cell-a",
+        "tenant": "acme",
+        "tenant_batch_boundary": 0,
+        "tenant_head_hex": "dfdc1b2ea62301477d00f642b779ba3d553a5d5741879c1b9b81e6100ea8314f",
+        "tenant_len": 3
+      },
+      "name": "refuse_boundary_moved",
+      "rule": "signature_invalid",
+      "signature_hex": "0caf466960ec663ed4ddca8bba3affac6baaeac2f57e9b5cd4797c682af3979cb920043b6496addb0f509564488fd90d9fb49dac22593a6e046c6973e7931506",
+      "type": "manifest_refusal"
+    },
+    {
+      "fields": {
+        "chains": [
+          {
+            "batch_boundary": null,
+            "env": "live",
+            "flow_id": "flow-b",
+            "head_hex": "4f76339b505f8c404e5efb739e07ba1780106cb844163117ed9953a6ed355e92",
+            "len": 7,
+            "state": 3,
+            "version": 0
+          },
+          {
+            "batch_boundary": null,
+            "env": "sandbox",
+            "flow_id": "flow-b",
+            "head_hex": "2033e84359555159a5640a772e629bc2300fd751e2642fb0d46dbb498478c01f",
+            "len": 2,
+            "state": 4,
+            "version": 1
+          },
+          {
+            "batch_boundary": 0,
+            "env": "live",
+            "flow_id": "flow-fraud",
+            "head_hex": "5d04ee68930bad14a8ffb557ee25ec9c4428682bf2c2b53a7519f1fafd53a079",
+            "len": 3,
+            "state": 1,
+            "version": 0
+          },
+          {
+            "batch_boundary": 0,
+            "env": "sandbox",
+            "flow_id": "flow-fraud",
+            "head_hex": "f4a4d836acf01b2788955b93f44df460c2742204564c3ee634dc1b2071478b38",
+            "len": 3,
+            "state": 2,
+            "version": 1
+          },
+          {
+            "batch_boundary": 0,
+            "env": "sandbox",
+            "flow_id": "flow-fraud",
+            "head_hex": "e9658d1679606228bc3fe102a9fef718220ebad9f6bfc54e92dc550e791fcec2",
+            "len": 3,
+            "state": 1,
+            "version": 2
+          },
+          {
+            "batch_boundary": null,
+            "env": "sandbox",
+            "flow_id": "flow-fraud",
+            "head_hex": "73dd370cea442a14430fa87ff87e273e613a5a0de108440dcaf0ca98f42a8846",
+            "len": 0,
+            "state": 1,
+            "version": 3
+          }
+        ],
+        "digest_schema": 4,
+        "governing_doc_sha256_hex": "ccfc0c3c6099645459cef788a09805637758ab73d1ae0dc81b81dd38ae05705d",
+        "governing_generated_at": 1700000050000,
+        "issuer_aid": "aid:pubkey:gUZkDwJJOvT7xU_jM4jnXcLJN64LdyfMKyr7G3UZmj4",
+        "manifest_at": 1700000200000,
+        "manifest_version": 3,
+        "stream_id": "cell-a",
+        "tenant": "acme",
+        "tenant_batch_boundary": 0,
+        "tenant_head_hex": "dfdc1b2ea62301477d00f642b779ba3d553a5d5741879c1b9b81e6100ea8314f",
+        "tenant_len": 3
+      },
+      "name": "refuse_boundary_dropped",
+      "rule": "signature_invalid",
+      "signature_hex": "0caf466960ec663ed4ddca8bba3affac6baaeac2f57e9b5cd4797c682af3979cb920043b6496addb0f509564488fd90d9fb49dac22593a6e046c6973e7931506",
+      "type": "manifest_refusal"
+    },
+    {
+      "fields": {
+        "chains": [
+          {
+            "batch_boundary": 7,
+            "env": "live",
+            "flow_id": "flow-b",
+            "head_hex": "4f76339b505f8c404e5efb739e07ba1780106cb844163117ed9953a6ed355e92",
+            "len": 7,
+            "state": 3,
+            "version": 0
+          },
+          {
+            "batch_boundary": null,
+            "env": "sandbox",
+            "flow_id": "flow-b",
+            "head_hex": "2033e84359555159a5640a772e629bc2300fd751e2642fb0d46dbb498478c01f",
+            "len": 2,
+            "state": 4,
+            "version": 1
+          },
+          {
+            "batch_boundary": 0,
+            "env": "live",
+            "flow_id": "flow-fraud",
+            "head_hex": "5d04ee68930bad14a8ffb557ee25ec9c4428682bf2c2b53a7519f1fafd53a079",
+            "len": 3,
+            "state": 1,
+            "version": 0
+          },
+          {
+            "batch_boundary": 0,
+            "env": "sandbox",
+            "flow_id": "flow-fraud",
+            "head_hex": "f4a4d836acf01b2788955b93f44df460c2742204564c3ee634dc1b2071478b38",
+            "len": 3,
+            "state": 2,
+            "version": 1
+          },
+          {
+            "batch_boundary": 0,
+            "env": "sandbox",
+            "flow_id": "flow-fraud",
+            "head_hex": "e9658d1679606228bc3fe102a9fef718220ebad9f6bfc54e92dc550e791fcec2",
+            "len": 3,
+            "state": 1,
+            "version": 2
+          },
+          {
+            "batch_boundary": null,
+            "env": "sandbox",
+            "flow_id": "flow-fraud",
+            "head_hex": "73dd370cea442a14430fa87ff87e273e613a5a0de108440dcaf0ca98f42a8846",
+            "len": 0,
+            "state": 1,
+            "version": 3
+          }
+        ],
+        "digest_schema": 4,
+        "governing_doc_sha256_hex": "ccfc0c3c6099645459cef788a09805637758ab73d1ae0dc81b81dd38ae05705d",
+        "governing_generated_at": 1700000050000,
+        "issuer_aid": "aid:pubkey:gUZkDwJJOvT7xU_jM4jnXcLJN64LdyfMKyr7G3UZmj4",
+        "manifest_at": 1700000200000,
+        "manifest_version": 3,
+        "stream_id": "cell-a",
+        "tenant": "acme",
+        "tenant_batch_boundary": 0,
+        "tenant_head_hex": "dfdc1b2ea62301477d00f642b779ba3d553a5d5741879c1b9b81e6100ea8314f",
+        "tenant_len": 3
+      },
+      "name": "refuse_boundary_not_below_len",
+      "rule": "boundary_not_below_len",
+      "signature_hex": "0caf466960ec663ed4ddca8bba3affac6baaeac2f57e9b5cd4797c682af3979cb920043b6496addb0f509564488fd90d9fb49dac22593a6e046c6973e7931506",
       "type": "manifest_refusal"
     }
   ],
@@ -430,6 +792,6 @@
     "regen_env": "BLESS_GOLDEN",
     "repo": "seam-runtime"
   },
-  "rule": "signed preimage = P(\"seam.audit.chain-manifest.v2\") || P(stream_id) || P(tenant) || P(governing_doc_sha256) || P(le64 governing_generated_at) || P(le64 manifest_at) || P(le32 count) || per chain {P(flow_id) || P(env) || V || P(le64 len) || P(head) || P(le32 state)} || P(issuer_aid) || P(le32 digest_schema) || P(le64 tenant_len) || P(tenant_head); signature = Ed25519(SHA-256(preimage)); entry digest = SHA-256(P(\"seam.audit.chain-manifest-entry.v1\") || P(preimage) || P(signature)). Structural refusals before the signature: chains_not_ascending (strictly ascending by flow_id then env, both bytewise, then version numerically), a ChainKey rule for a malformed (flow_id, env, version), state_unknown (not 1..=4), empty_head_not_genesis (len 0 and head != genesis(K)). state: 1 active, 2 retired, 3 moved_out, 4 destroyed. The event is a CHAIN_MANIFEST on the tenant chain (tag 30 payload, tag 29 kind 1) whose prev is tenant_head at position tenant_len (D-163: a verified manifest covers the tenant chain up to that head).",
+  "rule": "manifest_version 3: signed preimage = P(\"seam.audit.chain-manifest.v3\") || P(stream_id) || P(tenant) || P(governing_doc_sha256) || P(le64 governing_generated_at) || P(le64 manifest_at) || P(le32 count) || per chain {P(flow_id) || P(env) || V || P(le64 len) || P(head) || P(le32 state) || B(batch_boundary)} || P(issuer_aid) || P(le32 digest_schema) || P(le64 tenant_len) || P(tenant_head) || B(tenant_batch_boundary), where B(x) = P(\"\") when x is null, else P(le64 x): the chain's S-3 history boundary (the position of its first Merkle batch entry) when below len, else null. manifest_version 0 (sealed before the boundary): the same without every B(..) under P(\"seam.audit.chain-manifest.v2\"); its boundaries are null. signature = Ed25519(SHA-256(preimage)); entry digest = SHA-256(P(\"seam.audit.chain-manifest-entry.v1\") || P(preimage) || P(signature)). Structural refusals before the signature: chains_not_ascending (strictly ascending by flow_id then env, both bytewise, then version numerically), a ChainKey rule for a malformed (flow_id, env, version), state_unknown (not 1..=4), empty_head_not_genesis (len 0 and head != genesis(K)), boundary_not_below_len (a boundary >= its len). A holder that walks a listed chain checks the walk switches to batches exactly at its boundary. state: 1 active, 2 retired, 3 moved_out, 4 destroyed. The event is a CHAIN_MANIFEST on the tenant chain (tag 30 payload, tag 29 kind 1) whose prev is tenant_head at position tenant_len (D-163: a verified manifest covers the tenant chain up to that head).",
   "spec": "seam-runtime docs/specs/seam-event.v1.md §Chain key and genesis"
 }

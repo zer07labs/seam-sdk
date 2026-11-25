@@ -128,6 +128,16 @@ pub struct SeamEventPb {
     /// Modelled ([`crate::manifest`]) and part of the identity, like every modelled payload.
     #[prost(message, optional, tag = "30")]
     pub chain_manifest: Option<ChainManifestPb>,
+    /// tags 31-33 — S-3, this CHAINED event's place in its chain entry's Merkle batch
+    /// ([`crate::merkle`], spec §Merkle batch link): `leaf_index` of `leaf_count` and the RFC 9162
+    /// `inclusion_path`. UNSEALED, bound through `checksum`. Absent (`leaf_count` 0) on an advisory event
+    /// and on a link below its chain's S-3 history boundary. Part of the identity.
+    #[prost(uint32, tag = "31")]
+    pub leaf_index: u32,
+    #[prost(uint32, tag = "32")]
+    pub leaf_count: u32,
+    #[prost(bytes = "vec", repeated, tag = "33")]
+    pub inclusion_path: Vec<Vec<u8>>,
 }
 
 /// `ChainManifest` (envelope tag 30), transcribed from `seam-event.v1.md` §CHAIN_MANIFEST. Fields 1-8,
@@ -159,6 +169,13 @@ pub struct ChainManifestPb {
     /// tag 11 (D-163) — that chain's head (`genesis(K)` when `tenant_len = 0`).
     #[prost(bytes = "vec", tag = "11")]
     pub tenant_head: Vec<u8>,
+    /// tag 12 (S-3) — 3 on a v3 manifest (`seam.audit.chain-manifest.v3`, signs the history boundaries),
+    /// 0 on v1/v2.
+    #[prost(uint32, tag = "12")]
+    pub manifest_version: u32,
+    /// tag 13 (S-3, v3) — the tenant chain's history boundary below `tenant_len`, absent when none.
+    #[prost(uint64, optional, tag = "13")]
+    pub tenant_batch_boundary: Option<u64>,
 }
 
 /// `ChainManifestEntry`: one declared flow chain. `(flow_id, env, version)` is the chain key's flow part;
@@ -177,6 +194,9 @@ pub struct ChainManifestEntryPb {
     pub state: u32,
     #[prost(uint32, tag = "6")]
     pub version: u32,
+    /// tag 7 (S-3, v3) — this chain's history boundary below `len`, absent when none.
+    #[prost(uint64, optional, tag = "7")]
+    pub batch_boundary: Option<u64>,
 }
 
 /// `FlowRef` (envelope tag 28): `{flow_id = 1, rev = 2, env = 3, version = 4}`. `version` is the CP flow
@@ -467,6 +487,13 @@ pub struct SeamEventJson {
     /// Tag 30; omitted when absent.
     #[serde(default)]
     pub chain_manifest: Option<ChainManifestJson>,
+    /// Tags 31-33 (S-3); each omitted when zero / empty. The path is a list of base64 strings.
+    #[serde(default)]
+    pub leaf_index: u32,
+    #[serde(default)]
+    pub leaf_count: u32,
+    #[serde(default)]
+    pub inclusion_path: Vec<String>,
     /// The five payloads this crate does not model (tags 14, 15, 17, 21, 26). **Presence only**, as on
     /// the protobuf side: [`OpaqueObject`] consumes the value without modelling it, and `Option` makes
     /// `null` read as absent — the same reading serde's `Option` gives it on the runtime side.
@@ -553,6 +580,12 @@ pub struct ChainManifestJson {
     pub tenant_len: u64,
     #[serde(default)]
     pub tenant_head: String,
+    /// Tag 12 (S-3): 3 on a v3 manifest, 0 (omitted) on v1/v2.
+    #[serde(default)]
+    pub manifest_version: u32,
+    /// Tag 13 (S-3, v3): the tenant chain's history boundary; omitted when absent.
+    #[serde(default)]
+    pub tenant_batch_boundary: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -569,6 +602,9 @@ pub struct ChainManifestEntryJson {
     pub state: u32,
     #[serde(default)]
     pub version: u32,
+    /// Tag 7 (S-3, v3): this chain's history boundary; omitted when absent.
+    #[serde(default)]
+    pub batch_boundary: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -733,6 +769,10 @@ pub struct Event {
     pub attestation: Option<Attestation>,
     /// The `CHAIN_MANIFEST` payload (tag 30), when this event is one. `None` otherwise.
     pub manifest: Option<ChainManifestPb>,
+    /// Tags 31-33 (S-3): this link's place in its batch. `leaf_count` 0 is the pre-S-3 shape.
+    pub leaf_index: u32,
+    pub leaf_count: u32,
+    pub inclusion_path: Vec<Vec<u8>>,
     /// The `DECISION_SEALED` payload — read only for the digest-v4 recompute under `--issuer`.
     pub decision: Option<Decision>,
     /// Presence of the five payloads this crate does not model — read only by the kind/payload
@@ -1003,6 +1043,7 @@ impl Event {
                                     head: b64(&c.head)?,
                                     state: c.state,
                                     version: c.version,
+                                    batch_boundary: c.batch_boundary,
                                 })
                             })
                             .collect::<Result<_, _>>()?,
@@ -1011,6 +1052,8 @@ impl Event {
                         signature: b64(&m.signature)?,
                         tenant_len: m.tenant_len,
                         tenant_head: b64(&m.tenant_head)?,
+                        manifest_version: m.manifest_version,
+                        tenant_batch_boundary: m.tenant_batch_boundary,
                     })
                 });
             let decision = j.payload.map(|p| -> Result<Decision, String> {
@@ -1120,6 +1163,13 @@ impl Event {
                 cert: cert.transpose()?,
                 attestation: attestation.transpose()?,
                 manifest: manifest.transpose()?,
+                leaf_index: j.leaf_index,
+                leaf_count: j.leaf_count,
+                inclusion_path: j
+                    .inclusion_path
+                    .iter()
+                    .map(|h| b64(h))
+                    .collect::<Result<_, _>>()?,
                 decision: decision.transpose()?,
                 presence: PayloadPresence {
                     learning_decision: j.learning_decision.is_some(),
@@ -1190,6 +1240,9 @@ impl Event {
                 tenant: a.tenant,
             }),
             manifest: pb.chain_manifest,
+            leaf_index: pb.leaf_index,
+            leaf_count: pb.leaf_count,
+            inclusion_path: pb.inclusion_path,
             decision: pb.payload.map(|p| Decision {
                 decision_id: p.decision_id,
                 tenant: p.tenant,
@@ -1313,6 +1366,11 @@ impl Event {
             digest: self.digest.clone(),
             checksum: self.checksum.clone(),
             chain_manifest: self.manifest.clone(),
+            // Tags 31-33 are identity like tag 29: two copies differing in their batch proof are two
+            // claims, and at most one of them folds.
+            leaf_index: self.leaf_index,
+            leaf_count: self.leaf_count,
+            inclusion_path: self.inclusion_path.clone(),
             chain_head_attestation: self.attestation.as_ref().map(|a| ChainHeadAttestationPb {
                 attested_len: a.attested_len,
                 attested_head: a.attested_head.clone(),
@@ -1325,6 +1383,12 @@ impl Event {
         };
         self.bytes = pb.encode_to_vec();
         self
+    }
+
+    /// Re-derive the canonical identity after a test edited a parsed event's fields.
+    #[cfg(test)]
+    pub(crate) fn with_identity_for_tests(self) -> Self {
+        self.with_identity()
     }
 
     /// Is this event a link in the chain? **By field presence, per the spec — never by `kind`.**
@@ -1681,6 +1745,9 @@ mod tests {
                 classification: String::new(),
                 kind: "POLICY_DENIED".into(),
                 session_id: None,
+                leaf_index: 0,
+                leaf_count: 0,
+                inclusion_path: Vec::new(),
                 prev_checksum: Vec::new(),
                 digest: None,
                 checksum: None,

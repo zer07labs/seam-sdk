@@ -768,9 +768,17 @@ fn rechain_attestation(e: &mut serde_json::Value) {
         a["issuer_aid"].as_str().unwrap(),
         &b64d(a["signature"].as_str().unwrap()),
     );
+    // The goldens are S-3 batches of one (seam-runtime#2039): the link is over the batch entry digest.
+    let linked = match e["leaf_count"].as_u64().unwrap_or(0) {
+        0 => digest.to_vec(),
+        1 => seam_verify::merkle::entry_digest(&digest, 0, 1, &[] as &[Vec<u8>])
+            .unwrap()
+            .to_vec(),
+        n => panic!("rechain_attestation: a {n}-member batch"),
+    };
     let mut h = Sha256::new();
     h.update(b64d(e["prev_checksum"].as_str().unwrap()));
-    h.update(&digest);
+    h.update(&linked);
     e["digest"] = serde_json::Value::String(b64e(&digest));
     e["checksum"] = serde_json::Value::String(b64e(&h.finalize()));
 }

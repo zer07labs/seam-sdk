@@ -1,4 +1,14 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 24844931 on runtime main (refreshed 2026-11-25).
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ e70d1130 on runtime main (refreshed 2026-11-25).
+     seam-runtime 0.124.0 (#2050, S-3 Merkle batches) on main.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ eba2f32f8 tracking dc3/s3-merkle-batch-v2 (refreshed 2026-11-25).
+     seam-runtime#2039 with 0.123.0 (#2037) merged in, and the tenant-chain boundary checked in selected mode too
+     (c550f4f9a). Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 64ec782c4 tracking dc3/s3-merkle-batch-v2 (refreshed 2026-11-25).
+     seam-runtime#2039 (0.124.0 train, deep-cleanup S-3): format seam-evidence-bundle.v2; inclusion carries the batch proof,
+     chain_index and batch_boundary, and every window link of the chain sits on its side of the boundary.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 24844931 on runtime main (refreshed 2026-11-25).
      seam-runtime#2037 (0.123.0 train, deep-cleanup S-4 + SEC2-2) merged: the copy now tracks runtime main at the release commit.
      Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ a61adee tracking dc3/s4-seal-key-v2 (refreshed 2026-11-25).
@@ -55,9 +65,12 @@
      verifier refuses a bundle that breaks its pairing with receipt_hash or its closed vocabulary.
 -->
 
-# `seam-evidence-bundle.v1` — the self-contained evidence bundle
+# `seam-evidence-bundle.v2` — the self-contained evidence bundle
 
-**Status:** normative · **Format tag:** `seam-evidence-bundle.v1` · **Binding domain:** `seam.evidence-binding.v1` · **Owner:** `seam-runtime` · **Issue:** #806
+> The file keeps its `.v1` name (other repos link it). The format is v2 since S-3 (Merkle batch sealing): the
+> chain links seal batches, so `inclusion` carries the record's batch proof. A v1 bundle is refused.
+
+**Status:** normative · **Format tag:** `seam-evidence-bundle.v2` · **Binding domain:** `seam.evidence-binding.v1` · **Owner:** `seam-runtime` · **Issue:** #806
 
 An evidence bundle is what an operator hands to an **adverse party**: someone who disputes a decision,
 has no runtime access and no reason to trust the operator. With the bundle and the issuer AID, pinned
@@ -107,14 +120,17 @@ unlinked from the chain, and a binding without its Commitment proves nothing.
 
 ```json
 {
-  "format": "seam-evidence-bundle.v1",
+  "format": "seam-evidence-bundle.v2",
   "scope": "decision",
   "decision_id": "dec:{tenant}:{session_id}",
   "tenant": "…",
   "exported_at": 1700000000000,
   "issuer": { "aid": "aid:pubkey:…", "ed25519_public_key": "<64 hex>", "pin": "…" },
   "inclusion": {
-    "decision_offset": 0, "record_checksum": "<base64>", "anchor_offset": 0,
+    "decision_offset": 0, "record_checksum": "<base64>",
+    "record_digest": "<base64>", "leaf_index": 0, "leaf_count": 1, "inclusion_path": ["<base64>", "…"],
+    "chain_index": 0, "batch_boundary": 0,
+    "anchor_offset": 0,
     "anchor_attested_len": 0, "window_events": 0, "window_links": 0, "window_attestations": 2
   },
   "files": { "events.jsonl": { "sha256": "<64 hex>", "bytes": 0 }, "…": {} },
@@ -271,7 +287,7 @@ which the chain step frames into `digest_v4` as an opaque string. The same step 
 `seam-verify bundle <DIR> --issuer <AID>` runs these steps in order and refuses (exit 2) at the first
 failure:
 
-1. **Manifest.** `format` is `seam-evidence-bundle.v1`. `issuer.aid` equals the pinned AID. Every
+1. **Manifest.** `format` is `seam-evidence-bundle.v2`. `issuer.aid` equals the pinned AID. Every
    listed file exists with the listed `sha256` and `bytes`. `events.jsonl` and `anchor.json` are
    listed. `commitment.json` and `binding.json` are both listed or both absent. `disclosed` agrees
    with `files`.
@@ -280,7 +296,17 @@ failure:
    kind carries its chain fields, every `DECISION_SEALED` recomputes under record digest v4 (tags
    10-17), and a covering attestation authenticates the window.
 3. **Inclusion.** The window holds exactly one chained `DECISION_SEALED` for `decision_id`, in
-   `tenant`, and its `checksum` is `inclusion.record_checksum`.
+   `tenant`, and its `checksum` is `inclusion.record_checksum`. S-3: that checksum links the record's
+   seal batch. `inclusion.record_digest`, `leaf_index`, `leaf_count` and `inclusion_path` are the
+   event's own `digest` and tags 31-33, and they fold to the batch entry the checksum links
+   (`seam-event.v1.md` §Merkle batch link). `record_checksum` is the batch's checksum, shared by every
+   member, so the binding below names the decision and that checksum; this step proves the decision is
+   in the batch. **History boundary:** `inclusion.chain_index` is the event's chain position (tag 29
+   `seq`, else refused) and `inclusion.batch_boundary` its chain's S-3 boundary (`null` = the chain has no
+   batch). At or above the boundary the event is a batch member as above; below it (or with `null`) it is
+   pre-S-3: `leaf_count` 0, `leaf_index` 0, an empty `inclusion_path`, and `record_checksum = H(prev_checksum
+   ‖ record_digest)`. Every chained event of the same chain in `events.jsonl` must be on its side of the
+   boundary (`seam-event.v1.md` §Merkle batch link, History boundary).
 4. **Commitment.** If `signed_artifact` is present, the TCT verifies against the pinned AID and its
    grant carries this Commitment's digest. Since S-4 the TCT is signed by a seal key the pinned issuer
    certifies: the certificate in its `ext` verifies under the pinned AID, the TCT verifies under the seal

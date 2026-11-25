@@ -1,5 +1,5 @@
 {
-  "format": "seam-evidence-bundle.v1",
+  "format": "seam-evidence-bundle.v2",
   "scope": "decision",
   "decision_id": "dec:design-partner:d1-0000000000000000000",
   "tenant": "design-partner",
@@ -11,7 +11,13 @@
   },
   "inclusion": {
     "decision_offset": 5,
-    "record_checksum": "lqoTEswbvwdSvhg3tzGggm8qhI+CTplTs7xokYS7zzo=",
+    "record_checksum": "Tp8vTjNeB6NoTrSgTBG2ERCBaItnv5uz1eJoUUfXxIs=",
+    "record_digest": "IdB/g4TnJ+R8OQUPa5rokoUN4rM7QYeJW7Esbql9T3Q=",
+    "leaf_index": 0,
+    "leaf_count": 1,
+    "inclusion_path": [],
+    "chain_index": 3,
+    "batch_boundary": 0,
     "anchor_offset": 3,
     "anchor_attested_len": 2,
     "window_events": 4,
@@ -20,11 +26,11 @@
   },
   "files": {
     "events.jsonl": {
-      "sha256": "d79f30717b7fef75adccacb6d662fdd506e20c5915c869b0b0be435b2e553bdd",
-      "bytes": 4432
+      "sha256": "1620a6ac1cb499509b85f0639e61264d76a57b095ef2dcb059e24270d647b5ad",
+      "bytes": 4492
     },
     "anchor.json": {
-      "sha256": "a790ce413e183c868b4b88f6f13cb4b1d4c4828b7721fb14186b2c55c4f4914e",
+      "sha256": "83ad9da1347307a81ec68a09a2ed4baa494b80022d85391c7bdb09171d219361",
       "bytes": 317
     }
   },
@@ -32,15 +38,15 @@
   "withheld": [
     {
       "item": "commitment",
-      "reason": "the record is crypto-shredded: its key is destroyed and the plaintext is unrecoverable (the chained link still verifies)"
+      "reason": "the record is erased (its key is destroyed or its erasure is decided); the plaintext is withdrawn, the chained link still verifies"
     },
     {
       "item": "binding",
-      "reason": "the record is crypto-shredded: its key is destroyed and the plaintext is unrecoverable (the chained link still verifies)"
+      "reason": "the record is erased (its key is destroyed or its erasure is decided); the plaintext is withdrawn, the chained link still verifies"
     },
     {
       "item": "context",
-      "reason": "not disclosed by the exporter (pass --disclose context)"
+      "reason": "the record is erased (its key is destroyed or its erasure is decided); the plaintext is withdrawn, the chained link still verifies"
     },
     {
       "item": "policy",

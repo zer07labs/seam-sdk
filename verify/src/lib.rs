@@ -48,7 +48,7 @@
 //!   long as the real one, so length alone is not the whole claim. A caller who does not supply one
 //!   is in exactly the position this crate was always in: it can prove the chain it was **given** is
 //!   consistent, and nothing more.
-//! * **Evidence bundles** (`seam-evidence-bundle.v1`, seam-sdk#225) — a decision-scoped directory an
+//! * **Evidence bundles** (`seam-evidence-bundle.v2`, seam-sdk#225) — a decision-scoped directory an
 //!   operator hands an adverse party, verified from its files and the pinned issuer AID alone
 //!   ([`verify_bundle`]): the manifest's hashes, the anchored window (the same calls as
 //!   `chain --from-anchor`), the decision's inclusion, the Commitment's TCT, the issuer's
@@ -105,6 +105,7 @@ pub mod commitment;
 mod entry;
 pub mod gate;
 pub mod manifest;
+pub mod merkle;
 pub mod selection;
 pub mod verify;
 pub mod voter;

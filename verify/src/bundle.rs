@@ -1,4 +1,4 @@
-//! `seam-evidence-bundle.v1` — verify a self-contained evidence bundle directory from its files and a
+//! `seam-evidence-bundle.v2` — verify a self-contained evidence bundle directory from its files and a
 //! **pinned** issuer AID alone (`docs/evidence-bundle.v1.md` § Verifying).
 //!
 //! The six steps run in the spec's order and the first failure refuses:
@@ -8,7 +8,10 @@
 //! 2. **Chain** — the window is walked exactly as `chain events.jsonl --issuer AID --from-anchor
 //!    anchor.json` walks it, through the same library functions.
 //! 3. **Inclusion** — exactly one chained `DECISION_SEALED` for the manifest's decision, in its tenant,
-//!    whose `checksum` is `inclusion.record_checksum`.
+//!    whose `checksum` is `inclusion.record_checksum`; S-3 (seam-runtime#2039): the manifest's batch proof
+//!    (`leaf_index`, `leaf_count`, `inclusion_path`) is the link's own and folds `record_digest` to the entry
+//!    the checksum names, and `chain_index` / `batch_boundary` put every window link of that chain on its
+//!    side of the S-3 history boundary.
 //! 4. **Commitment** — the TCT (when present) verifies against the pinned AID and binds this
 //!    Commitment's `seam-commitment-digest:v5` (after every voter record re-verifies, `src/voter.rs`); `supersedes` matches the chained payload's.
 //!    A `selection` block (option selection) is strictly decoded, frames field 9, and its winner, action,
@@ -32,7 +35,9 @@ use crate::verify;
 use crate::wire::{Attestation, Event};
 
 /// The only format tag this build knows. Any other is refused (spec § Versioning).
-pub const FORMAT: &str = "seam-evidence-bundle.v1";
+/// `v2` since S-3 (seam-runtime#2039): the `inclusion` block carries the batch proof and the S-3 history
+/// boundary; the spec file keeps its `evidence-bundle.v1.md` name.
+pub const FORMAT: &str = "seam-evidence-bundle.v2";
 
 /// The binding's signing domain.
 pub const BINDING_DOMAIN: &str = "seam.evidence-binding.v1";
@@ -465,7 +470,7 @@ fn check_manifest(dir: &Path, pinned: &str) -> Result<serde_json::Value, BundleE
     // that is missing is a refusal (exit 2), never an IO error.
     let raw = std::fs::read(dir.join("manifest.json")).map_err(|e| {
         BundleError::Usage(format!(
-            "{}: cannot read manifest.json ({e}) — is this a seam-evidence-bundle.v1 directory?",
+            "{}: cannot read manifest.json ({e}) — is this a seam-evidence-bundle.v2 directory?",
             dir.display()
         ))
     })?;
@@ -657,6 +662,117 @@ fn check_window(dir: &Path, pinned: &str) -> Result<Window, BundleError> {
 
 // ── the whole verification ────────────────────────────────────────────────────────────────────
 
+/// S-3 — step 3's batch half (seam-runtime `crates/seam-verify/src/bundle.rs` `batch_inclusion` @
+/// `64ec782c4`): the manifest's proof is the sealed link's own, and the record digest folds through it to
+/// the entry the link's checksum names. `inclusion.chain_index` is the link's chain position and
+/// `inclusion.batch_boundary` its chain's S-3 history boundary (`null` = no batch). Below the boundary a
+/// link is pre-S-3 (`leaf_count` 0, no path) and links the record digest itself; at or above it a link is a
+/// batch member. Every window link of the same chain obeys the same split.
+fn batch_inclusion(m: &serde_json::Value, sealed: &Event, window: &[Event]) -> Result<(), String> {
+    let bad = |what: &str| format!("manifest.json: inclusion.{what}");
+    let u32_at = |k: &str| {
+        m.pointer(&format!("/inclusion/{k}"))
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|v| u32::try_from(v).ok())
+    };
+    let digest = m
+        .pointer("/inclusion/record_digest")
+        .and_then(serde_json::Value::as_str)
+        .and_then(b64_std)
+        .ok_or_else(|| bad("record_digest is missing or not base64"))?;
+    let path = m
+        .pointer("/inclusion/inclusion_path")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|a| {
+            a.iter()
+                .map(|h| h.as_str().and_then(b64_std))
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| bad("inclusion_path is missing or not a base64 list"))?;
+    let (Some(index), Some(count)) = (u32_at("leaf_index"), u32_at("leaf_count")) else {
+        return Err(bad("leaf_index / leaf_count is missing"));
+    };
+    if Some(digest.as_slice()) != sealed.digest.as_deref()
+        || index != sealed.leaf_index
+        || count != sealed.leaf_count
+        || path != sealed.inclusion_path
+    {
+        return Err(bad("the batch proof is not the decision link's own"));
+    }
+    let chain_index = m
+        .pointer("/inclusion/chain_index")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| bad("chain_index is missing"))?;
+    let boundary = match m.pointer("/inclusion/batch_boundary") {
+        Some(serde_json::Value::Null) => None,
+        Some(v) => Some(
+            v.as_u64()
+                .ok_or_else(|| bad("batch_boundary is not a position or null"))?,
+        ),
+        None => return Err(bad("batch_boundary is missing")),
+    };
+    // Tag 29 is optional on the wire; when present it must agree.
+    if sealed.chain.as_ref().is_some_and(|c| c.seq != chain_index) {
+        return Err(bad("chain_index is not the decision link's chain position"));
+    }
+    // Every link of the decision's chain in the window, the decision's own included, is on its side. The
+    // window is a contiguous run of that chain and every chained event is one position (a batch member or
+    // a pre-S-3 link), so positions count from the decision's own.
+    let key = |e: &Event| {
+        e.chain
+            .as_ref()
+            .map(|c| (c.kind, c.flow_id.clone(), c.env.clone(), c.version))
+    };
+    let same: Vec<&Event> = window
+        .iter()
+        .filter(|e| {
+            e.digest.is_some()
+                && e.checksum.is_some()
+                && e.tenant == sealed.tenant
+                && e.stream_id == sealed.stream_id
+                && key(e) == key(sealed)
+        })
+        .collect();
+    let at = same
+        .iter()
+        .position(|e| e.seq == sealed.seq)
+        .ok_or_else(|| bad("the decision link is not in its chain's window"))?;
+    for (i, e) in same.iter().enumerate() {
+        let pos = (chain_index + i as u64)
+            .checked_sub(at as u64)
+            .ok_or_else(|| bad("chain_index is below the window's start"))?;
+        let batched = boundary.is_some_and(|b| pos >= b);
+        if (e.leaf_count == 0) == batched {
+            return Err(bad(&format!(
+                "batch_boundary: the link at chain position {pos} (seq {}) is {} but the boundary \
+                 {boundary:?} puts it {}",
+                e.seq,
+                if e.leaf_count == 0 {
+                    "pre-S-3"
+                } else {
+                    "a batch member"
+                },
+                if batched { "at or above" } else { "below" },
+            )));
+        }
+    }
+    let entry = match count {
+        0 if index == 0 && path.is_empty() => digest.clone(),
+        0 => return Err(bad("a pre-S-3 link carries proof fields")),
+        _ => crate::merkle::entry_digest(&digest, index, count, &path)
+            .ok_or_else(|| bad("the batch proof does not fold"))?
+            .to_vec(),
+    };
+    if verify::link(&sealed.prev_checksum, &entry).as_slice()
+        != sealed.checksum.as_deref().unwrap_or_default()
+    {
+        return Err(bad(
+            "the record does not fold to the batch entry the link's checksum names",
+        ));
+    }
+    Ok(())
+}
+
 /// Verify the bundle in `dir` against the **pinned** issuer AID. `now_secs` is the clock the TCT's
 /// `iat`/`exp` are checked against (the CLI passes the system clock).
 pub fn verify_bundle(dir: &Path, pinned: &str, now_secs: u64) -> Result<BundleReport, BundleError> {
@@ -738,6 +854,7 @@ pub fn verify_bundle(dir: &Path, pinned: &str, now_secs: u64) -> Result<BundleRe
             "manifest.json: inclusion.record_checksum is not the decision link's checksum",
         ));
     }
+    batch_inclusion(&m, sealed, &w.events).map_err(|e| failed(3, e))?;
     let payload = sealed
         .decision
         .clone()

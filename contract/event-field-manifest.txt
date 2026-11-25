@@ -76,8 +76,10 @@
 # SPELLING
 # --------
 # One line per field: `<Message>/<field_name>`, proto spelling (snake_case), sorted, no tags, no
-# types. A `map` field is ONE entry on its owner, never a key/value pair. 170 fields, 22 messages (measured at the 0.121.0
-# lockstep, seam-runtime#1959 @ 8e579b2c: `AuthorizeEvaluated/subject_digest`, tag 10, deleted and reserved).
+# types. A `map` field is ONE entry on its owner, never a key/value pair. 176 fields, 22 messages (since the 0.124.0
+# lockstep, seam-runtime#2039 S-3: `SeamEvent/` leaf_index, leaf_count and inclusion_path, tags 31-33, the Merkle batch
+# proof `verify/` folds, and the v3 manifest's history boundary: `ChainManifest/` manifest_version (12) and
+# tenant_batch_boundary (13), `ChainManifestEntry/batch_boundary` (7). 170 at 0.121.0, seam-runtime#1959 @ 8e579b2c: `AuthorizeEvaluated/subject_digest` reserved).
 #
 # CARRIED, NOT VERIFIED (Flows W4, DECISIONS 2026-11-23): the attestation v3 lines (`ChainHeadAttestation/`
 # chain_kind, env, flow_id, stream_id, version) and the erasure certificate v2 lines (`ErasureCertificate/` erased_items,
@@ -139,11 +141,14 @@ ChainManifest/governing_doc_sha256
 ChainManifest/governing_generated_at
 ChainManifest/issuer_aid
 ChainManifest/manifest_at
+ChainManifest/manifest_version
 ChainManifest/signature
 ChainManifest/stream_id
 ChainManifest/tenant
+ChainManifest/tenant_batch_boundary
 ChainManifest/tenant_head
 ChainManifest/tenant_len
+ChainManifestEntry/batch_boundary
 ChainManifestEntry/env
 ChainManifestEntry/flow_id
 ChainManifestEntry/head
@@ -241,7 +246,10 @@ SeamEvent/erasure_certificate
 SeamEvent/event_id
 SeamEvent/event_redriven
 SeamEvent/flow_ref
+SeamEvent/inclusion_path
 SeamEvent/kind
+SeamEvent/leaf_count
+SeamEvent/leaf_index
 SeamEvent/learning_decision
 SeamEvent/learning_outcome
 SeamEvent/namespace
