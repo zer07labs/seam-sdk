@@ -109,24 +109,21 @@ export const KNOWN_KINDS: ReadonlySet<string> = new Set([
 /** What an AID is enrolled FOR (runtime 0.71.0, OI-R2a): the CLOSED set the runtime parses strictly on
  * `EnrollTenantRequest.kind`, and the value `TenantView.kind` / `WhoAmIResponse.kind` report. Name a
  * kind with these rather than hand-typing the string — any other value, `""` included, is the
- * runtime's INVALID_ARGUMENT. An `outcome_reporter` or `changeset_worker` credential is refused
+ * runtime's INVALID_ARGUMENT. An `outcome_reporter` credential is refused
  * PERMISSION_DENIED (`SUBJECT_KIND_CONFINED`) on every verb outside its kind. Python's
  * `seam_sdk.ENROLMENT_KIND_*` / `ENROLMENT_KINDS`. */
 export const ENROLMENT_KIND_AGENT = "agent";
 export const ENROLMENT_KIND_OUTCOME_REPORTER = "outcome_reporter";
-export const ENROLMENT_KIND_CHANGESET_WORKER = "changeset_worker";
 /** A signer-only voter key (#1687, runtime 0.87.0): bound to exactly one `participantId`, it signs
  * `seam-voter-pop-v1` proofs and permits no data-plane verb. */
 export const ENROLMENT_KIND_VOTER = "voter";
 export type EnrolmentKind =
   | typeof ENROLMENT_KIND_AGENT
   | typeof ENROLMENT_KIND_OUTCOME_REPORTER
-  | typeof ENROLMENT_KIND_CHANGESET_WORKER
   | typeof ENROLMENT_KIND_VOTER;
 export const ENROLMENT_KINDS: ReadonlySet<EnrolmentKind> = new Set<EnrolmentKind>([
   ENROLMENT_KIND_AGENT,
   ENROLMENT_KIND_OUTCOME_REPORTER,
-  ENROLMENT_KIND_CHANGESET_WORKER,
   ENROLMENT_KIND_VOTER,
 ]);
 

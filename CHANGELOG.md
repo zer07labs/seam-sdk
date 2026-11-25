@@ -16,6 +16,13 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Removed (deep-cleanup DC-3 train A, runtime OR-7 — breaking, version-locked to the runtime)
+
+- `ENROLMENT_KIND_CHANGESET_WORKER` (TS and Python) and its member of `ENROLMENT_KINDS` / the TS `EnrolmentKind`
+  union. Changeset was parked (2026-11-12) and never produced; the runtime drops the `changeset_worker` enrolment
+  kind in the same train. `enrollTenant` / `enroll_tenant` now refuse `kind: "changeset_worker"` before any RPC,
+  like any other value outside the closed set (`agent`, `outcome_reporter`, `voter`).
+
 ## 0.121.0 — 2026-11-24
 
 ### Removed (deep-cleanup 3.3 step 4, train 0.121.0 lockstep — breaking on the event wire, version-locked to the runtime)

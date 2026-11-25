@@ -37,7 +37,6 @@ from ._seal import SealAttestation, seal_attestation_of
 from .admin import (
     DEFAULT_ADMIN_TIMEOUT_S,
     ENROLMENT_KIND_AGENT,
-    ENROLMENT_KIND_CHANGESET_WORKER,
     ENROLMENT_KIND_OUTCOME_REPORTER,
     ENROLMENT_KIND_VOTER,
     ENROLMENT_KINDS,
@@ -295,7 +294,6 @@ __all__ = [
     "CLEARANCES",
     # Enrolment kind (runtime 0.71.0, OI-R2a) — EnrollTenantRequest.kind / TenantView.kind / WhoAmI
     "ENROLMENT_KIND_AGENT",
-    "ENROLMENT_KIND_CHANGESET_WORKER",
     "ENROLMENT_KIND_OUTCOME_REPORTER",
     "ENROLMENT_KIND_VOTER",
     "ENROLMENT_KINDS",

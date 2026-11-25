@@ -285,7 +285,6 @@ def test_enroll_tenant_refuses_a_malformed_pop_before_any_rpc(bad, err) -> None:
 def test_the_enrolment_kinds_are_the_runtimes_closed_set() -> None:
     from seam_sdk import (
         ENROLMENT_KIND_AGENT,
-        ENROLMENT_KIND_CHANGESET_WORKER,
         ENROLMENT_KIND_OUTCOME_REPORTER,
         ENROLMENT_KIND_VOTER,
         ENROLMENT_KINDS,
@@ -293,11 +292,8 @@ def test_the_enrolment_kinds_are_the_runtimes_closed_set() -> None:
 
     assert ENROLMENT_KIND_AGENT == "agent"
     assert ENROLMENT_KIND_OUTCOME_REPORTER == "outcome_reporter"
-    assert ENROLMENT_KIND_CHANGESET_WORKER == "changeset_worker"
     assert ENROLMENT_KIND_VOTER == "voter"
-    assert ENROLMENT_KINDS == frozenset(
-        {"agent", "outcome_reporter", "changeset_worker", "voter"}
-    )
+    assert ENROLMENT_KINDS == frozenset({"agent", "outcome_reporter", "voter"})
 
 
 def test_enroll_tenant_sends_kind_only_when_given() -> None:
@@ -314,7 +310,9 @@ def test_enroll_tenant_sends_kind_only_when_given() -> None:
 
 
 @pytest.mark.parametrize(
-    "bad", ["", "Agent", "operator", "outcome_connector", " agent"]
+    # `changeset_worker` was retired (deep-cleanup OR-7): refused like any other unknown kind.
+    "bad",
+    ["", "Agent", "operator", "outcome_connector", " agent", "changeset_worker"],
 )
 def test_enroll_tenant_refuses_a_kind_outside_the_closed_set_before_any_rpc(
     bad: str,

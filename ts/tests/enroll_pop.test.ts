@@ -18,7 +18,6 @@ import type { Transport, UnaryResponse } from "@connectrpc/connect";
 import { Agent } from "../src/client.js";
 import {
   ENROLMENT_KIND_AGENT,
-  ENROLMENT_KIND_CHANGESET_WORKER,
   ENROLMENT_KIND_OUTCOME_REPORTER,
   ENROLMENT_KIND_VOTER,
   ENROLMENT_KINDS,
@@ -264,9 +263,8 @@ test("enrollTenant refuses a malformed pop with InvalidArgumentError before any 
 test("the enrolment kinds are the runtime's closed set", () => {
   assert.equal(ENROLMENT_KIND_AGENT, "agent");
   assert.equal(ENROLMENT_KIND_OUTCOME_REPORTER, "outcome_reporter");
-  assert.equal(ENROLMENT_KIND_CHANGESET_WORKER, "changeset_worker");
   assert.equal(ENROLMENT_KIND_VOTER, "voter");
-  assert.deepEqual([...ENROLMENT_KINDS].sort(), ["agent", "changeset_worker", "outcome_reporter", "voter"]);
+  assert.deepEqual([...ENROLMENT_KINDS].sort(), ["agent", "outcome_reporter", "voter"]);
 });
 
 test("enrollTenant sends kind only when given", async () => {
@@ -280,7 +278,8 @@ test("enrollTenant sends kind only when given", async () => {
 });
 
 test("enrollTenant refuses a kind outside the closed set with InvalidArgumentError before any RPC", async () => {
-  for (const bad of ["", "Agent", "operator", "outcome_connector", " agent"]) {
+  // `changeset_worker` was retired (deep-cleanup OR-7): it is refused like any other unknown kind.
+  for (const bad of ["", "Agent", "operator", "outcome_connector", " agent", "changeset_worker"]) {
     const { admin, seen } = recordingAdmin();
     await assert.rejects(
       admin.enrollTenant("aid:x", "acme", "fraud", undefined, { kind: bad as EnrolmentKind }),
