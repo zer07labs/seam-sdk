@@ -105,6 +105,7 @@ pub mod commitment;
 mod entry;
 pub mod gate;
 pub mod manifest;
+pub mod merkle;
 pub mod selection;
 pub mod verify;
 pub mod voter;

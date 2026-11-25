@@ -128,6 +128,16 @@ pub struct SeamEventPb {
     /// Modelled ([`crate::manifest`]) and part of the identity, like every modelled payload.
     #[prost(message, optional, tag = "30")]
     pub chain_manifest: Option<ChainManifestPb>,
+    /// tags 31-33 — S-3, this CHAINED event's place in its chain entry's Merkle batch
+    /// ([`crate::merkle`], spec §Merkle batch link): `leaf_index` of `leaf_count` and the RFC 9162
+    /// `inclusion_path`. UNSEALED, bound through `checksum`. Absent (`leaf_count` 0) on an advisory event
+    /// and on a link below its chain's S-3 history boundary. Part of the identity.
+    #[prost(uint32, tag = "31")]
+    pub leaf_index: u32,
+    #[prost(uint32, tag = "32")]
+    pub leaf_count: u32,
+    #[prost(bytes = "vec", repeated, tag = "33")]
+    pub inclusion_path: Vec<Vec<u8>>,
 }
 
 /// `ChainManifest` (envelope tag 30), transcribed from `seam-event.v1.md` §CHAIN_MANIFEST. Fields 1-8,
@@ -467,6 +477,13 @@ pub struct SeamEventJson {
     /// Tag 30; omitted when absent.
     #[serde(default)]
     pub chain_manifest: Option<ChainManifestJson>,
+    /// Tags 31-33 (S-3); each omitted when zero / empty. The path is a list of base64 strings.
+    #[serde(default)]
+    pub leaf_index: u32,
+    #[serde(default)]
+    pub leaf_count: u32,
+    #[serde(default)]
+    pub inclusion_path: Vec<String>,
     /// The five payloads this crate does not model (tags 14, 15, 17, 21, 26). **Presence only**, as on
     /// the protobuf side: [`OpaqueObject`] consumes the value without modelling it, and `Option` makes
     /// `null` read as absent — the same reading serde's `Option` gives it on the runtime side.
@@ -733,6 +750,10 @@ pub struct Event {
     pub attestation: Option<Attestation>,
     /// The `CHAIN_MANIFEST` payload (tag 30), when this event is one. `None` otherwise.
     pub manifest: Option<ChainManifestPb>,
+    /// Tags 31-33 (S-3): this link's place in its batch. `leaf_count` 0 is the pre-S-3 shape.
+    pub leaf_index: u32,
+    pub leaf_count: u32,
+    pub inclusion_path: Vec<Vec<u8>>,
     /// The `DECISION_SEALED` payload — read only for the digest-v4 recompute under `--issuer`.
     pub decision: Option<Decision>,
     /// Presence of the five payloads this crate does not model — read only by the kind/payload
@@ -1120,6 +1141,13 @@ impl Event {
                 cert: cert.transpose()?,
                 attestation: attestation.transpose()?,
                 manifest: manifest.transpose()?,
+                leaf_index: j.leaf_index,
+                leaf_count: j.leaf_count,
+                inclusion_path: j
+                    .inclusion_path
+                    .iter()
+                    .map(|h| b64(h))
+                    .collect::<Result<_, _>>()?,
                 decision: decision.transpose()?,
                 presence: PayloadPresence {
                     learning_decision: j.learning_decision.is_some(),
@@ -1190,6 +1218,9 @@ impl Event {
                 tenant: a.tenant,
             }),
             manifest: pb.chain_manifest,
+            leaf_index: pb.leaf_index,
+            leaf_count: pb.leaf_count,
+            inclusion_path: pb.inclusion_path,
             decision: pb.payload.map(|p| Decision {
                 decision_id: p.decision_id,
                 tenant: p.tenant,
@@ -1313,6 +1344,11 @@ impl Event {
             digest: self.digest.clone(),
             checksum: self.checksum.clone(),
             chain_manifest: self.manifest.clone(),
+            // Tags 31-33 are identity like tag 29: two copies differing in their batch proof are two
+            // claims, and at most one of them folds.
+            leaf_index: self.leaf_index,
+            leaf_count: self.leaf_count,
+            inclusion_path: self.inclusion_path.clone(),
             chain_head_attestation: self.attestation.as_ref().map(|a| ChainHeadAttestationPb {
                 attested_len: a.attested_len,
                 attested_head: a.attested_head.clone(),
@@ -1325,6 +1361,12 @@ impl Event {
         };
         self.bytes = pb.encode_to_vec();
         self
+    }
+
+    /// Re-derive the canonical identity after a test edited a parsed event's fields.
+    #[cfg(test)]
+    pub(crate) fn with_identity_for_tests(self) -> Self {
+        self.with_identity()
     }
 
     /// Is this event a link in the chain? **By field presence, per the spec — never by `kind`.**
@@ -1681,6 +1723,9 @@ mod tests {
                 classification: String::new(),
                 kind: "POLICY_DENIED".into(),
                 session_id: None,
+                leaf_index: 0,
+                leaf_count: 0,
+                inclusion_path: Vec::new(),
                 prev_checksum: Vec::new(),
                 digest: None,
                 checksum: None,
