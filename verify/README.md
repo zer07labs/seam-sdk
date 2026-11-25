@@ -500,8 +500,10 @@ The six steps run in the spec's order and the first failure refuses with exit 2,
    embeds. A P-256 voter key and the declared-but-unserved `cp_signed` method are refused, not skipped. A
    record proves **distinct keys, not distinct parties**, and the vote content digest it signs is not
    re-derived (what it covers is not in the bundle). The JSON output carries `voters_verified`. Then the
-   self-attestation TCT verifies against the pinned AID (`iss == sub == aud`, grants exactly
-   `["aitp.attestation"]`) and its `ext` binding carries the recomputed `seam-commitment-digest:v5` (the
+   self-attestation TCT verifies against the pinned AID through its seal-key certificate (S-4, runtime
+   0.123.0: the pinned issuer certifies a seal key, the seal key signs the TCT with `iss == sub == aud` = the
+   seal AID, its `iat` lies in the certificate window and equals `floor(sealed_at / 1000)` of the chained
+   record; grants exactly `["aitp.attestation"]`) and its `ext` binding carries the recomputed `seam-commitment-digest:v5` (the
    sealed explanation, voter records included, under `seam-explanation-digest:v2`, so a re-worded reason
    fails; field 9 is framed only from this verifier's own `selection_digest` over the disclosed `selection`
    block (a stated `selection_digest` is refused), and field 10 must be absent; field 11,

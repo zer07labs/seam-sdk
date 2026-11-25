@@ -19,8 +19,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
-import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters;
-import org.bouncycastle.crypto.signers.Ed25519Signer;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -417,16 +415,31 @@ class CommitmentDigestV5Test {
     return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
   }
 
+  /**
+   * S-4: the token is signed by the test seal key ({@link SealKeyTokens#SEAL_SEED}); the issuer seed
+   * only certifies it (see {@link #ext}).
+   */
   private static String sign(String seedHex, String payloadJson) {
-    String input =
-        b64("{\"alg\":\"EdDSA\",\"typ\":\"aitp-tct+jwt\"}".getBytes(StandardCharsets.UTF_8))
-            + "."
-            + b64(payloadJson.getBytes(StandardCharsets.UTF_8));
-    byte[] msg = input.getBytes(StandardCharsets.US_ASCII);
-    Ed25519Signer s = new Ed25519Signer();
-    s.init(true, new Ed25519PrivateKeyParameters(HEX.parseHex(seedHex), 0));
-    s.update(msg, 0, msg.length);
-    return input + "." + b64(s.generateSignature());
+    return SealKeyTokens.jws(SealKeyTokens.SEAL_SEED, payloadJson);
+  }
+
+  /** The tct block's issuer AID; the certificate names it. */
+  private static String issuerOf(String seedHex) {
+    return "aid:pubkey:" + b64(SealKeyTokens.pub(HEX.parseHex(seedHex)));
+  }
+
+  /** {@code ext}: the statement plus the seal-key certificate member, under the tct block's issuer. */
+  private static Map<String, Object> ext(Object statement, String seedHex) {
+    Map<String, Object> e = new LinkedHashMap<>();
+    e.put(SeamCrypto.COMMITMENT_EXT_NAMESPACE, statement);
+    e.put(
+        SeamCrypto.SEAL_KEY_CERT_EXT_KEY,
+        SealKeyTokens.member(HEX.parseHex(seedHex), issuerOf(seedHex)));
+    return e;
+  }
+
+  private static String certJson(String seedHex) {
+    return new Gson().toJson(SealKeyTokens.member(HEX.parseHex(seedHex), issuerOf(seedHex)));
   }
 
   private static Map<String, Object> statement(String digest) {
@@ -436,15 +449,18 @@ class CommitmentDigestV5Test {
     return st;
   }
 
-  private static Map<String, Object> payload(String iss, String digest) {
-    Map<String, Object> p = new LinkedHashMap<>();
-    p.put("iss", iss);
-    p.put("sub", iss);
-    p.put("aud", iss);
+  /** The seal-key payload: iss/sub/aud are the SEAL AID; the pinned issuer only certifies. */
+  private static Map<String, Object> payload(String seedHex, String digest) {
+    Map<String, Object> p = SealKeyTokens.claims(SealKeyTokens.SEAL_SEED, SealKeyTokens.IAT);
     p.put("exp", 4_853_600_000L);
     p.put("grants", List.of(SeamCrypto.ATTESTATION_GRANT));
-    p.put("ext", Map.of(SeamCrypto.COMMITMENT_EXT_NAMESPACE, statement(digest)));
+    p.put("ext", ext(statement(digest), seedHex));
     return p;
+  }
+
+  private static Map<String, Object> withExtra(Map<String, Object> e) {
+    e.put("com.example", Map.of());
+    return e;
   }
 
   @Test
@@ -453,7 +469,7 @@ class CommitmentDigestV5Test {
     SeamCrypto.Commitment c = tctCommitment(t);
     String iss = (String) t.get("issuer_aid");
     String digest = SeamCrypto.seamCommitmentDigest(c);
-    assertTrue(SeamCrypto.verifyTct(iss, sign(seedHex(t), new Gson().toJson(payload(iss, digest))), c, NOW_S));
+    assertTrue(SeamCrypto.verifyTct(iss, sign(seedHex(t), new Gson().toJson(payload(seedHex(t), digest))), c, NOW_S));
   }
 
   @Test
@@ -482,30 +498,30 @@ class CommitmentDigestV5Test {
         "extra ext key",
         p -> p.put(
             "ext",
-            Map.of(SeamCrypto.COMMITMENT_EXT_NAMESPACE, statement(digest), "com.example", Map.of())));
+            withExtra(ext(statement(digest), seedHex(t)))));
     mutations.put(
         "wrong type",
         p -> {
           Map<String, Object> st = statement(digest);
           st.put("type", "seam:other");
-          p.put("ext", Map.of(SeamCrypto.COMMITMENT_EXT_NAMESPACE, st));
+          p.put("ext", ext(st, seedHex(t)));
         });
     mutations.put(
         "extra statement field",
         p -> {
           Map<String, Object> st = statement(digest);
           st.put("x", "y");
-          p.put("ext", Map.of(SeamCrypto.COMMITMENT_EXT_NAMESPACE, st));
+          p.put("ext", ext(st, seedHex(t)));
         });
     mutations.put(
         "uppercase digest",
-        p -> p.put("ext", Map.of(SeamCrypto.COMMITMENT_EXT_NAMESPACE, statement(digest.toUpperCase()))));
+        p -> p.put("ext", ext(statement(digest.toUpperCase()), seedHex(t))));
     mutations.put(
         "wrong digest",
-        p -> p.put("ext", Map.of(SeamCrypto.COMMITMENT_EXT_NAMESPACE, statement("0".repeat(64)))));
+        p -> p.put("ext", ext(statement("0".repeat(64)), seedHex(t))));
 
     for (Map.Entry<String, Consumer<Map<String, Object>>> m : mutations.entrySet()) {
-      Map<String, Object> p = payload(iss, digest);
+      Map<String, Object> p = payload(seedHex(t), digest);
       m.getValue().accept(p);
       assertFalse(
           SeamCrypto.verifyTct(iss, sign(seedHex(t), new Gson().toJson(p)), c, NOW_S),
@@ -523,12 +539,16 @@ class CommitmentDigestV5Test {
     SeamCrypto.Commitment c = tctCommitment(t);
     String iss = (String) t.get("issuer_aid");
     String digest = SeamCrypto.seamCommitmentDigest(c);
+    String seal = SealKeyTokens.sealAid(SealKeyTokens.SEAL_SEED);
+    String cert = ",\"com.zer07labs.seam.seal-key-cert\":" + certJson(seedHex(t));
     String head =
-        "{\"iss\":\"" + iss + "\",\"sub\":\"" + iss + "\",\"aud\":\"" + iss
-            + "\",\"exp\":4853600000,\"grants\":[\"aitp.attestation\"],";
+        "{\"iss\":\"" + seal + "\",\"sub\":\"" + seal + "\",\"aud\":\"" + seal
+            + "\",\"cnf\":{\"jkt\":\"" + SealKeyTokens.jkt(SealKeyTokens.pub(SealKeyTokens.SEAL_SEED))
+            + "\"},\"iat\":" + SealKeyTokens.IAT
+            + ",\"exp\":4853600000,\"grants\":[\"aitp.attestation\"],";
     String good =
         "\"ext\":{\"com.zer07labs.seam\":{\"type\":\"seam:commitment\",\"commitment_digest\":\""
-            + digest + "\"}}}";
+            + digest + "\"}" + cert + "}}";
     assertTrue(
         SeamCrypto.verifyTct(iss, sign(seedHex(t), head + good), c, NOW_S),
         "the hand-written control payload must verify");
@@ -539,12 +559,12 @@ class CommitmentDigestV5Test {
             "duplicate namespace key",
             "\"ext\":{\"com.zer07labs.seam\":" + decoy
                 + ",\"com.zer07labs.seam\":{\"type\":\"seam:commitment\",\"commitment_digest\":\""
-                + digest + "\"}}}",
+                + digest + "\"}" + cert + "}}",
             "duplicate statement key",
             "\"ext\":{\"com.zer07labs.seam\":{\"type\":\"seam:commitment\",\"commitment_digest\":\""
-                + zeros + "\",\"commitment_digest\":\"" + digest + "\"}}}",
+                + zeros + "\",\"commitment_digest\":\"" + digest + "\"}" + cert + "}}",
             "duplicate ext",
-            "\"ext\":{\"com.zer07labs.seam\":" + decoy + "}," + good);
+            "\"ext\":{\"com.zer07labs.seam\":" + decoy + cert + "}," + good);
     for (Map.Entry<String, String> b : bodies.entrySet()) {
       assertFalse(
           SeamCrypto.verifyTct(iss, sign(seedHex(t), head + b.getValue()), c, NOW_S),

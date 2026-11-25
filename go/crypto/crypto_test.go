@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -229,12 +230,13 @@ func TestTCTVerifyFailsClosed(t *testing.T) {
 	}
 }
 
-// signTCT builds a minimally-valid TCT JWS over the given commitment with the given exp claim, signed
-// by the issuer seed — a local fixture generator for boundary cases the published vector cannot pin.
+// signTCT builds a minimally-valid TCT JWS over the given commitment with the given exp claim, in the
+// S-4 shape: signed by the seal key of the issuer seed (sealSeedFor), carrying its issuer-signed
+// certificate — a local fixture generator for boundary cases the published vector cannot pin.
 func signTCT(t *testing.T, seedHex string, c Commitment, exp float64) (issuerAID, jws string) {
 	t.Helper()
 	issuerAID = issuerFromSeed(t, seedHex)
-	payload := attestationPayload(t, issuerAID, c)
+	payload := attestationPayload(t, seedHex, c)
 	payload["exp"] = exp
 	raw, _ := json.Marshal(payload)
 	return issuerAID, signRawTCT(t, seedHex, raw)
@@ -242,38 +244,78 @@ func signTCT(t *testing.T, seedHex string, c Commitment, exp float64) (issuerAID
 
 func issuerFromSeed(t *testing.T, seedHex string) string {
 	t.Helper()
+	return AIDFromPubkey(ed25519.NewKeyFromSeed(seedBytes(t, seedHex)).Public().(ed25519.PublicKey))
+}
+
+func seedBytes(t *testing.T, seedHex string) []byte {
+	t.Helper()
 	seed, err := hex.DecodeString(seedHex)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return AIDFromPubkey(ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey))
+	return seed
 }
 
-// attestationPayload is the self-attestation TCT payload the runtime seals a commitment as.
-func attestationPayload(t *testing.T, issuerAID string, c Commitment) map[string]any {
+// Test seal-key defaults: the UTC hour containing testIat, the way the runtime's SeededSealKeys certifies.
+const (
+	testIat         = int64(1_700_000_000)
+	testNotBeforeMs = uint64(1_699_999_200_000)
+	testNotAfterMs  = uint64(1_700_002_800_000)
+)
+
+// sealKeyFor is the deterministic test seal key of an issuer seed: the runtime's SeededSealKeys
+// derivation, seed = sha256("seam.seal-key.fixed.v1" ‖ issuer_seed).
+func sealKeyFor(t *testing.T, seedHex string) ed25519.PrivateKey {
+	t.Helper()
+	sum := sha256.Sum256(append([]byte("seam.seal-key.fixed.v1"), seedBytes(t, seedHex)...))
+	return ed25519.NewKeyFromSeed(sum[:])
+}
+
+// certMember is the ext member certifying sealPub for [nb, na] under issuerAID, signed by issuerSeedHex.
+func certMember(t *testing.T, issuerSeedHex string, sealPub []byte, nb, na uint64, issuerAID string) map[string]any {
+	t.Helper()
+	var pk [32]byte
+	copy(pk[:], sealPub)
+	cert := SealKeyCertPreimage(pk, nb, na, issuerAID)
+	d := sha256.Sum256(cert)
+	sig := ed25519.Sign(ed25519.NewKeyFromSeed(seedBytes(t, issuerSeedHex)), d[:])
+	return map[string]any{"cert": b64urlNoPad(cert), "sig": b64urlNoPad(sig)}
+}
+
+// attestationPayload is the self-attestation TCT payload the runtime seals a commitment as (S-4: by the
+// seal key of seedHex, certified by seedHex's issuer for the hour around testIat).
+func attestationPayload(t *testing.T, seedHex string, c Commitment) map[string]any {
 	t.Helper()
 	digest, err := seamCommitmentDigest(c)
 	if err != nil {
 		t.Fatal(err)
 	}
+	sealPub := sealKeyFor(t, seedHex).Public().(ed25519.PublicKey)
+	sealAID := "aid:pubkey:" + b64urlNoPad(sealPub)
 	return map[string]any{
-		"iss": issuerAID, "sub": issuerAID, "aud": issuerAID,
+		"ver": "aitp/0.3",
+		"iss": sealAID, "sub": sealAID, "aud": sealAID,
+		"cnf":    map[string]any{"jkt": jwkThumbprint(sealPub)},
+		"iat":    testIat,
 		"exp":    4853600000,
 		"grants": []string{AttestationGrant},
-		"ext": map[string]any{CommitmentExtNamespace: map[string]any{
-			"type": CommitmentStatement, "commitment_digest": digest,
-		}},
+		"ext": map[string]any{
+			CommitmentExtNamespace: map[string]any{
+				"type": CommitmentStatement, "commitment_digest": digest,
+			},
+			SealKeyCertExtKey: certMember(t, seedHex, sealPub, testNotBeforeMs, testNotAfterMs, issuerFromSeed(t, seedHex)),
+		},
 	}
 }
 
-// signRawTCT signs exactly the given payload bytes, so a test can hand-write JSON (e.g. a repeated key).
+// signRawTCT signs exactly the given payload bytes with the seal key of seedHex, so a test can
+// hand-write JSON (e.g. a repeated key).
 func signRawTCT(t *testing.T, seedHex string, payload []byte) string {
 	t.Helper()
-	seed, err := hex.DecodeString(seedHex)
-	if err != nil {
-		t.Fatal(err)
-	}
-	priv := ed25519.NewKeyFromSeed(seed)
+	return signRawWith(sealKeyFor(t, seedHex), payload)
+}
+
+func signRawWith(priv ed25519.PrivateKey, payload []byte) string {
 	header, _ := json.Marshal(map[string]any{"alg": "EdDSA", "typ": "aitp-tct+jwt"})
 	signing := b64urlNoPad(header) + "." + b64urlNoPad(payload)
 	return signing + "." + b64urlNoPad(ed25519.Sign(priv, []byte(signing)))

@@ -200,24 +200,21 @@ class SelectionV1Test {
 
     private val seed = ByteArray(32) { it.toByte() }
 
-    private fun b64(b: ByteArray) = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(b)
-
     private fun issuer(): String {
         val pub = org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters(seed, 0).generatePublicKey().encoded
         return SeamCrypto.aidFromPubkey(pub)
     }
 
+    /** A seal-key TCT (S-4): signed by the test seal key, which [seed] (the pinned issuer) certifies. */
     private fun tct(issuer: String, digest: String): String {
-        val h = """{"alg":"EdDSA","typ":"aitp-tct+jwt"}"""
-        val p = """{"iss":"$issuer","sub":"$issuer","aud":"$issuer","exp":4000000000,""" +
-            """"grants":["aitp.attestation"],"ext":{"com.zer07labs.seam":""" +
-            """{"type":"seam:commitment","commitment_digest":"$digest"}}}"""
-        val si = "${b64(h.toByteArray())}.${b64(p.toByteArray())}"
-        val signer = org.bouncycastle.crypto.signers.Ed25519Signer()
-        signer.init(true, org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters(seed, 0))
-        val m = si.toByteArray(Charsets.US_ASCII)
-        signer.update(m, 0, m.size)
-        return "$si.${b64(signer.generateSignature())}"
+        val p = SealKeyTokens.claims(SealKeyTokens.SEAL_SEED, SealKeyTokens.IAT)
+        p["exp"] = 4_000_000_000L
+        p["grants"] = listOf("aitp.attestation")
+        p["ext"] = linkedMapOf(
+            "com.zer07labs.seam" to mapOf("type" to "seam:commitment", "commitment_digest" to digest),
+            SeamCrypto.SEAL_KEY_CERT_EXT_KEY to SealKeyTokens.member(seed, issuer),
+        )
+        return SealKeyTokens.jws(SealKeyTokens.SEAL_SEED, com.google.gson.Gson().toJson(p))
     }
 
     @Suppress("UNCHECKED_CAST")

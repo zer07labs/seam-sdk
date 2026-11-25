@@ -16,6 +16,60 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Changed (deep-cleanup S-4 — BREAKING, lockstep with seam-runtime #2031, the 0.123.0 train)
+
+- **Every TCT verifier now verifies the S-4 seal-key shape and only that shape:** Python `verify_tct`, TS
+  `verifyTct`, Go `VerifyTCT`, Java/Kotlin `SeamCrypto`, and `seam-verify` (`verify_tct`,
+  `verify_commitment_tct`, `seam-verify bundle`). The pinned issuer no longer signs the TCT. It signs a
+  certificate over a short-lived seal key, carried in `ext["com.zer07labs.seam.seal-key-cert"]` as exactly
+  `{cert, sig}`, both strict base64url. A verifier:
+  1. parses `cert` as `framed("seam.seal-key-cert.v1") ‖ framed(seal_pk[32]) ‖ le64 not_before_ms ‖
+     le64 not_after_ms ‖ framed(issuer_aid)`. It refuses trailing bytes, an issuer AID over 62 bytes or not
+     UTF-8, an inverted window, a `not_after_ms` beyond `i64::MAX`, and a window wider than 3 630 000 ms;
+  2. requires the certificate to name exactly the pinned issuer AID, and checks the issuer's Ed25519
+     signature over `sha256(cert)` under `verify_strict` rules (small-order key and R refused);
+  3. verifies the TCT as a self-attestation by the seal key: `iss == sub == aud` = `aid:pubkey:<seal key>`,
+     `cnf.jkt` is the seal key's thumbprint, and the verified `ext` carries the same certificate member;
+  4. requires `not_before_ms ≤ iat·1000 ≤ not_after_ms`, with no grace (`iat` must be an integer).
+
+  The digest checks are unchanged. A TCT's `ext` is now exactly the statement plus the certificate member.
+  **An issuer-signed TCT (every TCT before runtime 0.123.0) is refused. An SDK below this release rejects
+  every 0.123.0 seal** (COMPATIBILITY.md §1).
+- `seam-verify bundle` adds the evidence-grade check (evidence-bundle.v1 step 4): the TCT's `iat` must equal
+  `floor(sealed_at / 1000)` of the chained `DECISION_SEALED`, so a token backdated with a leaked seal key is
+  refused. New `seam_verify::commitment::{verify_tct_sealed_at, verify_seal_key_cert, parse_seal_key_cert,
+  SealKeyCert}`.
+- Conformance vectors are byte-identical with seam-runtime #2031 @ `a61adee4`:
+  `commitment_digest_v5_signed_vector.json`, `commitment_digest_v6_signed_vector.json`,
+  `commitment_digest_v6_voter_vector.json` and `vectors.json` are re-signed through the seal key. The new
+  `seal_key_cert_vector.json` is read by every language. `tct_exp_extended.json` is re-minted in the seal-key
+  shape by `scripts/emit_tct_exp_vectors.py`.
+- `verify/fixtures/evidence-bundle/{full,minimal,allocated,other-issuer}`: each `commitment.json` TCT is
+  re-minted under the runtime's seeded test seal key, and its manifest entry is re-hashed. No other byte moved.
+  The provenance and the regeneration test are in `verify/tests/bundle_seal_key.rs`. A fresh runtime export
+  carries a v6 statement, which `seam-verify bundle` does not read yet.
+- **The evidence-grade `iat` binding is in all six verifiers** (0.123.0 gate item 4): `sealed_at_ms <= i64::MAX`
+  and `iat == floor(sealed_at_ms / 1000)`, the runtime's `verify_commitment_sealed_at`. `sealed_at_ms` must be
+  the `sealed_at` of the record's **chained** `DECISION_SEALED` link (record-digest bound), never a value from
+  the token and never the served `DecisionRecordView.sealed_at`; without it a verifier proves a certified seal
+  key signed the statement, not when. New, additive:
+  - Python: `verify_tct(..., sealed_at_ms=)` and `SeamClient`/`AsyncSeamClient.verify_decision(..., sealed_at_ms=)`;
+  - TS: `verifyTct(..., { sealedAtMs })` and `SeamClient.verifyDecision(id, issuer, { sealedAtMs })` (`bigint`,
+    or a safe-integer `number`);
+  - Go: `crypto.VerifyTCTSealedAt(issuerAID, tctJWS, c, nowS, sealedAtMs uint64)`;
+  - Java: `SeamCrypto.verifyTctSealedAt(issuerAid, tctJws, c, nowS, sealedAtMs)` (+ the `SelectionBlock`
+    overload); Kotlin: `SeamCrypto.verifyTctSealedAt(issuerAid, tctJws, commitment, nowS, sealedAtMs)`. A
+    negative `long` (a `uint64` beyond i64) is refused;
+  - Rust: `verify_commitment_tct_sealed_at` (v5 or v6). `verify_tct_sealed_at` now refuses a `sealed_at_ms`
+    beyond `i64::MAX` before dividing, as the runtime does (it accepted the values up to the next whole second).
+
+  Pinned by the new `conformance/tct_sealed_at_vector.json` (exact second boundary, floor at +999 ms, `iat`
+  ±1 s at and inside the boundary, the epoch, beyond i64), emitted by `scripts/emit_tct_sealed_at_vector.py`
+  over the runtime's byte-identical `commitment_digest_v6_signed_vector.json` (the runtime ships no
+  dedicated sealed_at vector).
+- The live erasure tests (Python `test_admin.py`, TS `admin.test.ts`) expect the certificate's `subject` to be
+  the tenant-keyed commitment `hmac-sha256:<8-hex kid>:<64-hex>`, never the raw subject (runtime 0.122.0, SEC2-1).
+
 ### Changed (deep-cleanup S10-O1 — breaking, lockstep with seam-runtime's internal `seam-verify`)
 
 - `seam-verify` (the public verifier) refuses a chain that holds an event without a valid `stream_id`, or whose

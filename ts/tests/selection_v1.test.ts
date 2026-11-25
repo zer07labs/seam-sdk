@@ -9,6 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { create } from "@bufbuild/protobuf";
+import { mintSealKeyTct } from "./seal_key_mint.js";
 import { ed25519 } from "@noble/curves/ed25519";
 import {
   type Commitment,
@@ -232,18 +233,12 @@ const ISSUER = aidFromPubkey(ed25519.getPublicKey(ISSUER_SEED));
 const b64 = (b: Uint8Array | string) => Buffer.from(b).toString("base64url");
 
 function tct(digest: string): string {
-  const h = b64(JSON.stringify({ alg: "EdDSA", typ: "aitp-tct+jwt" }));
-  const p = b64(
-    JSON.stringify({
-      iss: ISSUER,
-      sub: ISSUER,
-      aud: ISSUER,
-      exp: 4_000_000_000,
-      grants: ["aitp.attestation"],
-      ext: { "com.zer07labs.seam": { type: "seam:commitment", commitment_digest: digest } },
-    }),
-  );
-  return `${h}.${p}.${b64(ed25519.sign(new TextEncoder().encode(`${h}.${p}`), ISSUER_SEED))}`;
+  // S-4: signed by the seeded seal key the issuer certifies over [0, 900_000] ms, iat = 0.
+  return mintSealKeyTct({
+    issuerSeed: ISSUER_SEED,
+    certIssuerAid: ISSUER,
+    statement: { type: "seam:commitment", commitment_digest: digest },
+  });
 }
 
 function signedEntries(): ExplanationEntryInput[] {

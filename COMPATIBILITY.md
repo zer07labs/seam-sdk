@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1351`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1372`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -55,6 +55,28 @@ of 2026-10-09), every SDK **below** 0.33.2 is rejected by a runtime that carries
 
 **Rule:** pin the runtime image and the SDK to the **same version**, and move them together. For the
 boundary above, that means an SDK ≥ 0.33.2 needs a runtime image built from seam-runtime ≥ 0.33.2.
+
+### Runtime 0.123.0: commitment TCTs are signed by a certified seal key (S-4), and old verifiers reject them
+
+Runtime 0.123.0 (seam-runtime #2036, the re-cut of #2031, deep-cleanup S-4) no longer signs a commitment TCT with the issuer key.
+The issuer certifies a short-lived in-memory **seal key** for each replica. The seal key signs every TCT as a
+self-attestation (`iss == sub == aud` = the seal key's AID), and the certificate travels in the TCT's `ext`
+as `com.zer07labs.seam.seal-key-cert`. A relying party still pins only the issuer AID. The rule is the
+runtime's `docs/specs/seam-commitment-digest.v6.md` §Seal key, pinned here by
+`conformance/seal_key_cert_vector.json`.
+
+This is a hard version lock in **both** directions, with no dual-accept:
+
+- **Every SDK below this release rejects every runtime 0.123.0+ seal.** Its TCT verifier (`verify_tct` /
+  `verifyTct` / `VerifyTCT` / `SeamCrypto.verifyTct`, and `seam-verify`) requires `iss == sub == aud ==` the
+  pinned issuer AID, which an S-4 token never satisfies. A consumer pairing an old SDK with a 0.123.0 runtime
+  sees every commitment fail verification.
+- **SDKs at or above this release reject every TCT a runtime below 0.123.0 minted.** An issuer-signed TCT
+  carries no seal-key certificate, so it is refused. That includes evidence already exported from an older
+  runtime (owner rule: no backward compatibility, all data is test data).
+
+**Rule:** a verifier at or above this release is required for runtime 0.123.0+, and it verifies nothing
+older. Move the SDK pin and the runtime image pin together across this boundary.
 
 ---
 
@@ -318,7 +340,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2411-2433`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2466-2488`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -777,17 +799,17 @@ values reached one digest. Measured against the pre-fix build, `recordDigestV2({
 `b566fdea56b8487bc5ebc26d1d6585339e9ab2a3a499247bd7230e4f20f05d7f`. That is a digest failing at the
 only thing a digest does.
 
-The guard is `uintSlot` (`ts/src/crypto.ts:1390`), which already governed the v3 record digest;
-`u64le`/`u32le` (`ts/src/crypto.ts:1105`) now route through it, so v2 and the attestation framing get
+The guard is `uintSlot` (`ts/src/crypto.ts:1588`), which already governed the v3 record digest;
+`u64le`/`u32le` (`ts/src/crypto.ts:1303`) now route through it, so v2 and the attestation framing get
 the rule that was always written for them. Python got the same treatment: `_uint_slot`
-(`python/seam_sdk/crypto.py:868`) was `_v3_uint`, and `record_digest_v2` shared it (both v2 and v3
+(`python/seam_sdk/crypto.py:1067`) was `_v3_uint`, and `record_digest_v2` shared it (both v2 and v3
 are now deleted; `record_digest_v4` uses it). Every
 "before" below was measured against the pre-fix build, not inferred.
 
 **Read the `now` column as the record-digest arm.** In the chain-head **attestation** arm every one
 of these refusals was observed as `false` rather than as a thrown error, because
 `verifyChainHeadAttestation` wrapped its whole body in a catch that returned `false`
-(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);`, `ts/src/crypto.ts:1669`). The
+(`const digest = chainHeadAttestationDigest({ ...a, attestedHead, issuerAid }, framingTenant);`, `ts/src/crypto.ts:1867`). The
 distinction mattered for the `true` row in particular, where the attestation arm showed no
 caller-visible change at all — `false` before, `false` after — even though what it was refusing had
 changed. **§10 closed that**: the type checks now run before the `try`, so a wrong type throws there
@@ -814,7 +836,7 @@ Python never had it. What Python had was three smaller defects in the same code:
 
 - `verify_chain_head_attestation` let that `struct.error` escape a function documented to return
   `False` on any tamper, so an out-of-range length **crashed** a caller instead of being rejected. It
-  now returns `False` (`python/seam_sdk/crypto.py:1082-1208`).
+  now returns `False` (`python/seam_sdk/crypto.py:1281-1407`).
 - `attested_len`, `attested_at` and `digest_schema` are now required to be `int`. Previously
   `True` was digested as `1` (`bool` subclasses `int`) and `5.0` raised `struct.error` — a *third*
   answer from a function that should only ever give two. Both now raise `TypeError`.
@@ -936,7 +958,7 @@ writes without thinking about it.
 
 The guard is a rule, not a denylist: an object is accepted iff its prototype is a root — `null`, or
 something whose own prototype is `null` (`function isPlainObject(v: object): boolean {`,
-`ts/src/crypto.ts:915`). An enumeration of
+`ts/src/crypto.ts:1113`). An enumeration of
 `Date | Map | Set | ...` is only correct until the next exotic type. Testing the prototype chain's
 *depth* rather than `proto === Object.prototype` is also what keeps objects from other realms (`vm`
 contexts, iframes) working — they have their own `Object.prototype`, and an identity check would

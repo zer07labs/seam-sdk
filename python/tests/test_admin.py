@@ -8,6 +8,7 @@ tenant. The live tests are env-gated exactly like `test_integration.py`:
   * skipped otherwise (a running server can't be assumed to have the mgmt plane bound).
 """
 
+import re
 from concurrent import futures
 
 import grpc
@@ -330,7 +331,13 @@ def test_erasure_preview_confirm_erase(tmp_path):
         cert = _admin(mgmt, "erasure:execute").erase_subject(
             TENANT, subject, len(preview.would_erase)
         )
-        assert cert.subject == subject
+        # The certificate names the subject by its tenant-keyed commitment, never the raw subject
+        # (runtime 0.122.0, SEC2-1): `hmac-sha256:<8-hex kid>:<64-hex mac>`, as
+        # `emitted_commitment` renders it and AUTHORIZE_EVALUATED.subject_digests carries it.
+        assert re.fullmatch(r"hmac-sha256:[0-9a-f]{8}:[0-9a-f]{64}", cert.subject), (
+            cert.subject
+        )
+        assert subject not in cert.subject
         assert decision_id in cert.erased
         assert cert.signature  # signed, chain-anchored
         assert cert.issuer_aid

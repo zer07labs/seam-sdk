@@ -9,17 +9,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import java.lang.reflect.Type;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Base64;
 import java.util.Map;
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters;
-import org.bouncycastle.crypto.signers.Ed25519Signer;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -267,25 +264,21 @@ class SelectionV1Test {
   private static final String ISSUER =
       SeamCrypto.aidFromPubkey(new Ed25519PrivateKeyParameters(SEED, 0).generatePublicKey().getEncoded());
 
-  private static String b64(byte[] b) {
-    return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
-  }
-
-  /** A self-issued TCT over {@code c}'s v5 digest, signed by {@link #SEED}. */
+  /**
+   * A seal-key TCT over {@code c}'s v5 digest (S-4): signed by the test seal key, which {@link #SEED}
+   * (the pinned issuer) certifies.
+   */
   private static String tct(SeamCrypto.Commitment c) {
-    String h = b64("{\"alg\":\"EdDSA\",\"typ\":\"aitp-tct+jwt\"}".getBytes(StandardCharsets.UTF_8));
-    String p =
-        b64(
-            ("{\"iss\":\"" + ISSUER + "\",\"sub\":\"" + ISSUER + "\",\"aud\":\"" + ISSUER
-                    + "\",\"exp\":9999999999,\"grants\":[\"aitp.attestation\"],"
-                    + "\"ext\":{\"com.zer07labs.seam\":{\"type\":\"seam:commitment\","
-                    + "\"commitment_digest\":\"" + SeamCrypto.seamCommitmentDigest(c) + "\"}}}")
-                .getBytes(StandardCharsets.UTF_8));
-    Ed25519Signer s = new Ed25519Signer();
-    s.init(true, new Ed25519PrivateKeyParameters(SEED, 0));
-    byte[] in = (h + "." + p).getBytes(StandardCharsets.US_ASCII);
-    s.update(in, 0, in.length);
-    return h + "." + p + "." + b64(s.generateSignature());
+    Map<String, Object> p = SealKeyTokens.claims(SealKeyTokens.SEAL_SEED, SealKeyTokens.IAT);
+    p.put("exp", 9_999_999_999L);
+    p.put("grants", List.of("aitp.attestation"));
+    Map<String, Object> ext = new java.util.LinkedHashMap<>();
+    ext.put(
+        "com.zer07labs.seam",
+        Map.of("type", "seam:commitment", "commitment_digest", SeamCrypto.seamCommitmentDigest(c)));
+    ext.put(SeamCrypto.SEAL_KEY_CERT_EXT_KEY, SealKeyTokens.member(SEED, ISSUER));
+    p.put("ext", ext);
+    return SealKeyTokens.jws(SealKeyTokens.SEAL_SEED, new com.google.gson.Gson().toJson(p));
   }
 
   private static SeamCrypto.Commitment commit(

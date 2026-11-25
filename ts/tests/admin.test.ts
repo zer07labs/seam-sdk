@@ -101,7 +101,10 @@ test("erasure: preview → confirm → erase (+ empty-tenant & wrong-count rejec
 
     // Right count → populated, signed certificate.
     const cert = await admin(mgmtUrl, "erasure:execute").eraseSubject(TENANT, subject, count);
-    assert.equal(cert.subject, subject);
+    // The certificate names the subject by its tenant-keyed commitment, never the raw subject
+    // (runtime 0.122.0, SEC2-1): `hmac-sha256:<8-hex kid>:<64-hex mac>`.
+    assert.match(cert.subject, /^hmac-sha256:[0-9a-f]{8}:[0-9a-f]{64}$/);
+    assert.ok(!cert.subject.includes(subject));
     assert.ok(cert.erased.includes(decisionId));
     assert.ok(cert.signature.length > 0);
     assert.ok(cert.issuerAid.length > 0);

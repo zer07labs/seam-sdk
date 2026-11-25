@@ -87,3 +87,24 @@ def test_invalid_tct_returns_false_not_raise():
     # Issuer matches the pin, so we pass the mismatch gate; the tampered action ⇒ digest miss ⇒ invalid.
     client = _client_with_proof(_proof_from_vectors(issuer, action="TAMPERED"))
     assert client.verify_decision("dec-1", issuer) is False
+
+
+@pytest.mark.parametrize("sealed_at_ms", [None, 1_700_000_000_123])
+def test_sealed_at_ms_reaches_verify_tct(monkeypatch, sealed_at_ms):
+    """S-4 evidence grade: `verify_decision(sealed_at_ms=)` hands the chained seal time to `verify_tct`,
+    whose `iat == sealed_at_ms // 1000` rule `test_tct_sealed_at_vector.py` pins. Omitted, it stays None."""
+    import seam_sdk.client as client_mod
+
+    seen = {}
+
+    def fake_verify_tct(*_args, **kwargs):
+        seen.update(kwargs)
+        return True
+
+    monkeypatch.setattr(client_mod, "verify_tct", fake_verify_tct)
+    issuer = VECTORS["tct"]["issuer_aid"]
+    client = _client_with_proof(_proof_from_vectors(issuer))
+    kw = {} if sealed_at_ms is None else {"sealed_at_ms": sealed_at_ms}
+    assert client.verify_decision("dec:acme:s1", issuer, **kw) is True
+    assert seen["sealed_at_ms"] == sealed_at_ms
+    assert seen["decision"] == ("acme", "s1")

@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"math"
@@ -454,7 +455,7 @@ func TestCommitmentTCTStatementInExt(t *testing.T) {
 	v := load(t)
 	c := v.TCT.Inputs.Commitment
 	iss := issuerFromSeed(t, v.TCT.Inputs.IssuerSeedHex)
-	raw, _ := json.Marshal(attestationPayload(t, iss, c))
+	raw, _ := json.Marshal(attestationPayload(t, v.TCT.Inputs.IssuerSeedHex, c))
 	if !VerifyTCT(iss, signRawTCT(t, v.TCT.Inputs.IssuerSeedHex, raw), c, 1_700_000_001) {
 		t.Fatal("a well-formed self-attestation must verify")
 	}
@@ -472,8 +473,10 @@ func TestCommitmentTCTShapeRefusals(t *testing.T) {
 	stmt := func() map[string]any {
 		return map[string]any{"type": CommitmentStatement, "commitment_digest": digest}
 	}
+	// Replaces the statement only: the seal-key certificate member stays, so each refusal is the
+	// statement's shape and nothing else.
 	withStmt := func(p map[string]any, s map[string]any) {
-		p["ext"] = map[string]any{CommitmentExtNamespace: s}
+		p["ext"].(map[string]any)[CommitmentExtNamespace] = s
 	}
 	for name, mutate := range map[string]func(map[string]any){
 		"statement in grants (v2 shape)": func(p map[string]any) {
@@ -485,6 +488,9 @@ func TestCommitmentTCTShapeRefusals(t *testing.T) {
 		},
 		"no grants":  func(p map[string]any) { delete(p, "grants") },
 		"iss != aud": func(p map[string]any) { p["aud"] = "aid:pubkey:ed25519:" + repeat("B", 43) },
+		"iss is the pinned issuer, not the seal key": func(p map[string]any) {
+			p["iss"], p["sub"], p["aud"] = iss, iss, iss
+		},
 		"sub != iss": func(p map[string]any) { p["sub"] = "aid:pubkey:ed25519:" + repeat("B", 43) },
 		"ext absent": func(p map[string]any) { delete(p, "ext") },
 		"wrong type": func(p map[string]any) { s := stmt(); s["type"] = "seam:other"; withStmt(p, s) },
@@ -494,7 +500,7 @@ func TestCommitmentTCTShapeRefusals(t *testing.T) {
 			withStmt(p, s)
 		},
 		"extra ext key": func(p map[string]any) {
-			p["ext"] = map[string]any{CommitmentExtNamespace: stmt(), "com.example": map[string]any{}}
+			p["ext"].(map[string]any)["com.example"] = map[string]any{}
 		},
 		"uppercase digest": func(p map[string]any) {
 			s := stmt()
@@ -508,7 +514,7 @@ func TestCommitmentTCTShapeRefusals(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			p := attestationPayload(t, iss, c)
+			p := attestationPayload(t, seed, c)
 			mutate(p)
 			raw, _ := json.Marshal(p)
 			if VerifyTCT(iss, signRawTCT(t, seed, raw), c, 1_700_000_001) {
@@ -529,16 +535,22 @@ func TestCommitmentTCTDuplicateKeyRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	head := `{"iss":"` + iss + `","sub":"` + iss + `","aud":"` + iss + `","exp":4853600000,"grants":["aitp.attestation"],`
-	good := `"ext":{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"` + digest + `"}}}`
+	sealPub := sealKeyFor(t, seed).Public().(ed25519.PublicKey)
+	sealAID := "aid:pubkey:" + b64urlNoPad(sealPub)
+	member, _ := json.Marshal(certMember(t, seed, sealPub, testNotBeforeMs, testNotAfterMs, iss))
+	certKV := `"` + SealKeyCertExtKey + `":` + string(member)
+	head := `{"iss":"` + sealAID + `","sub":"` + sealAID + `","aud":"` + sealAID + `","cnf":{"jkt":"` + jwkThumbprint(sealPub) +
+		`"},"iat":1700000000,"exp":4853600000,"grants":["aitp.attestation"],`
+	good := `"ext":{` + certKV + `,"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"` + digest + `"}}}`
 	if !VerifyTCT(iss, signRawTCT(t, seed, []byte(head+good)), c, 1_700_000_001) {
 		t.Fatal("the hand-written control payload must verify")
 	}
 	decoy := `{"type":"seam:commitment","commitment_digest":"` + repeat("0", 64) + `"}`
 	for name, body := range map[string]string{
-		"duplicate namespace key": `"ext":{"com.zer07labs.seam":` + decoy + `,"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"` + digest + `"}}}`,
-		"duplicate statement key": `"ext":{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"` + repeat("0", 64) + `","commitment_digest":"` + digest + `"}}}`,
-		"duplicate ext":           `"ext":{"com.zer07labs.seam":` + decoy + `},` + good,
+		"duplicate namespace key": `"ext":{` + certKV + `,"com.zer07labs.seam":` + decoy + `,"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"` + digest + `"}}}`,
+		"duplicate statement key": `"ext":{` + certKV + `,"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"` + repeat("0", 64) + `","commitment_digest":"` + digest + `"}}}`,
+		"duplicate ext":           `"ext":{` + certKV + `,"com.zer07labs.seam":` + decoy + `},` + good,
+		"duplicate cert member":   `"ext":{` + certKV + `,` + certKV + `,"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"` + digest + `"}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if VerifyTCT(iss, signRawTCT(t, seed, []byte(head+body)), c, 1_700_000_001) {

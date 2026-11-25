@@ -738,40 +738,236 @@ function isJsonObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/** The TCT `ext` member that carries the seal-key certificate (seam-runtime #2031, deep-cleanup S-4),
+ * beside the commitment statement under {@link COMMITMENT_EXT_KEY}. */
+export const SEAL_KEY_CERT_EXT_KEY = "com.zer07labs.seam.seal-key-cert";
+/** The seal-key certificate's domain tag, its first frame. */
+export const SEAL_KEY_CERT_DOMAIN = "seam.seal-key-cert.v1";
+/** The widest certificate window a verifier accepts, `not_after - not_before` in ms: one hour plus the
+ * runtime's 30 s backdate skew. A wider certificate does not parse. */
+export const SEAL_KEY_MAX_WINDOW_MS = 3_630_000n;
+/** The longest issuer AID a certificate carries (the tagged Ed25519 form). */
+const SEAL_KEY_ISSUER_AID_MAX = 62;
+const I64_MAX = 9223372036854775807n;
+
+/** A parsed seal-key certificate. */
+export interface SealKeyCert {
+  sealPk: Uint8Array;
+  notBeforeMs: bigint;
+  notAfterMs: bigint;
+  issuerAid: string;
+}
+
+/** Strict unpadded base64url (the runtime's `base64url::decode_strict`): the URL-safe alphabet only, no
+ * `=`, no impossible length, and canonical trailing bits (the decoded bytes re-encode to the input).
+ * `Buffer.from(s, "base64url")` alone skips junk characters silently, so it is never trusted alone. */
+function b64urlDecodeStrict(s: string): Uint8Array {
+  if (!/^[A-Za-z0-9_-]*$/.test(s) || s.length % 4 === 1) throw new Error("not strict base64url");
+  const b = b64urlDecode(s);
+  if (b64urlNoPad(b) !== s) throw new Error("non-canonical base64url");
+  return b;
+}
+
+/** The runtime's chain framing read: `u32le(len) ‖ bytes`, advancing `pos`; throws on a short read. */
+function readFramed(b: Uint8Array, pos: { at: number }): Uint8Array {
+  if (pos.at + 4 > b.length) throw new Error("short frame length");
+  const n = new DataView(b.buffer, b.byteOffset + pos.at, 4).getUint32(0, true);
+  pos.at += 4;
+  if (pos.at + n > b.length) throw new Error("short frame body");
+  const out = b.subarray(pos.at, pos.at + n);
+  pos.at += n;
+  return out;
+}
+
+/** Parse a seal-key certificate (seam-runtime `parse_seal_key_cert`):
+ * `framed("seam.seal-key-cert.v1") ‖ framed(seal_pk[32]) ‖ le64(not_before_ms) ‖ le64(not_after_ms) ‖
+ * framed(issuer_aid)`. Refuses (`null`) a wrong tag, a key that is not 32 bytes, trailing bytes, an
+ * inverted window, a time beyond `i64::MAX` ms, a window wider than {@link SEAL_KEY_MAX_WINDOW_MS}, and an
+ * issuer AID that is longer than 62 bytes or not UTF-8. Never throws. */
+export function parseSealKeyCert(bytes: Uint8Array): SealKeyCert | null {
+  try {
+    const pos = { at: 0 };
+    const tag = readFramed(bytes, pos);
+    if (Buffer.from(tag).toString("latin1") !== SEAL_KEY_CERT_DOMAIN || tag.length !== SEAL_KEY_CERT_DOMAIN.length)
+      return null;
+    const sealPk = readFramed(bytes, pos);
+    if (sealPk.length !== 32) return null;
+    if (pos.at + 16 > bytes.length) return null;
+    const dv = new DataView(bytes.buffer, bytes.byteOffset + pos.at, 16);
+    const notBeforeMs = dv.getBigUint64(0, true);
+    const notAfterMs = dv.getBigUint64(8, true);
+    pos.at += 16;
+    const aid = readFramed(bytes, pos);
+    if (pos.at !== bytes.length || aid.length > SEAL_KEY_ISSUER_AID_MAX) return null;
+    if (!(notBeforeMs <= notAfterMs && notAfterMs <= I64_MAX && notAfterMs - notBeforeMs <= SEAL_KEY_MAX_WINDOW_MS))
+      return null;
+    const issuerAid = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(aid);
+    return { sealPk: new Uint8Array(sealPk), notBeforeMs, notAfterMs, issuerAid };
+  } catch {
+    return null;
+  }
+}
+
+/** The 32-byte encodings that decode to an Ed25519 point of small order (canonical and non-canonical,
+ * both sign bits) — libsodium's blocklist with the sign bit expanded. Refusing them for the key and for a
+ * signature's `R` is what ed25519-dalek's `verify_strict` adds over RFC 8032 verification (the runtime
+ * verifies the seal-key certificate with `verify_strict`); noble's `zip215: false` already refuses a
+ * non-canonical `S` and a non-canonical encoding. */
+const SMALL_ORDER_ENCODINGS = new Set([
+  "0000000000000000000000000000000000000000000000000000000000000000",
+  "0000000000000000000000000000000000000000000000000000000000000080",
+  "0100000000000000000000000000000000000000000000000000000000000000",
+  "0100000000000000000000000000000000000000000000000000000000000080",
+  "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+  "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+  "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+  "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+  "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+]);
+
+/** Ed25519 verification with ed25519-dalek `verify_strict` semantics: a 64-byte signature, RFC 8032
+ * strictness (`zip215: false`), and neither the key nor `R` of small order. Never throws. */
+function ed25519VerifyStrict(sig: Uint8Array, msg: Uint8Array, pk: Uint8Array): boolean {
+  try {
+    if (sig.length !== 64 || pk.length !== 32) return false;
+    const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
+    if (SMALL_ORDER_ENCODINGS.has(hex(pk)) || SMALL_ORDER_ENCODINGS.has(hex(sig.subarray(0, 32)))) return false;
+    return ed25519.verify(sig, msg, pk, { zip215: false });
+  } catch {
+    return false;
+  }
+}
+
+/** Verify a seal-key certificate under the **pinned** issuer AID (seam-runtime `verify_seal_key_cert`): it
+ * must parse ({@link parseSealKeyCert}), name exactly `pinnedIssuerAid`, and carry the issuer's strict
+ * Ed25519 signature over `sha256(cert)`. The pin compare is load-bearing: without it a forger certifies
+ * their own key under their own AID. `null` on any failure; never throws. */
+export function verifySealKeyCert(pinnedIssuerAid: string, cert: Uint8Array, sig: Uint8Array): SealKeyCert | null {
+  try {
+    const fields = parseSealKeyCert(cert);
+    if (fields === null || fields.issuerAid !== pinnedIssuerAid) return null;
+    if (!ed25519VerifyStrict(sig, sha256(cert), aidToPubkey(pinnedIssuerAid))) return null;
+    return fields;
+  } catch {
+    return null;
+  }
+}
+
+/** The seal key's AID — the commitment TCT's `iss == sub == aud`: the untagged `aid:pubkey:<b64url>`. */
+export function sealAid(sealPk: Uint8Array): string {
+  return "aid:pubkey:" + b64urlNoPad(sealPk);
+}
+
+/** RFC 7638 thumbprint of an Ed25519 key, `{"crv":"Ed25519","kty":"OKP","x":…}` — the AITP `cnf.jkt`. */
+function ed25519Jkt(pk: Uint8Array): string {
+  return b64urlNoPad(sha256(enc.encode(`{"crv":"Ed25519","kty":"OKP","x":"${b64urlNoPad(pk)}"}`)));
+}
+
+/** The `{cert, sig}` member, exactly those two string members, both strict base64url; else throws. */
+function sealKeyCertMember(v: unknown): { cert: Uint8Array; sig: Uint8Array } {
+  if (!isJsonObject(v)) throw new Error("seal-key-cert member is not an object");
+  const keys = Object.keys(v);
+  if (keys.length !== 2 || typeof v.cert !== "string" || typeof v.sig !== "string")
+    throw new Error("seal-key-cert member is not exactly {cert, sig}");
+  return { cert: b64urlDecodeStrict(v.cert), sig: b64urlDecodeStrict(v.sig) };
+}
+
+/** `0 ≤ sealedAtMs ≤ i64::MAX` and `iat == floor(sealedAtMs / 1000)` — the S-4 evidence-grade rule. */
+function iatIsSealSecond(iat: bigint, sealedAtMs: bigint | number): boolean {
+  let ms: bigint;
+  if (typeof sealedAtMs === "bigint") ms = sealedAtMs;
+  else if (typeof sealedAtMs === "number" && Number.isSafeInteger(sealedAtMs)) ms = BigInt(sealedAtMs);
+  else return false;
+  if (ms < 0n || ms > I64_MAX) return false;
+  return iat === ms / 1000n; // bigint division truncates; ms ≥ 0, so this is floor
+}
+
 /** Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only.
  *
- * The TCT is an RFC-AITP-0005 self-attestation. Checks the EdDSA JWS against the issuer AID's key, the
- * self-issued claims (`typ`, `iss==sub==aud==issuerAid`, `exp`), that `grants` is exactly
+ * **Seal-key shape (seam-runtime #2031, deep-cleanup S-4, runtime 0.123.0+).** The TCT is an RFC-AITP-0005
+ * self-attestation by a short-lived **seal key** that the pinned issuer certifies; the issuer signs only the
+ * certificate. `ext` carries the certificate as a second member,
+ * `"com.zer07labs.seam.seal-key-cert": {"cert", "sig"}`. Verification, each step fail-closed:
+ * (1) read that member (exactly `{cert, sig}`, both strict base64url); (2) verify the certificate under the
+ * pinned `issuerAid`, which it must name ({@link verifySealKeyCert}: parse rules, the 1 h + 30 s window cap,
+ * strict Ed25519 over `sha256(cert)`); (3) verify the JWS under the certified seal key, with
+ * `iss == sub == aud ==` the seal AID ({@link sealAid}) and `cnf.jkt` its thumbprint, the verified member
+ * equal to the one read; (4) require `not_before_ms ≤ iat·1000 ≤ not_after_ms`, no grace. No backward
+ * compatibility: a TCT signed directly by the issuer (every token before runtime 0.123.0) verifies `false`.
+ * This proves a certified key signed the statement claiming an `iat` in its window; it does not prove
+ * when the token was made (evidence-grade binding to the chained `sealed_at` is the bundle verifier's).
+ *
+ * Then: `typ`, `exp`, that `grants` is exactly
  * `["aitp.attestation"]`, and that `ext` is exactly
- * `{"com.zer07labs.seam": <statement>}`, whose exact member set selects v5 or v6 ({@link selectCommitmentVersion}),
+ * `{"com.zer07labs.seam": <statement>, "com.zer07labs.seam.seal-key-cert": …}`, whose exact member set selects v5 or v6 ({@link selectCommitmentVersion}),
  * and whose digest is that one version's digest ({@link commitmentDigestUnder}) of this exact commitment — its decided content, its committer and its
  * sealed explanation. A duplicate JSON key anywhere in the header or payload, a statement carried in
  * `grants` (the retired v2 shape), or an extra grant verifies `false`. Explanation entries that disagree
  * with the published digest, an unknown kind, or a non-canonical confidence verify `false`. When the
  * commitment carries a `selection` block, the winner is recomputed from the sealed entries
  * ({@link verifySelection}): a block without `explanation` entries, or any selection result other than
- * `verified`, verifies `false`. This never throws. */
+ * `verified`, verifies `false`. This never throws.
+ *
+ * **Evidence grade needs `opts.sealedAtMs`.** `iat` is self-asserted, so without it this proves a certified
+ * seal key signed the statement claiming an `iat` in its window, not when: a leaked seal key can backdate a
+ * token anywhere in that window. With `sealedAtMs` — the `sealed_at` of the record's **chained**
+ * `DECISION_SEALED` link (record-digest bound; e.g. a streamed event `verifyStreamedRecordDigest` accepted,
+ * for this decision), never a value from the token and never the served `DecisionRecordView.sealedAt` — the
+ * token additionally must have `iat == floor(sealedAtMs / 1000)`, and a `sealedAtMs` that is not an integer
+ * in `[0, 2^63 - 1]` verifies `false` (a `number` must also be a safe integer; pass the generated `bigint`).
+ * Same rule as seam-verify `verify_tct_sealed_at` and the runtime's `verify_commitment_sealed_at`
+ * (seam-runtime #2031); pinned by `conformance/tct_sealed_at_vector.json`. */
 export function verifyTct(
   issuerAid: string,
   tctJws: string,
   commitment: Commitment,
   nowS?: number,
-  opts?: { decision?: readonly [tenant: string, sessionId: string] },
+  opts?: { decision?: readonly [tenant: string, sessionId: string]; sealedAtMs?: bigint | number },
 ): boolean {
   // Any malformed/forged input must fail closed (return false), never throw.
   try {
     const parts = tctJws.split(".");
     if (parts.length !== 3) return false;
     const [h, p, s] = parts;
-    // zip215:false → RFC 8032 strictness, matching the Python/Rust verifiers (no non-canonical sigs).
-    if (!ed25519.verify(b64urlDecode(s), enc.encode(`${h}.${p}`), aidToPubkey(issuerAid), { zip215: false }))
-      return false;
     const header = parseJsonNoDuplicates(Buffer.from(h, "base64url").toString());
     const payload = parseJsonNoDuplicates(Buffer.from(p, "base64url").toString());
     if (!isJsonObject(header) || !isJsonObject(payload)) return false;
+    // S-4 (1) + (2): the seal-key certificate, read from the not-yet-verified payload (the signer is
+    // only known once the certificate names it), verified under the PINNED issuer it must name.
+    const peekedExt = payload.ext;
+    if (!isJsonObject(peekedExt)) return false;
+    const peeked = peekedExt[SEAL_KEY_CERT_EXT_KEY];
+    const member = sealKeyCertMember(peeked);
+    const cert = verifySealKeyCert(issuerAid, member.cert, member.sig);
+    if (cert === null) return false;
+    const sealKeyAid = sealAid(cert.sealPk);
+    // (3) the token is a self-attestation by the certified seal key.
+    // zip215:false → RFC 8032 strictness, matching the Python/Rust verifiers (no non-canonical sigs).
+    if (!ed25519.verify(b64urlDecode(s), enc.encode(`${h}.${p}`), cert.sealPk, { zip215: false })) return false;
     if (header.alg !== "EdDSA" || header.typ !== "aitp-tct+jwt") return false;
-    if (!(payload.iss === payload.sub && payload.sub === payload.aud && payload.aud === issuerAid))
+    if (!(payload.iss === payload.sub && payload.sub === payload.aud && payload.aud === sealKeyAid))
       return false;
+    const cnf = payload.cnf;
+    if (!isJsonObject(cnf) || cnf.jkt !== ed25519Jkt(cert.sealPk)) return false;
+    // The verified ext must carry the same certificate member that was read (one parse here, so this
+    // holds by construction; kept explicit for parity with the runtime's two-parse check).
+    if (!isJsonObject(payload.ext) || JSON.stringify(payload.ext[SEAL_KEY_CERT_EXT_KEY]) !== JSON.stringify(peeked))
+      return false;
+    // (4) `iat` is a JSON integer and `not_before_ms ≤ iat·1000 ≤ not_after_ms`, no grace. A JS number is
+    // exact only within ±2^53, so an `iat` beyond `Number.MAX_SAFE_INTEGER` (≈ year 285 million) is
+    // refused rather than rounded; the runtime's i64 bound is wider, and no real token gets near either.
+    const iat = payload.iat;
+    if (typeof iat !== "number" || !Number.isSafeInteger(iat)) return false;
+    const t = BigInt(iat) * 1000n;
+    if (t > I64_MAX || t < -I64_MAX - 1n) return false;
+    if (!(cert.notBeforeMs <= t && t <= cert.notAfterMs)) return false;
+    // Evidence grade (S-4): iat is the chained seal second.
+    if (opts?.sealedAtMs !== undefined && !iatIsSealSecond(BigInt(iat), opts.sealedAtMs)) return false;
     const now = nowS ?? Math.floor(Date.now() / 1000);
     // `exp` must be a JSON NUMBER, and is truncated to whole seconds before the comparison. Both
     // halves are load-bearing, and neither was true here before:
@@ -801,8 +997,10 @@ export function verifyTct(
     if (!Array.isArray(grants) || grants.length !== 1 || grants[0] !== ATTESTATION_GRANT) return false;
     const ext = payload.ext;
     if (!isJsonObject(ext)) return false;
+    // Exactly the statement and the certificate member: no other namespace (this verifier's older,
+    // stricter rule, kept under S-4).
     const extKeys = Object.keys(ext);
-    if (extKeys.length !== 1 || extKeys[0] !== COMMITMENT_EXT_KEY) return false;
+    if (extKeys.length !== 2 || !(COMMITMENT_EXT_KEY in ext) || !(SEAL_KEY_CERT_EXT_KEY in ext)) return false;
     const stmt = ext[COMMITMENT_EXT_KEY];
     if (!isJsonObject(stmt)) return false;
     // Flows W2 (A18): the exact member set selects ONE version (v6 spec §Verifiers: choosing v5 or v6).

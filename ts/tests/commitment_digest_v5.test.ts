@@ -21,7 +21,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { create } from "@bufbuild/protobuf";
-import { ed25519 } from "@noble/curves/ed25519";
 import {
   type Commitment,
   type ExplanationEntryInput,
@@ -33,6 +32,7 @@ import {
 import { commitmentView } from "../src/client.js";
 import { CommitmentSchema, ExplanationKind, VoterVerification } from "../gen/seam/api/v1/seam_pb.js";
 import { commitmentFromVector } from "./vector_commitment.js";
+import { seededSealSeed, signWith } from "./seal_key_mint.js";
 
 interface RestCommitment {
   id: string;
@@ -476,12 +476,12 @@ test("commitmentView keeps supersedes presence", () => {
 // the claim under test changes; otherwise every case below would fail on the signature and prove
 // nothing about the claim checks.
 
+// S-4 (seam-runtime #2031): the token is signed by the seeded SEAL key the issuer certifies, so a
+// re-sign uses that key and keeps the vector's certificate member.
 const SEED = new Uint8Array(32).fill(7);
-const b64 = (b: Uint8Array | string) => Buffer.from(b).toString("base64url");
 
 function sign(header: string, payload: string): string {
-  const signingInput = `${b64(header)}.${b64(payload)}`;
-  return `${signingInput}.${b64(ed25519.sign(new TextEncoder().encode(signingInput), SEED))}`;
+  return signWith(seededSealSeed(SEED), header, payload);
 }
 
 function vectorClaims(): { c: Commitment; h: Record<string, any>; p: Record<string, any> } {
@@ -501,7 +501,7 @@ test("the re-signed vector still verifies", () => {
   // The control: if re-signing alone broke verification, every refusal below would be vacuous.
   const { c, h, p } = vectorClaims();
   assert.deepEqual(p.grants, ["aitp.attestation"]);
-  assert.deepEqual(Object.keys(p.ext), ["com.zer07labs.seam"]);
+  assert.deepEqual(Object.keys(p.ext), ["com.zer07labs.seam", "com.zer07labs.seam.seal-key-cert"]);
   assert.equal(verifyResigned(c, h, p), true);
 });
 

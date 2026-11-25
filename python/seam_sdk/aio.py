@@ -1170,10 +1170,11 @@ class SeamClient:
         credential: Optional[Agent] = None,
         clearance: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
+        sealed_at_ms: Optional[int] = None,
     ) -> bool:
         """Async twin of :meth:`seam_sdk.SeamClient.verify_decision` — zero-server-trust local TCT
         verification against the caller-pinned issuer; raises :class:`IssuerMismatchError` on an
-        attempted key substitution."""
+        attempted key substitution. ``sealed_at_ms`` is the evidence-grade binding, as there."""
         proof = await self.get_commitment_proof(
             decision_id, credential=credential, clearance=clearance, timeout=timeout
         )
@@ -1189,4 +1190,5 @@ class SeamClient:
             c.signed_artifact.decode(),
             commitment_view(c),
             decision=decision,
+            sealed_at_ms=sealed_at_ms,
         )

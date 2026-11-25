@@ -1,4 +1,11 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 62d94cc2 on runtime main (refreshed 2026-11-24).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 24844931 on runtime main (refreshed 2026-11-25).
+     seam-runtime#2037 (0.123.0 train, deep-cleanup S-4 + SEC2-2) merged: the copy now tracks runtime main at the release commit.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 492e944a on runtime main (refreshed 2026-11-25).
+     seam-runtime#1988 (0.122.0, deep-cleanup SEC2-1 + changeset retired): ERASURE_CERTIFICATE.subject is the subject's
+     tenant-keyed commitment, never the raw subject; the reporter_class closed set drops `changeset_worker`.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 62d94cc2 on runtime main (refreshed 2026-11-24).
      seam-runtime#1959 (0.121.0, deep-cleanup 3.3 step 4, train 1): AuthorizeEvaluated.subject_digest (tag 10) deleted and reserved; subject_digests (11) is the one carrier.
      Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 837c48a3 (refreshed 2026-11-24).
@@ -119,14 +126,15 @@
      Prior pin 320a998 (refreshed 2026-10-20). Movements since 32f8196, the runtime 0.48.0 train, landed with the
      runtime 0.50.0 train (seam-runtime#1380, #1359):
      1. SESSION_LIFECYCLE "opened" carries `pins` (repeated AgentPin { agent_id, version }): one entry
-        per admitted participant, in admission order, at the registry version admission pinned, plus
-        the in-flight accounting rule and the restart gap. Operational metadata outside every digest
-        this crate checks; the verifier does not act on it. The SDKs carry it as a passthrough of the
-        generated SessionLifecycle message (contract/event-field-manifest.txt).
+     per admitted participant, in admission order, at the registry version admission pinned, plus
+     the in-flight accounting rule and the restart gap. Operational metadata outside every digest
+     this crate checks; the verifier does not act on it. The SDKs carry it as a passthrough of the
+     generated SessionLifecycle message (contract/event-field-manifest.txt).
      Earlier movements (32f8196, runtime 0.48.0 train, seam-runtime#1365, seam-sdk#265): record digest
      v4 (DECISION_SEALED tags 14-17; v1-v3 cannot-verify), commitment digest
      seam-commitment-digest:v3, and context digest seam.audit.context-provenance.v4 with the optional
-     `receipt_key_status` slot. -->
+     `receipt_key_status` slot.
+-->
 
 # `seam-event.v1` — event-stream wire spec (language-neutral)
 
@@ -254,6 +262,10 @@ regulator verifies it from the published issuer AID alone (the domain-separated 
 `seam-trust-aitp::verify_erasure_certificate` for the reference verifier). The event is
 **chained** (`prev_checksum` set): the attestation rides the same tamper-evident stream as
 the `gdpr_erasure` audit entries it certifies.
+
+**`subject` is the subject's commitment, never the raw subject** (deep-cleanup SEC2-1): the same
+tenant-keyed commitment the `subject_commitment_tombstoned` entry and `AUTHORIZE_EVALUATED.subject_digests`
+carry, so a sink purges by it directly. Each `gdpr_erasure` entry's `reason` names the commitment too.
 
 ```
 ErasureCertificate {                       // payload at SeamEvent tag 18
@@ -698,11 +710,11 @@ not be compared to each other.
 
 **Erasure of a subject's commitments — the consumer obligation (#1293 D3).** A GDPR erasure
 (`POST /v1/erasure`) first chains a `subject_commitment_tombstoned` `AUDIT_ENTRY` carrying the subject's
-commitment, then crypto-shreds the subject's decision records. The runtime's own outbox rows age out
+commitment, then crypto-shreds the subject's decision records; the `ERASURE_CERTIFICATE` names the same
+commitment as its `subject`. The runtime's own outbox rows age out
 within the retention window (≥ 8 days after relay consumption); the long-lived copies are in the sinks,
 and **a sink that retains `AUTHORIZE_EVALUATED` beyond the outbox window MUST support purge by
-commitment**: given a commitment from the recompute route (today: the erasure operator's runbook step;
-later: automated from the erasure certificate), delete or null every row of that tenant whose
+commitment**: given a commitment from the recompute route or from the erasure certificate's `subject`, delete or null every row of that tenant whose
 any `subject_digests` element equals it. A sink MAY additionally purge on the
 `subject_commitment_tombstoned` entry it receives on the stream. After a tenant crypto-shred no sink
 action is required for linkability (the key is gone), though a sink MAY drop the tenant's rows.
@@ -909,8 +921,8 @@ LearningDecision {                         // payload at SeamEvent tag 14
   allocation_propensity: double?  // BP-9 (tag 13), the variant/arm ALLOCATION probability;
                                   // `propensity` (tag 9) keeps its within-variant meaning
   outcome_owner_class:   string?  // BP-7 (tag 14), stamped at seal from the governing config; a value
-                                  // from the `reporter_class` closed set (`outcome_connector`,
-                                  // `changeset_worker`); produced from 0.74.0 (OI-R1)
+                                  // from the `reporter_class` closed set (`outcome_connector`);
+                                  // produced from 0.74.0 (OI-R1)
 }
 
 LearningOutcome {                          // payload at SeamEvent tag 15
@@ -936,7 +948,7 @@ event of each kind with every new field set (JSON and protobuf). Ownership:
   `outcome.observed_at` / `outcome.reward_metrics` (OI-R6, [`wire-features.md`](wire-features.md)); a
   producer sends the fields only while they are listed.
 - **`reporter_class`** is stamped by the runtime from the authenticated subject's enrolment kind, never
-  client-asserted. Closed set: `agent` | `outcome_connector` | `changeset_worker` | `operator`
+  client-asserted. Closed set: `agent` | `outcome_connector` | `operator`
   (`operator` is reserved; nothing produces it yet). It is **absent when subject enforcement is off**
   — there is no authenticated identity to classify. Consumers read it open: an unrecognised value is a
   new class, not a malformed event.
@@ -1642,11 +1654,9 @@ Two semantics that keep a mutable registry value safe to seal:
   3. **P3 added the key-revocation predicate** (ACDP-0014). Same place, same shape, same reason:
      `facade::refuse_revoked_key` sits behind the same composite as guard 2, refuses grounds whose
      producer signing key Seam could not CLEAR against the revocations it holds (`Revoked`,
-     `Unplaceable`, `KeyUnidentified` — deliberately not "signed by a revoked key", since under the
-     third of those Seam does not know the key was revoked), and is likewise **not** applied at the
-     read-only `ResolveContext` facade, which serves the verdict instead (RFC-ACDP-0014 §10: a §7
-     fail-closed is *"a verification verdict, not a wire condition"*). Latent for the same reason
-     guard 2 is.
+     `Unplaceable`). Since acdp 0.15 (B8) those verdicts already fail the resolve itself, at every
+     site including the read-only `ResolveContext` facade, so this predicate is a backstop. Latent for
+     the same reason guard 2 is.
 
   P1a records the status verbatim and adds no ingress refusal of its own; a second, P1a-local
   implementation of the predicate would have had to be unified with this one.
@@ -1692,17 +1702,18 @@ Rationale and threat model: [`docs/design/acdp-retraction-not-erasure-decision.m
 
 `ResolveContext` also returns a per-binding `revocation` (proto tag 12 / HTTP `revocation`) and
 `revocation_trust_class` (tag 13): Seam's own RFC-ACDP-0014 §7 assessment of the producer's **body
-signing key**, in a lowercase-with-underscore vocabulary of exactly six values —
-`not_revoked` | `pre_compromise` | `revoked` | `unplaceable` | `key_unidentified` | `unknown` —
+signing key**, in a lowercase-with-underscore vocabulary of exactly three values —
+`not_revoked` | `pre_compromise` | `unknown` —
 with a two-value trust class, `producer_signed` | `registry_attested` (§5 / §6), present only when a
 statement actually acted.
 
-**Three of the six are reserved, never served** (since acdp 0.15, B8; owner decision 2026-10-18):
-`revoked`, `unplaceable` and `key_unidentified`. Those cases now fail the resolve, so there is no
-verified content to carry them. They surface as errors instead: `CONTEXT_KEY_REVOKED`,
+**A key Seam cannot clear is never served** (since acdp 0.15, B8; owner decision 2026-10-18): a key
+revoked at or after the boundary (§7 step 3), a revoked key with no creditable placement (§7 step 4)
+and a discovery that could not answer all fail the resolve, so there is no verified content to carry
+a verdict. They surface as errors instead: `CONTEXT_KEY_REVOKED`,
 `CONTEXT_REVOCATION_UNAVAILABLE` (transient lookup failure) or `CONTEXT_REVOCATION_UNKNOWN` (any other
-reason the check cannot answer). The values stay in the vocabulary, so a consumer must still parse
-them.
+reason the check cannot answer). The former `revoked`, `unplaceable` and `key_unidentified` values
+were removed from the vocabulary (P3-D1, 2026-11-25).
 
 **Neither is in any digest**, for the same reason and with the same structural guarantee as
 `retraction`: both live on a sibling `ResolvedContext`, never on `ContextBinding`, so neither can
@@ -1737,10 +1748,9 @@ revocation permanent, so forgetting one because a registry is unreachable would 
 the other direction. An implementation that collapses *every* verdict to `unknown` on a failed lookup
 is not conformant with what this field means.
 
-Three of the six **refuse** at the two decision paths — `revoked`, `unplaceable`, `key_unidentified`
-— and none of them refuses here (§10: a §7 fail-closed is *"a verification verdict, not a wire
-condition"*). `key_unidentified` claims strictly less than the other two: it does not assert this key
-is revoked, only that Seam holds revocations it could not compare this signature against.
+None of the three served values refuses at the two decision paths: `not_revoked` and `unknown` say
+no revocation acted on this signature, and `pre_compromise` is still attributable (§7 step 2). The
+refusing cases never reach a served value; they refuse with the errors above at every site.
 
 Rationale and threat model: [`docs/design/acdp-key-revocation-decision.md`](../design/acdp-key-revocation-decision.md).
 
@@ -1824,6 +1834,14 @@ stripped ones.
 predicate. Publishing raw subjects on an append-only outbox that connectors fan out to SIEM and Iceberg
 would make erasure unenforceable at the sink. Publishing their digest does not. The same reasoning
 applies to context content.
+
+**Stored subjects are keyed tags (SEC2-2).** The runtime never stores a raw subject in the record:
+each `participation[].subject` (and the subject head of the stored `trust_basis`, `"{tag}:{level}"`) is
+the tenant's keyed, rotation-stable erasure tag `hmac-sha256:<ekid>:<hex>` — the same tag that names the
+subject's `subject-tombstone:<tag>` audit entry. The digest frames the stored values, so it is keyed
+too: a sink holding `participation_digest` cannot confirm a guessed low-entropy subject against it.
+The sealed commitment keeps the raw `trust_basis` (it is encrypted and TCT-signed), and
+`trust_basis_commitment` still commits to that raw value. The frame layout is unchanged.
 
 **Erasure keeps working.** Crypto-shred destroys the record's DEK; it never touches the `participation`
 or `context_provenance` columns, nor the `participants`, `classification`, `auth_method` or
@@ -1976,7 +1994,7 @@ Together these give the rule `DecisionSealed` actually obeys — apply it when a
 > believe.
 
 **Producers MUST NOT emit a zero-length tag 10, 11, 12, 13, 14, 15, 16 or 17.** The canonical encoder cannot: prost
-skips a singular scalar at its default, and the hand-written `DecisionSealedPb` it encodes through
+skips a singular scalar at its default, and the hand-written `DecisionSealed` struct it encodes through
 declares these fields singular — the cardinality the descriptor pin below holds to this contract.
 
 **Consumers MUST read a zero-length occurrence as absence** — on all eight tags, whether the field was

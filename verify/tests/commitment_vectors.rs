@@ -302,31 +302,87 @@ fn the_sdk_conformance_tct_block_reproduces_and_verifies() {
 }
 
 // ── failure paths: tokens minted here with the vector's own issuer seed ─────────────────────────────
+//
+// Since S-4 (seam-runtime #2031) a commitment TCT is signed by a seal key the issuer certifies, so the
+// tokens below are minted the way the runtime's test support mints them: the seal key of
+// `SeededSealKeys::new(SEED)`, certified for the UTC hour of `iat`, with the certificate in `ext`.
 
 /// The vector's issuer seed (`"issuer_seed": "[7u8; 32]"`).
 const SEED: [u8; 32] = [7u8; 32];
+
+/// The minted tokens' `iat`.
+const IAT: u64 = 1_760_000_000;
 
 fn b64(b: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b)
 }
 
-/// Sign `header.payload` (both RAW JSON text, so a test can write duplicate keys) with [`SEED`].
-fn mint(header: &str, payload: &str) -> String {
+/// The seeded seal key: `sha256("seam.seal-key.fixed.v1" ‖ SEED)`.
+fn seal_key() -> ed25519_dalek::SigningKey {
+    use sha2::{Digest, Sha256};
+    let seed: [u8; 32] = Sha256::new()
+        .chain_update(b"seam.seal-key.fixed.v1")
+        .chain_update(SEED)
+        .finalize()
+        .into();
+    ed25519_dalek::SigningKey::from_bytes(&seed)
+}
+
+/// The seal key's untagged AID, the tokens' `iss == sub == aud`.
+fn seal_aid() -> String {
+    format!("aid:pubkey:{}", b64(seal_key().verifying_key().as_bytes()))
+}
+
+/// The issuer-signed `{cert, sig}` member certifying [`seal_key`] for the hour containing [`IAT`].
+fn cert_member() -> String {
     use ed25519_dalek::{Signer, SigningKey};
+    use sha2::{Digest, Sha256};
+    let issuer = SigningKey::from_bytes(&SEED);
+    let issuer_aid = format!("aid:pubkey:{}", b64(issuer.verifying_key().as_bytes()));
+    let nb = IAT * 1000 - (IAT * 1000) % 3_600_000;
+    let mut cert = Vec::new();
+    let framed = |out: &mut Vec<u8>, b: &[u8]| {
+        out.extend_from_slice(&(b.len() as u32).to_le_bytes());
+        out.extend_from_slice(b);
+    };
+    framed(&mut cert, b"seam.seal-key-cert.v1");
+    framed(&mut cert, seal_key().verifying_key().as_bytes());
+    cert.extend_from_slice(&nb.to_le_bytes());
+    cert.extend_from_slice(&(nb + 3_600_000).to_le_bytes());
+    framed(&mut cert, issuer_aid.as_bytes());
+    let sig = issuer.sign(&Sha256::digest(&cert));
+    format!(
+        r#"{{"cert":"{}","sig":"{}"}}"#,
+        b64(&cert),
+        b64(&sig.to_bytes())
+    )
+}
+
+/// `{"com.zer07labs.seam": statement, "com.zer07labs.seam.seal-key-cert": member}`, plus `extra` members.
+fn ext_of(statement: &str, extra: &str) -> String {
+    format!(
+        r#"{{{extra}"com.zer07labs.seam":{statement},"com.zer07labs.seam.seal-key-cert":{}}}"#,
+        cert_member()
+    )
+}
+
+/// Sign `header.payload` (both RAW JSON text, so a test can write duplicate keys) with the seal key.
+fn mint(header: &str, payload: &str) -> String {
+    use ed25519_dalek::Signer;
     let input = format!("{}.{}", b64(header.as_bytes()), b64(payload.as_bytes()));
-    let sig = SigningKey::from_bytes(&SEED).sign(input.as_bytes());
+    let sig = seal_key().sign(input.as_bytes());
     format!("{input}.{}", b64(&sig.to_bytes()))
 }
 
 const HEADER: &str = r#"{"alg":"EdDSA","typ":"aitp-tct+jwt"}"#;
 
-/// The signed case's real claims, re-assembled from parts so each test can vary exactly one.
+/// The signed case's claims, re-assembled from parts so each test can vary exactly one.
 fn claims(grants: &str, ext: &str) -> String {
-    let v = load("commitment_digest_v5_signed_vector.json");
-    let aid = v["issuer_aid"].as_str().unwrap();
+    let aid = seal_aid();
+    let jkt = seam_verify::commitment::jwk_thumbprint(seal_key().verifying_key().as_bytes());
     format!(
-        r#"{{"aud":"{aid}","cnf":{{"jkt":"--6IM5l0OosLj9yWskISYhUA3n_3CURQkmrYMSha_ck"}},"exp":4913600000,"ext":{ext},"grants":{grants},"iat":1760000000,"iss":"{aid}","jti":"j","sub":"{aid}","ver":"aitp/0.3"}}"#
+        r#"{{"aud":"{aid}","cnf":{{"jkt":"{jkt}"}},"exp":4913600000,"ext":{ext},"grants":{grants},"iat":{IAT},"iss":"{aid}","jti":"j","sub":"{aid}","ver":"aitp/0.3"}}"#
     )
 }
 
@@ -340,9 +396,12 @@ fn signed_case() -> (String, [u8; 32]) {
 }
 
 fn good_ext(d: &[u8; 32]) -> String {
-    format!(
-        r#"{{"com.zer07labs.seam":{{"commitment_digest":"{}","type":"seam:commitment"}}}}"#,
-        hex(d)
+    ext_of(
+        &format!(
+            r#"{{"commitment_digest":"{}","type":"seam:commitment"}}"#,
+            hex(d)
+        ),
+        "",
     )
 }
 
@@ -394,9 +453,12 @@ fn every_tct_rule_is_enforced() {
             HEADER.into(),
             claims(
                 GRANTS,
-                &format!(
-                    r#"{{"com.example":{{}},"com.zer07labs.seam":{{"commitment_digest":"{}","type":"seam:commitment"}}}}"#,
-                    hex(&d)
+                &ext_of(
+                    &format!(
+                        r#"{{"commitment_digest":"{}","type":"seam:commitment"}}"#,
+                        hex(&d)
+                    ),
+                    r#""com.example":{},"#,
                 ),
             ),
         ),
@@ -405,9 +467,12 @@ fn every_tct_rule_is_enforced() {
             HEADER.into(),
             claims(
                 GRANTS,
-                &format!(
-                    r#"{{"com.zer07labs.seam":{{"commitment_digest":"{}","note":"x","type":"seam:commitment"}}}}"#,
-                    hex(&d)
+                &ext_of(
+                    &format!(
+                        r#"{{"commitment_digest":"{}","note":"x","type":"seam:commitment"}}"#,
+                        hex(&d)
+                    ),
+                    "",
                 ),
             ),
         ),
@@ -416,9 +481,12 @@ fn every_tct_rule_is_enforced() {
             HEADER.into(),
             claims(
                 GRANTS,
-                &format!(
-                    r#"{{"com.zer07labs.seam":{{"commitment_digest":"{}","type":"seam:other"}}}}"#,
-                    hex(&d)
+                &ext_of(
+                    &format!(
+                        r#"{{"commitment_digest":"{}","type":"seam:other"}}"#,
+                        hex(&d)
+                    ),
+                    "",
                 ),
             ),
         ),
@@ -427,9 +495,12 @@ fn every_tct_rule_is_enforced() {
             HEADER.into(),
             claims(
                 GRANTS,
-                &format!(
-                    r#"{{"com.zer07labs.seam":{{"commitment_digest":"{}","type":"seam:commitment"}}}}"#,
-                    hex(&d).to_uppercase()
+                &ext_of(
+                    &format!(
+                        r#"{{"commitment_digest":"{}","type":"seam:commitment"}}"#,
+                        hex(&d).to_uppercase()
+                    ),
+                    "",
                 ),
             ),
         ),
@@ -439,10 +510,13 @@ fn every_tct_rule_is_enforced() {
             HEADER.into(),
             claims(
                 GRANTS,
-                &format!(
-                    r#"{{"com.zer07labs.seam":{{"commitment_digest":"{}","commitment_digest":"{}","type":"seam:commitment"}}}}"#,
-                    "00".repeat(32),
-                    hex(&d)
+                &ext_of(
+                    &format!(
+                        r#"{{"commitment_digest":"{}","commitment_digest":"{}","type":"seam:commitment"}}"#,
+                        "00".repeat(32),
+                        hex(&d)
+                    ),
+                    "",
                 ),
             ),
         ),
@@ -470,6 +544,8 @@ fn every_tct_rule_is_enforced() {
 
     // iss == sub == aud: a token whose subject or audience is another AID is not a self-attestation.
     let other = "aid:pubkey:_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg";
+    let aid_pin = aid.clone();
+    let aid = seal_aid();
     for field in ["sub", "aud"] {
         let p = claims(GRANTS, &ext).replacen(
             &format!(r#""{field}":"{aid}""#),
@@ -477,10 +553,11 @@ fn every_tct_rule_is_enforced() {
             1,
         );
         assert!(
-            verify_tct(&aid, &mint(HEADER, &p), &d, NOW).is_err(),
+            verify_tct(&aid_pin, &mint(HEADER, &p), &d, NOW).is_err(),
             "{field} != iss must be refused"
         );
     }
+    let aid = aid_pin;
 
     // The digest must be THIS Commitment's v5 recompute: a token binding a different digest is refused.
     let mut wrong = d;

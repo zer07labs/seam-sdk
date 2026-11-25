@@ -356,6 +356,149 @@ def _no_duplicate_keys(pairs: list) -> dict:
     return out
 
 
+#: The ``ext`` member carrying the seal-key certificate (seam-runtime #2031, deep-cleanup S-4), beside
+#: the commitment statement under :data:`COMMITMENT_EXT_KEY`.
+SEAL_KEY_CERT_EXT_KEY = "com.zer07labs.seam.seal-key-cert"
+#: The seal-key certificate's domain tag (``seam_types::chain::SEAL_KEY_CERT_DOMAIN``).
+SEAL_KEY_CERT_DOMAIN = b"seam.seal-key-cert.v1"
+#: The widest certificate window a verifier accepts, ``not_after - not_before``: one hour plus 30 s skew.
+SEAL_KEY_MAX_WINDOW_MS = 3_600_000 + 30_000
+#: The longest issuer AID a certificate may carry (the tagged Ed25519 form).
+_SEAL_KEY_ISSUER_AID_MAX = 62
+_I64_MAX = 2**63 - 1
+
+# The 14 32-byte encodings that decode to an Ed25519 point of small order (the 8 torsion points, their
+# non-canonical ``y + p`` aliases and sign-bit variants). ed25519-dalek's ``verify_strict``, which the
+# runtime uses for the certificate, refuses a small-order public key or ``R``; OpenSSL's verify already
+# refuses a non-canonical ``S`` and compares ``R`` byte-exactly, so this set is the whole difference.
+_SMALL_ORDER_ENCODINGS = frozenset(
+    bytes.fromhex(h)
+    for h in (
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000080",
+        "0100000000000000000000000000000000000000000000000000000000000000",
+        "0100000000000000000000000000000000000000000000000000000000000080",
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    )
+)
+
+_B64URL_ALPHABET = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+)
+
+
+def _b64url_decode_strict(s: object) -> bytes:
+    """Strict unpadded base64url: alphabet only, no ``=``, a valid length, canonical trailing bits."""
+    if not isinstance(s, str) or len(s) % 4 == 1 or not set(s) <= _B64URL_ALPHABET:
+        raise ValueError("not strict base64url")
+    out = _b64url_decode(s)
+    if _b64url_nopad(out) != s:
+        raise ValueError("non-canonical base64url")
+    return out
+
+
+def _ed25519_verify_strict(pub: bytes, sig: bytes, msg: bytes) -> bool:
+    """Ed25519 verify with ed25519-dalek ``verify_strict`` semantics (see :data:`_SMALL_ORDER_ENCODINGS`)."""
+    if len(pub) != 32 or len(sig) != 64:
+        return False
+    if pub in _SMALL_ORDER_ENCODINGS or sig[:32] in _SMALL_ORDER_ENCODINGS:
+        return False
+    try:
+        Ed25519PublicKey.from_public_bytes(pub).verify(sig, msg)
+    except Exception:
+        return False
+    return True
+
+
+class SealKeyCert(_NamedTuple):
+    """A parsed seal-key certificate (seam-runtime ``seal_key::SealKeyCert``)."""
+
+    seal_pk: bytes
+    not_before_ms: int
+    not_after_ms: int
+    issuer_aid: str
+
+
+def parse_seal_key_cert(cert: bytes) -> SealKeyCert | None:
+    """Parse ``framed("seam.seal-key-cert.v1") ‖ framed(seal_pk[32]) ‖ le64(not_before_ms) ‖
+    le64(not_after_ms) ‖ framed(issuer_aid)`` (``framed(x) = u32le(len) ‖ x``). ``None`` on a wrong tag, a
+    key that is not 32 bytes, truncation, trailing bytes, an issuer AID longer than 62 bytes or not UTF-8,
+    an inverted window, a ``not_after`` beyond ``i64::MAX`` ms, or a window wider than
+    :data:`SEAL_KEY_MAX_WINDOW_MS`."""
+    pos = 0
+
+    def take(n: int) -> bytes:
+        nonlocal pos
+        if pos + n > len(cert):
+            raise ValueError("truncated")
+        b = cert[pos : pos + n]
+        pos += n
+        return b
+
+    def framed() -> bytes:
+        return take(struct.unpack("<I", take(4))[0])
+
+    try:
+        if framed() != SEAL_KEY_CERT_DOMAIN:
+            return None
+        seal_pk = framed()
+        if len(seal_pk) != 32:
+            return None
+        nb = struct.unpack("<Q", take(8))[0]
+        na = struct.unpack("<Q", take(8))[0]
+        aid = framed()
+    except (ValueError, struct.error):
+        return None
+    if pos != len(cert) or len(aid) > _SEAL_KEY_ISSUER_AID_MAX:
+        return None
+    if not (nb <= na <= _I64_MAX and na - nb <= SEAL_KEY_MAX_WINDOW_MS):
+        return None
+    try:
+        issuer = aid.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return SealKeyCert(seal_pk, nb, na, issuer)
+
+
+def verify_seal_key_cert(
+    pinned_issuer_aid: str, cert: bytes, sig: bytes
+) -> SealKeyCert | None:
+    """Verify a seal-key certificate under the **pinned** issuer AID: it must parse, name exactly that AID,
+    and carry the issuer's strict Ed25519 signature over ``sha256(cert)``. ``None`` on any failure."""
+    fields = parse_seal_key_cert(cert)
+    if fields is None or fields.issuer_aid != pinned_issuer_aid:
+        return None
+    try:
+        pub = _aid_to_pubkey(pinned_issuer_aid)
+    except Exception:
+        return None
+    if not _ed25519_verify_strict(pub, sig, hashlib.sha256(cert).digest()):
+        return None
+    return fields
+
+
+def _jwk_thumbprint(pub: bytes) -> str:
+    """RFC 7638 thumbprint of an Ed25519 key (the AITP ``cnf.jkt``)."""
+    jwk = '{"crv":"Ed25519","kty":"OKP","x":"' + _b64url_nopad(pub) + '"}'
+    return _b64url_nopad(hashlib.sha256(jwk.encode()).digest())
+
+
+def _seal_key_cert_member(member: object) -> tuple[bytes, bytes]:
+    """The ``{cert, sig}`` member, decoded; exactly those two string members, strict base64url."""
+    if not isinstance(member, dict) or set(member) != {"cert", "sig"}:
+        raise ValueError("seal-key cert member is not exactly {cert, sig}")
+    return _b64url_decode_strict(member["cert"]), _b64url_decode_strict(member["sig"])
+
+
 def verify_tct(
     issuer_aid: str,
     tct_jws: str,
@@ -363,13 +506,21 @@ def verify_tct(
     now_s: int | None = None,
     *,
     decision: tuple[str, str] | None = None,
+    sealed_at_ms: int | None = None,
 ) -> bool:
     """Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only.
 
-    The TCT is an RFC-AITP-0005 self-attestation. Verifies the EdDSA JWS against the issuer's key
-    (recovered from its AID), the self-issued claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`),
-    that `grants` is exactly `["aitp.attestation"]`, and that `ext` is exactly `{"com.zer07labs.seam":
-    <statement>}`. The statement's exact member set picks v5 or v6 (:func:`select_commitment_version`)
+    The TCT is an RFC-AITP-0005 self-attestation **by a seal key the pinned issuer certifies**
+    (seam-runtime #2031, deep-cleanup S-4, runtime 0.123.0; spec ``seam-commitment-digest.v6.md``
+    §Seal key). ``ext`` is exactly ``{"com.zer07labs.seam": <statement>,
+    "com.zer07labs.seam.seal-key-cert": {"cert", "sig"}}``. The certificate must parse
+    (:func:`parse_seal_key_cert`), name exactly ``issuer_aid`` and carry the issuer's strict Ed25519
+    signature over ``sha256(cert)`` (:func:`verify_seal_key_cert`). The EdDSA JWS is then verified under
+    the certified **seal** key, with ``iss==sub==aud`` its untagged ``aid:pubkey:`` AID, ``cnf.jkt`` its
+    thumbprint, and an integer ``iat`` with ``not_before_ms <= iat*1000 <= not_after_ms`` (no grace).
+    There is no backward compatibility: a TCT the issuer signed directly (every TCT before runtime
+    0.123.0) verifies ``False``. Also checked: `typ`/`alg`, `exp`, and that `grants` is exactly
+    `["aitp.attestation"]`. The statement's exact member set picks v5 or v6 (:func:`select_commitment_version`)
     and the digest is recomputed under that version only, over this exact commitment (a v6 one carries
     its raw ``trailers``; :func:`commitment_digest_v6`). A duplicate JSON key anywhere in the header or
     payload, a statement carried in `grants` (the retired v2 shape), or an extra grant verifies
@@ -387,6 +538,17 @@ def verify_tct(
     framed from it and the winner is recomputed offline (:func:`seam_sdk.selection.verify_selection`):
     the committed action must be the winning option and every vote's signed content must link to it. A
     block with no ``explanation`` entries verifies ``False``. No block is "not a selection decision".
+
+    **Evidence grade needs ``sealed_at_ms``.** ``iat`` is self-asserted, so without it this proves a
+    certified seal key signed the statement claiming an ``iat`` inside its window, not when: a leaked
+    seal key can backdate a token anywhere in that window. With ``sealed_at_ms`` — the ``sealed_at`` of
+    the record's **chained** ``DECISION_SEALED`` link (record-digest bound; e.g. a streamed event that
+    :func:`seam_sdk.admin.verify_streamed_record_digest` accepted, for this decision), never a value
+    from the token and never the served ``DecisionRecordView.sealed_at`` — the token additionally must
+    have ``iat == sealed_at_ms // 1000``, and a ``sealed_at_ms`` outside ``[0, 2**63 - 1]`` verifies
+    ``False``. Same rule as seam-verify ``verify_tct_sealed_at`` and the runtime's
+    ``verify_commitment_sealed_at`` (seam-runtime #2031); pinned by
+    ``conformance/tct_sealed_at_vector.json``.
     """
     # Any malformed/forged input must fail closed (return False), never raise.
     try:
@@ -394,19 +556,53 @@ def verify_tct(
         if len(parts) != 3:
             return False
         header_b64, payload_b64, sig_b64 = parts
-        Ed25519PublicKey.from_public_bytes(_aid_to_pubkey(issuer_aid)).verify(
+        # S-4 (1): read the seal-key certificate member from the not-yet-verified payload (parsed with the
+        # duplicate-key guard): the token's signer is only known once the certificate names it.
+        payload = json.loads(
+            _b64url_decode(payload_b64), object_pairs_hook=_no_duplicate_keys
+        )
+        if not isinstance(payload, dict) or not isinstance(payload.get("ext"), dict):
+            return False
+        peeked = payload["ext"].get(SEAL_KEY_CERT_EXT_KEY)
+        cert_bytes, cert_sig = _seal_key_cert_member(peeked)
+        # (2) the certificate, under the PINNED issuer it must name.
+        cert = verify_seal_key_cert(issuer_aid, cert_bytes, cert_sig)
+        if cert is None:
+            return False
+        seal_aid = "aid:pubkey:" + _b64url_nopad(cert.seal_pk)
+        # (3) the token as a self-attestation by the certified seal key.
+        Ed25519PublicKey.from_public_bytes(cert.seal_pk).verify(
             _b64url_decode(sig_b64), f"{header_b64}.{payload_b64}".encode("ascii")
         )
         header = json.loads(
             _b64url_decode(header_b64), object_pairs_hook=_no_duplicate_keys
         )
-        payload = json.loads(
-            _b64url_decode(payload_b64), object_pairs_hook=_no_duplicate_keys
-        )
         if header.get("alg") != "EdDSA" or header.get("typ") != "aitp-tct+jwt":
             return False
         if not (
-            payload.get("iss") == payload.get("sub") == payload.get("aud") == issuer_aid
+            payload.get("iss") == payload.get("sub") == payload.get("aud") == seal_aid
+        ):
+            return False
+        cnf = payload.get("cnf")
+        if not isinstance(cnf, dict) or cnf.get("jkt") != _jwk_thumbprint(cert.seal_pk):
+            return False
+        if payload["ext"].get(SEAL_KEY_CERT_EXT_KEY) != peeked:
+            return False
+        # (4) iat inside the certificate window, no grace. `bool` subclasses `int`: refuse it first.
+        iat = payload.get("iat")
+        if isinstance(iat, bool) or not isinstance(iat, int):
+            return False
+        t = iat * 1000
+        if not (-(2**63) <= t <= _I64_MAX):
+            return False
+        if not (cert.not_before_ms <= t <= cert.not_after_ms):
+            return False
+        # Evidence grade (S-4): iat is the chained seal second. `bool` subclasses `int`: refuse it.
+        if sealed_at_ms is not None and (
+            isinstance(sealed_at_ms, bool)
+            or not isinstance(sealed_at_ms, int)
+            or not 0 <= sealed_at_ms <= _I64_MAX
+            or iat != sealed_at_ms // 1000
         ):
             return False
         now = now_s if now_s is not None else int(time.time())
@@ -436,7 +632,10 @@ def verify_tct(
         if payload.get("grants") != [ATTESTATION_GRANT]:
             return False
         ext = payload.get("ext")
-        if not isinstance(ext, dict) or list(ext) != [COMMITMENT_EXT_KEY]:
+        if not isinstance(ext, dict) or set(ext) != {
+            COMMITMENT_EXT_KEY,
+            SEAL_KEY_CERT_EXT_KEY,
+        }:
             return False
         stmt = ext[COMMITMENT_EXT_KEY]
         # v6 statement selection: the exact member set picks v5 or v6 (or refuses, raising), then the

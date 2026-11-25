@@ -345,23 +345,220 @@ fn parse_no_duplicate_keys(bytes: &[u8]) -> Result<serde_json::Value, String> {
     Ok(v)
 }
 
+// ==================================================================================================
+// The seal key (seam-runtime #2031, deep-cleanup S-4, runtime 0.123.0).
+//
+// Written from `seam-runtime/docs/specs/seam-commitment-digest.v6.md` §Seal key and pinned by
+// `conformance/seal_key_cert_vector.json`. The issuer key no longer signs a commitment TCT: it certifies a
+// short-lived replica **seal key** once per renewal, and the seal key signs every TCT as a self-attestation
+// (`iss == sub == aud` = the seal key's untagged AID). The certificate rides in the TCT's `ext` as a second
+// member beside the statement, so a relying party still needs only the pinned issuer AID. No backward
+// compatibility: a TCT signed directly by the issuer (every TCT before 0.123.0) carries no certificate and
+// is refused.
+// ==================================================================================================
+
+/// The TCT `ext` member that carries the seal-key certificate, beside [`EXT_NAMESPACE`].
+pub const SEAL_KEY_CERT_EXT_KEY: &str = "com.zer07labs.seam.seal-key-cert";
+
+/// The certificate's domain tag, its first frame.
+pub const SEAL_KEY_CERT_DOMAIN: &[u8] = b"seam.seal-key-cert.v1";
+
+/// The widest certificate window a verifier accepts, `not_after_ms - not_before_ms`: one hour plus the
+/// runtime's 30 s backdate skew. A wider certificate does not parse.
+pub const SEAL_KEY_MAX_WINDOW_MS: u64 = 3_600_000 + 30_000;
+
+/// The longest issuer AID a certificate carries (the tagged Ed25519 form).
+const SEAL_KEY_ISSUER_AID_MAX: usize = 62;
+
+/// A seal-key certificate's fields, as parsed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SealKeyCert {
+    /// The certified seal key (Ed25519).
+    pub seal_pk: [u8; 32],
+    /// First millisecond a TCT may claim (`iat·1000 ≥ not_before_ms`).
+    pub not_before_ms: u64,
+    /// Last millisecond a TCT may claim (`iat·1000 ≤ not_after_ms`).
+    pub not_after_ms: u64,
+    /// The issuer that signed the certificate.
+    pub issuer_aid: String,
+}
+
+impl SealKeyCert {
+    /// The seal key's AID, the commitment TCT's `iss == sub == aud`: the untagged `aid:pubkey:` form.
+    pub fn seal_aid(&self) -> String {
+        use base64::Engine;
+        format!(
+            "aid:pubkey:{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(self.seal_pk)
+        )
+    }
+
+    /// `not_before_ms ≤ iat·1000 ≤ not_after_ms`, no grace; an `iat·1000` that overflows `i64` is outside.
+    pub fn covers(&self, iat_secs: i64) -> bool {
+        let Some(t) = iat_secs.checked_mul(1000) else {
+            return false;
+        };
+        i128::from(self.not_before_ms) <= i128::from(t)
+            && i128::from(t) <= i128::from(self.not_after_ms)
+    }
+}
+
+/// The runtime's chain framing, read side: `u32le(len) ‖ bytes` at `*pos`, advancing it.
+fn take_framed<'a>(bytes: &'a [u8], pos: &mut usize) -> Option<&'a [u8]> {
+    let len_end = pos.checked_add(4)?;
+    let len = u32::from_le_bytes(bytes.get(*pos..len_end)?.try_into().ok()?) as usize;
+    let end = len_end.checked_add(len)?;
+    let out = bytes.get(len_end..end)?;
+    *pos = end;
+    Some(out)
+}
+
+/// Parse a seal-key certificate: `framed("seam.seal-key-cert.v1") ‖ framed(seal_pk[32]) ‖
+/// le64(not_before_ms) ‖ le64(not_after_ms) ‖ framed(issuer_aid)`. Total on hostile input: refuses a
+/// wrong tag, a key that is not 32 bytes, trailing bytes, an inverted window, a `not_after_ms` beyond
+/// `i64::MAX`, a window wider than [`SEAL_KEY_MAX_WINDOW_MS`], and an issuer AID that is longer than 62
+/// bytes or not UTF-8.
+pub fn parse_seal_key_cert(bytes: &[u8]) -> Option<SealKeyCert> {
+    let mut pos = 0;
+    if take_framed(bytes, &mut pos)? != SEAL_KEY_CERT_DOMAIN {
+        return None;
+    }
+    let seal_pk: [u8; 32] = take_framed(bytes, &mut pos)?.try_into().ok()?;
+    let mut le64 = || -> Option<u64> {
+        let end = pos.checked_add(8)?;
+        let v = u64::from_le_bytes(bytes.get(pos..end)?.try_into().ok()?);
+        pos = end;
+        Some(v)
+    };
+    let not_before_ms = le64()?;
+    let not_after_ms = le64()?;
+    let aid = take_framed(bytes, &mut pos)?;
+    if pos != bytes.len()
+        || aid.len() > SEAL_KEY_ISSUER_AID_MAX
+        || not_before_ms > not_after_ms
+        || not_after_ms > i64::MAX as u64
+        || not_after_ms - not_before_ms > SEAL_KEY_MAX_WINDOW_MS
+    {
+        return None;
+    }
+    Some(SealKeyCert {
+        seal_pk,
+        not_before_ms,
+        not_after_ms,
+        issuer_aid: String::from_utf8(aid.to_vec()).ok()?,
+    })
+}
+
+/// Verify a seal-key certificate under the **pinned** issuer AID: it must parse, name exactly that AID,
+/// and carry the issuer's Ed25519 `verify_strict` signature over `sha256(cert)`. The pin compare is
+/// load-bearing: without it a forger certifies their own key under their own AID.
+pub fn verify_seal_key_cert(
+    pinned_aid: &str,
+    cert: &[u8],
+    sig: &[u8],
+) -> Result<SealKeyCert, String> {
+    use ed25519_dalek::{Signature, VerifyingKey};
+    let fields = parse_seal_key_cert(cert).ok_or(
+        "the seal-key certificate does not parse (tag, key length, window, issuer AID or trailing bytes)",
+    )?;
+    if fields.issuer_aid != pinned_aid {
+        return Err(format!(
+            "the seal-key certificate names issuer '{}', not the pinned issuer",
+            fields.issuer_aid
+        ));
+    }
+    let key = crate::verify::aid_to_key(pinned_aid)?;
+    let sig: [u8; 64] = sig
+        .try_into()
+        .map_err(|_| "the seal-key certificate signature is not 64 bytes".to_string())?;
+    VerifyingKey::from_bytes(&key)
+        .map_err(|e| format!("bad issuer key: {e}"))?
+        .verify_strict(&Sha256::digest(cert), &Signature::from_bytes(&sig))
+        .map_err(|_| {
+            "the seal-key certificate signature does not verify against the pinned issuer"
+                .to_string()
+        })?;
+    Ok(fields)
+}
+
+/// Strict unpadded base64url: the alphabet only, no `=`, and canonical (re-encoding gives the input back).
+fn b64url_strict(s: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let raw = b64.decode(s).ok()?;
+    (b64.encode(&raw) == s).then_some(raw)
+}
+
+/// The `{cert, sig}` member under [`SEAL_KEY_CERT_EXT_KEY`], decoded: exactly those two members, both
+/// strict base64url strings.
+fn seal_key_cert_member(member: &serde_json::Value) -> Option<(Vec<u8>, Vec<u8>)> {
+    let obj = member.as_object()?;
+    if obj.len() != 2 {
+        return None;
+    }
+    let cert = b64url_strict(obj.get("cert")?.as_str()?)?;
+    let sig = b64url_strict(obj.get("sig")?.as_str()?)?;
+    Some((cert, sig))
+}
+
 /// Verify a Seam-minted self-attestation TCT against a **pinned** issuer AID, and that it roots
 /// exactly the Commitment whose digest is `digest`.
 ///
-/// Checks, all fail-closed: exactly three non-empty compact-JWS segments, each strict unpadded
-/// base64url; header `typ == "aitp-tct+jwt"` and `alg == "EdDSA"`; the Ed25519 signature over
-/// `header.payload` under the pinned key; claims parsed with duplicate keys REFUSED; `ver ==
-/// "aitp/0.3"`, `iss == aud == sub == pinned`; `iat <= now <= exp` (integer seconds); `cnf.jkt` is
-/// the thumbprint of the subject's key; `grants` is exactly `["aitp.attestation"]`; and `ext` is
-/// exactly `{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"<hex>"}}` — no other
-/// namespace, no other member — with `<hex>` the lowercase hex of `digest`.
+/// Checks, all fail-closed: the seal-key envelope ([`verify_tct_envelope`]: the issuer-certified seal key
+/// signed it, its `iat` lies in the certificate window, and every claim check), then `ext` is exactly
+/// `{"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":"<hex>"},
+/// "com.zer07labs.seam.seal-key-cert":{…}}` — no other namespace, no other statement member — with `<hex>`
+/// the lowercase hex of `digest`.
 pub fn verify_tct(
     pinned_aid: &str,
     token: &str,
     digest: &[u8; 32],
     now_secs: u64,
 ) -> Result<(), String> {
-    let claims = verify_tct_envelope(pinned_aid, token, now_secs)?;
+    verify_tct_iat(pinned_aid, token, digest, now_secs).map(|_| ())
+}
+
+/// [`verify_tct`] **bound to the record's chained seal time** — the evidence-grade check
+/// (`seam-commitment-digest.v6.md` §Seal key step 6, evidence-bundle.v1 step 4): additionally the TCT's
+/// `iat` must equal `floor(sealed_at_ms / 1000)` (and `sealed_at_ms <= i64::MAX`), where `sealed_at_ms` is the `sealed_at` of the record's
+/// chained `DECISION_SEALED` link, never a value from the token. `iat` is self-asserted, so this is what
+/// stops a token backdated into its window with a leaked seal key.
+pub fn verify_tct_sealed_at(
+    pinned_aid: &str,
+    token: &str,
+    digest: &[u8; 32],
+    now_secs: u64,
+    sealed_at_ms: u64,
+) -> Result<(), String> {
+    let iat = verify_tct_iat(pinned_aid, token, digest, now_secs)?;
+    check_iat_is_seal_second(iat, sealed_at_ms)
+}
+
+/// The S-4 evidence-grade rule shared by [`verify_tct_sealed_at`] and
+/// [`verify_commitment_tct_sealed_at`]: `sealed_at_ms <= i64::MAX` and `iat == floor(sealed_at_ms / 1000)`.
+/// The runtime's `verify_commitment_sealed_at` refuses a `sealed_at_ms` beyond i64 before dividing;
+/// dividing first would accept the values in (i64::MAX, i64::MAX rounded up to a whole second].
+/// Pinned across every SDK verifier by `conformance/tct_sealed_at_vector.json`.
+fn check_iat_is_seal_second(iat: i64, sealed_at_ms: u64) -> Result<(), String> {
+    let want = i64::try_from(sealed_at_ms)
+        .map_err(|_| "the chained sealed_at is beyond i64".to_string())?
+        / 1000;
+    if iat != want {
+        return Err(format!(
+            "the TCT's iat {iat} is not the chained seal time floor({sealed_at_ms} / 1000) = {want} \
+             (a backdated token, or one from another record)"
+        ));
+    }
+    Ok(())
+}
+
+fn verify_tct_iat(
+    pinned_aid: &str,
+    token: &str,
+    digest: &[u8; 32],
+    now_secs: u64,
+) -> Result<i64, String> {
+    let (claims, iat) = verify_tct_envelope(pinned_aid, token, now_secs)?;
     let binding = sole_seam_statement(&claims)?;
     if binding.len() != 2 || binding.get("type").and_then(|t| t.as_str()) != Some(EXT_TYPE) {
         return Err(format!(
@@ -377,19 +574,32 @@ pub fn verify_tct(
                 .into(),
         );
     }
-    Ok(())
+    Ok(iat)
 }
 
-/// Everything [`verify_tct`] checks except the `ext` statement: the compact JWS, the header, the
-/// signature under the pinned key, the strict (duplicate-refusing) claims parse, `ver`, `iss`/`aud`/
-/// `sub`, `iat`/`exp`, `cnf.jkt` and `grants`. Returns the parsed claims. Shared by the v5-only
-/// [`verify_tct`] and the version-selecting [`verify_commitment_tct`], so the two cannot drift on any
-/// check but the one that differs.
+/// Everything [`verify_tct`] checks except the `ext` statement, in the S-4 order (spec §Seal key, steps
+/// 1–4):
+///
+/// 1. the compact JWS splits into three non-empty strict base64url segments; header `typ ==
+///    "aitp-tct+jwt"`, `alg == "EdDSA"`; the claims parse with duplicate keys REFUSED at every depth, and
+///    the (not yet verified) `ext["com.zer07labs.seam.seal-key-cert"]` is exactly `{cert, sig}`, both
+///    strict base64url;
+/// 2. the certificate verifies under the **pinned** issuer AID, which it must name
+///    ([`verify_seal_key_cert`]);
+/// 3. the token verifies as a self-attestation by the certified **seal** key: the Ed25519 signature over
+///    `header.payload`, `ver == "aitp/0.3"`, `iss == aud == sub ==` the seal AID, `cnf.jkt` the seal key's
+///    thumbprint, `grants == ["aitp.attestation"]`, `iat <= now <= exp` (integer seconds), and the
+///    verified `ext` carries the same certificate member;
+/// 4. `not_before_ms ≤ iat·1000 ≤ not_after_ms`, no grace.
+///
+/// Returns the parsed claims and the verified `iat`. Shared by the v5-only [`verify_tct`] and the
+/// version-selecting [`verify_commitment_tct`], so the two cannot drift on any check but the one that
+/// differs.
 fn verify_tct_envelope(
     pinned_aid: &str,
     token: &str,
     now_secs: u64,
-) -> Result<serde_json::Value, String> {
+) -> Result<(serde_json::Value, i64), String> {
     use base64::Engine;
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -418,26 +628,48 @@ fn verify_tct_envelope(
         return Err("the TCT header's alg is not EdDSA".into());
     }
 
-    let key = crate::verify::aid_to_key(pinned_aid)?;
-    let vk = VerifyingKey::from_bytes(&key).map_err(|e| format!("bad issuer key: {e}"))?;
-    let signing_input = &token.as_bytes()[..h64.len() + 1 + p64.len()];
-    vk.verify(signing_input, &Signature::from_bytes(&sig))
-        .map_err(|_| "the TCT signature does not verify against the pinned issuer".to_string())?;
-
+    // (1) The certificate member, read from the not-yet-verified claims: the signer is only known once
+    // the certificate names it. The whole payload has passed the duplicate guard.
     let claims = parse_no_duplicate_keys(&payload_bytes)
         .map_err(|e| format!("the TCT payload is not strict JSON: {e}"))?;
     if !claims.is_object() {
         return Err("the TCT payload is not a JSON object".into());
     }
+    let member = claims
+        .get("ext")
+        .and_then(|e| e.get(SEAL_KEY_CERT_EXT_KEY))
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "the TCT carries no {SEAL_KEY_CERT_EXT_KEY} certificate (an issuer-signed TCT from \
+                 before runtime 0.123.0 is refused: no backward compatibility)"
+            )
+        })?;
+    let (cert, cert_sig) = seal_key_cert_member(&member).ok_or_else(|| {
+        format!(
+            "the TCT's {SEAL_KEY_CERT_EXT_KEY} is not exactly {{cert, sig}}, both strict base64url"
+        )
+    })?;
+    // (2)
+    let cert = verify_seal_key_cert(pinned_aid, &cert, &cert_sig)?;
+    let seal_aid = cert.seal_aid();
+
+    // (3)
+    let vk = VerifyingKey::from_bytes(&cert.seal_pk).map_err(|e| format!("bad seal key: {e}"))?;
+    let signing_input = &token.as_bytes()[..h64.len() + 1 + p64.len()];
+    vk.verify(signing_input, &Signature::from_bytes(&sig))
+        .map_err(|_| {
+            "the TCT signature does not verify against the certified seal key".to_string()
+        })?;
     let s = |k: &str| claims.get(k).and_then(|v| v.as_str());
     if s("ver") != Some(TCT_VER) {
         return Err(format!("the TCT's ver is not {TCT_VER}"));
     }
-    if s("iss") != Some(pinned_aid) {
-        return Err("the TCT's iss is not the pinned issuer".into());
+    if s("iss") != Some(seal_aid.as_str()) {
+        return Err("the TCT's iss is not the certified seal key".into());
     }
-    if s("aud") != Some(pinned_aid) || s("sub") != Some(pinned_aid) {
-        return Err("the TCT is not self-issued to the pinned issuer (aud/sub)".into());
+    if s("aud") != Some(seal_aid.as_str()) || s("sub") != Some(seal_aid.as_str()) {
+        return Err("the TCT is not self-issued to the certified seal key (aud/sub)".into());
     }
     let n = |k: &str| claims.get(k).and_then(|v| v.as_u64());
     let (Some(iat), Some(exp)) = (n("iat"), n("exp")) else {
@@ -449,8 +681,10 @@ fn verify_tct_envelope(
     if iat > now_secs {
         return Err(format!("the TCT is not valid until {iat} (now {now_secs})"));
     }
-    if claims.pointer("/cnf/jkt").and_then(|v| v.as_str()) != Some(jwk_thumbprint(&key).as_str()) {
-        return Err("the TCT's cnf.jkt is not the thumbprint of the issuer key".into());
+    if claims.pointer("/cnf/jkt").and_then(|v| v.as_str())
+        != Some(jwk_thumbprint(&cert.seal_pk).as_str())
+    {
+        return Err("the TCT's cnf.jkt is not the thumbprint of the certified seal key".into());
     }
     if claims.get("grants") != Some(&serde_json::json!([ATTESTATION_GRANT])) {
         return Err(format!(
@@ -458,21 +692,35 @@ fn verify_tct_envelope(
              self-attestation and carries no other grant)"
         ));
     }
-    Ok(claims)
+    if claims.get("ext").and_then(|e| e.get(SEAL_KEY_CERT_EXT_KEY)) != Some(&member) {
+        return Err(
+            "the verified ext does not carry the certificate the token was read under".into(),
+        );
+    }
+    // (4)
+    let iat = i64::try_from(iat).map_err(|_| "the TCT's iat is beyond i64".to_string())?;
+    if !cert.covers(iat) {
+        return Err(format!(
+            "the TCT's iat {iat} is outside the seal-key certificate window [{}, {}] ms",
+            cert.not_before_ms, cert.not_after_ms
+        ));
+    }
+    Ok((claims, iat))
 }
 
-/// The TCT's `ext` must be an object carrying exactly one namespace, [`EXT_NAMESPACE`], whose value is an
-/// object; returns that statement object. (A Seam-minted TCT carries no other namespace; this verifier
-/// has always refused one, under v5 and now under v6 alike.)
+/// The TCT's `ext` must be an object carrying exactly two members, [`EXT_NAMESPACE`] (an object) and
+/// [`SEAL_KEY_CERT_EXT_KEY`] (checked by [`verify_tct_envelope`]); returns the statement object. (A
+/// Seam-minted TCT carries no other namespace; this verifier has always refused one, under v5 and v6
+/// alike, and since S-4 the certificate is the one other member.)
 fn sole_seam_statement(
     claims: &serde_json::Value,
 ) -> Result<&serde_json::Map<String, serde_json::Value>, String> {
     let Some(ext) = claims.get("ext").and_then(|e| e.as_object()) else {
         return Err("the TCT carries no ext object".into());
     };
-    if ext.len() != 1 {
+    if ext.len() != 2 || !ext.contains_key(SEAL_KEY_CERT_EXT_KEY) {
         return Err(format!(
-            "the TCT's ext carries a namespace other than {EXT_NAMESPACE} (exactly one is allowed)"
+            "the TCT's ext is not exactly {{{EXT_NAMESPACE}, {SEAL_KEY_CERT_EXT_KEY}}}"
         ));
     }
     ext.get(EXT_NAMESPACE)
@@ -1066,11 +1314,13 @@ pub fn select_commitment_version_in_ext(
 /// Verify a commitment TCT against a **pinned** issuer AID, choosing v5 or v6 from the signed statement
 /// and recomputing under that version ONLY (spec §Verifiers: choosing v5 or v6). Returns the version.
 ///
-/// Every envelope check of [`verify_tct`] applies unchanged (signature, `ver`, `iss`/`aud`/`sub`,
-/// `iat`/`exp`, `cnf.jkt`, `grants`, the claims parsed with duplicate members refused at every depth,
-/// which covers the whole `ext`). Then:
+/// Every envelope check of [`verify_tct`] applies unchanged (the S-4 seal-key certificate under the pin,
+/// the signature by the certified seal key, `ver`, `iss`/`aud`/`sub` = the seal AID, `iat`/`exp`, `iat` in
+/// the certificate window, `cnf.jkt`, `grants`, the claims parsed with duplicate members refused at every
+/// depth, which covers the whole `ext`). Then:
 ///
-/// 1. the `ext` carries exactly the [`EXT_NAMESPACE`] statement, which selects the version;
+/// 1. the `ext` carries exactly the [`EXT_NAMESPACE`] statement (beside the certificate), which selects
+///    the version;
 /// 2. `trailers` (the raw `0x05`/`0x06` bytes; empty when the record has neither) decode under that
 ///    scheme ([`decode_commitment_trailers`]);
 /// 3. under **v5**, field 10 is `c.certificate_digest` and field 11 the `0x06` v1 doc (or
@@ -1086,7 +1336,33 @@ pub fn verify_commitment_tct(
     trailers: &[u8],
     now_secs: u64,
 ) -> Result<CommitmentDigestVersion, String> {
-    let claims = verify_tct_envelope(pinned_aid, &c.signed_artifact, now_secs)?;
+    verify_commitment_tct_iat(pinned_aid, c, trailers, now_secs).map(|(v, _)| v)
+}
+
+/// [`verify_commitment_tct`] **bound to the record's chained seal time**: additionally
+/// `sealed_at_ms <= i64::MAX` and the TCT's `iat == floor(sealed_at_ms / 1000)`, exactly as
+/// [`verify_tct_sealed_at`]. `sealed_at_ms` is the `sealed_at` of the record's chained `DECISION_SEALED`
+/// link (record-digest bound), never a value from the token: the evidence-grade form for a v5 or v6
+/// commitment.
+pub fn verify_commitment_tct_sealed_at(
+    pinned_aid: &str,
+    c: &Commitment,
+    trailers: &[u8],
+    now_secs: u64,
+    sealed_at_ms: u64,
+) -> Result<CommitmentDigestVersion, String> {
+    let (version, iat) = verify_commitment_tct_iat(pinned_aid, c, trailers, now_secs)?;
+    check_iat_is_seal_second(iat, sealed_at_ms)?;
+    Ok(version)
+}
+
+fn verify_commitment_tct_iat(
+    pinned_aid: &str,
+    c: &Commitment,
+    trailers: &[u8],
+    now_secs: u64,
+) -> Result<(CommitmentDigestVersion, i64), String> {
+    let (claims, iat) = verify_tct_envelope(pinned_aid, &c.signed_artifact, now_secs)?;
     sole_seam_statement(&claims)?;
     let sel = select_from_ext(&claims["ext"])
         .map_err(|r| format!("the TCT's statement selects no commitment digest version: {r}"))?;
@@ -1149,7 +1425,7 @@ pub fn verify_commitment_tct(
              token, an edited field, or a statement naming the wrong version)"
         ));
     }
-    Ok(sel.version)
+    Ok((sel.version, iat))
 }
 
 #[cfg(test)]

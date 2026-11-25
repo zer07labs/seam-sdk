@@ -192,3 +192,18 @@ test("verifyDecision: non-UTF-8 signedArtifact throws rather than decoding lossi
   const client = clientWithProof(issuer, undefined, invalidUtf8);
   await assert.rejects(client.verifyDecision(DECISION_ID, issuer), TypeError);
 });
+
+test("verifyDecision: opts.sealedAtMs binds the TCT's iat to the chained seal second (S-4 evidence grade)", async () => {
+  const issuer = vectors.tct.issuer_aid as string;
+  const jws = vectors.tct.signed_artifact_jws as string;
+  const iat = BigInt(JSON.parse(Buffer.from(jws.split(".")[1], "base64url").toString()).iat);
+  const at = async (sealedAtMs: bigint | number) =>
+    clientWithProof(issuer).verifyDecision(DECISION_ID, issuer, { sealedAtMs });
+  assert.equal(await at(iat * 1000n), true, "exact second boundary");
+  assert.equal(await at(iat * 1000n + 999n), true, "floor, not round");
+  assert.equal(await at(Number(iat * 1000n)), true, "a safe-integer number is accepted");
+  assert.equal(await at(iat * 1000n + 1000n), false, "iat 1 s before the seal second (backdated)");
+  assert.equal(await at(iat * 1000n - 1n), false, "iat 1 s after the seal second");
+  assert.equal(await at(-1n), false, "negative");
+  assert.equal(await at(1.5), false, "not an integer");
+});

@@ -966,12 +966,231 @@ public final class SeamCrypto {
     }
   }
 
+  // ── The seal key (seam-runtime #2031, deep-cleanup S-4, runtime 0.123.0) ──────────────────────
+  //
+  // Normative: seam-runtime docs/specs/seam-commitment-digest.v6.md §Seal key. The pinned issuer no
+  // longer signs commitment TCTs: it certifies a short-lived in-memory seal key, and the TCT is a
+  // self-attestation by that key carrying the certificate in a second ext member. Pinned by
+  // conformance/seal_key_cert_vector.json. No backward compatibility: an issuer-signed TCT is refused.
+
+  /** The TCT {@code ext} member that carries the seal-key certificate. */
+  public static final String SEAL_KEY_CERT_EXT_KEY = "com.zer07labs.seam.seal-key-cert";
+
+  /** Domain tag, the certificate's first frame. */
+  public static final String SEAL_KEY_CERT_DOMAIN = "seam.seal-key-cert.v1";
+
+  /** The widest certificate window accepted, {@code not_after - not_before}: 1 h plus 30 s skew. */
+  public static final long SEAL_KEY_MAX_WINDOW_MS = 3_630_000L;
+
+  private static final int SEAL_KEY_ISSUER_AID_MAX = 62;
+
+  /** A parsed seal-key certificate. {@code notBeforeMs}/{@code notAfterMs} are within [0, Long.MAX_VALUE]. */
+  public record SealKeyCert(byte[] sealPk, long notBeforeMs, long notAfterMs, String issuerAid) {
+    /** The seal key's untagged {@code aid:pubkey:} AID: the commitment TCT's {@code iss == sub == aud}. */
+    public String sealAid() {
+      return "aid:pubkey:" + b64urlNoPad(sealPk);
+    }
+
+    /** {@code notBeforeMs <= iat*1000 <= notAfterMs}, no grace; an overflowing {@code iat} is outside. */
+    public boolean covers(long iatSecs) {
+      long t;
+      try {
+        t = Math.multiplyExact(iatSecs, 1000L);
+      } catch (ArithmeticException e) {
+        return false;
+      }
+      return notBeforeMs <= t && t <= notAfterMs;
+    }
+  }
+
+  /** {@code framed(x)}: {@code u32le(len) ‖ x} — the runtime's chain framing primitive. */
+  private static void framedPut(ByteArrayOutputStream out, byte[] b) {
+    out.writeBytes(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(b.length).array());
+    out.writeBytes(b);
+  }
+
+  /**
+   * {@code framed("seam.seal-key-cert.v1") ‖ framed(seal_pk) ‖ le64(not_before_ms) ‖ le64(not_after_ms)
+   * ‖ framed(issuer_aid)} — the bytes the issuer signs SHA-256 of.
+   */
+  public static byte[] sealKeyCertPreimage(
+      byte[] sealPk, long notBeforeMs, long notAfterMs, String issuerAid) {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    framedPut(out, SEAL_KEY_CERT_DOMAIN.getBytes(StandardCharsets.US_ASCII));
+    framedPut(out, sealPk);
+    ByteBuffer le = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN);
+    le.putLong(notBeforeMs).putLong(notAfterMs);
+    out.writeBytes(le.array());
+    framedPut(out, issuerAid.getBytes(StandardCharsets.UTF_8));
+    return out.toByteArray();
+  }
+
+  /**
+   * Parse a certificate; {@code null} on a wrong tag, a key that is not 32 bytes, a short read,
+   * trailing bytes, an inverted window, a time beyond {@code Long.MAX_VALUE} ms, a window wider than
+   * {@link #SEAL_KEY_MAX_WINDOW_MS}, or an issuer AID that is longer than 62 bytes or not UTF-8.
+   */
+  public static SealKeyCert parseSealKeyCert(byte[] b) {
+    if (b == null) return null;
+    int[] pos = {0};
+    byte[] tag = framedGet(b, pos);
+    if (tag == null || !Arrays.equals(tag, SEAL_KEY_CERT_DOMAIN.getBytes(StandardCharsets.US_ASCII))) {
+      return null;
+    }
+    byte[] pk = framedGet(b, pos);
+    if (pk == null || pk.length != 32) return null;
+    if (b.length - pos[0] < 16) return null;
+    ByteBuffer le = ByteBuffer.wrap(b, pos[0], 16).order(ByteOrder.LITTLE_ENDIAN);
+    long nb = le.getLong();
+    long na = le.getLong();
+    pos[0] += 16;
+    byte[] aid = framedGet(b, pos);
+    if (aid == null || pos[0] != b.length || aid.length > SEAL_KEY_ISSUER_AID_MAX) return null;
+    // Unsigned u64 in a signed long: a negative value is > i64::MAX, refused.
+    if (nb < 0 || na < 0 || nb > na || na - nb > SEAL_KEY_MAX_WINDOW_MS) return null;
+    String issuer;
+    try {
+      issuer =
+          StandardCharsets.UTF_8
+              .newDecoder()
+              .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+              .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+              .decode(ByteBuffer.wrap(aid))
+              .toString();
+    } catch (java.nio.charset.CharacterCodingException e) {
+      return null;
+    }
+    return new SealKeyCert(pk, nb, na, issuer);
+  }
+
+  private static byte[] framedGet(byte[] b, int[] pos) {
+    if (b.length - pos[0] < 4) return null;
+    long len = Integer.toUnsignedLong(
+        ByteBuffer.wrap(b, pos[0], 4).order(ByteOrder.LITTLE_ENDIAN).getInt());
+    if (len > b.length - pos[0] - 4) return null;
+    byte[] out = Arrays.copyOfRange(b, pos[0] + 4, pos[0] + 4 + (int) len);
+    pos[0] += 4 + (int) len;
+    return out;
+  }
+
+  /**
+   * Verify a certificate under the PINNED issuer AID: it must name exactly that AID, and the
+   * issuer's strict Ed25519 signature over {@code sha256(cert)} must hold. {@code null} on any failure.
+   */
+  public static SealKeyCert verifySealKeyCert(String pinnedIssuerAid, byte[] cert, byte[] sig) {
+    try {
+      SealKeyCert f = parseSealKeyCert(cert);
+      if (f == null || !pinnedIssuerAid.equals(f.issuerAid())) return null;
+      byte[] pub = aidToPubkey(pinnedIssuerAid);
+      if (pub.length != 32 || sig == null || sig.length != 64) return null;
+      return ed25519VerifyStrict(pub, sha256(cert), sig) ? f : null;
+    } catch (RuntimeException e) {
+      return null;
+    }
+  }
+
+  /**
+   * The 32-byte encodings that decode to an Ed25519 point of small order (the 8-torsion), canonical
+   * and not. ed25519-dalek's {@code verify_strict} refuses a small-order public key and a small-order
+   * {@code R}; Bouncy Castle checks neither, so this list closes the gap. Every other strictness
+   * (canonical {@code S}, {@code R} compared by encoding) is Bouncy Castle's own.
+   */
+  private static final String[] SMALL_ORDER_ENCODINGS = {
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000080",
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "0100000000000000000000000000000000000000000000000000000000000080",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  };
+
+  private static boolean smallOrder(byte[] enc32) {
+    String h = hex(enc32);
+    for (String s : SMALL_ORDER_ENCODINGS) {
+      if (s.equals(h)) return true;
+    }
+    return false;
+  }
+
+  /** Ed25519 verify with dalek {@code verify_strict}'s extra refusals (small-order key or R). */
+  static boolean ed25519VerifyStrict(byte[] pub, byte[] msg, byte[] sig) {
+    if (pub.length != 32 || sig.length != 64) return false;
+    if (smallOrder(pub) || smallOrder(Arrays.copyOfRange(sig, 0, 32))) return false;
+    return ed25519Verify(pub, msg, sig);
+  }
+
+  /**
+   * Strict unpadded base64url: alphabet {@code [A-Za-z0-9_-]} only, no {@code =}, a length that is
+   * not 1 mod 4, and canonical trailing bits (re-encoding the bytes gives the input back).
+   * {@code null} when refused.
+   */
+  static byte[] b64urlDecodeStrict(String s) {
+    if (s == null || s.length() % 4 == 1) return null;
+    for (int i = 0; i < s.length(); i++) {
+      char ch = s.charAt(i);
+      boolean ok = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')
+          || ch == '-' || ch == '_';
+      if (!ok) return null;
+    }
+    byte[] b;
+    try {
+      b = b64urlDecode(s);
+    } catch (IllegalArgumentException e) {
+      return null;
+    }
+    return b64urlNoPad(b).equals(s) ? b : null;
+  }
+
+  /** RFC 7638 thumbprint of an Ed25519 key: the AITP {@code cnf.jkt}. */
+  static String ed25519Jkt(byte[] pk) {
+    String jwk = "{\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":\"" + b64urlNoPad(pk) + "\"}";
+    return b64urlNoPad(sha256(jwk.getBytes(StandardCharsets.US_ASCII)));
+  }
+
+  /** The literal of a top-level JSON integer member, or {@code null} if absent or not a plain integer. */
+  private static Long topLevelInteger(String json, String name) {
+    try (JsonReader r = new JsonReader(new StringReader(json))) {
+      r.setStrictness(Strictness.STRICT);
+      r.beginObject();
+      while (r.hasNext()) {
+        if (!r.nextName().equals(name)) {
+          r.skipValue();
+          continue;
+        }
+        if (r.peek() != JsonToken.NUMBER) return null;
+        String lit = r.nextString();
+        // A JSON integer: no fraction, no exponent (serde refuses 1.0 and 1e3 as an i64).
+        if (!lit.matches("-?(0|[1-9][0-9]*)")) return null;
+        return Long.parseLong(lit);
+      }
+      return null;
+    } catch (IOException | RuntimeException e) {
+      return null;
+    }
+  }
+
   /**
    * Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only.
-   * Checks the EdDSA JWS ({@code typ} {@code aitp-tct+jwt}) against the pinned issuer AID's key; the
-   * self-issued claims ({@code iss == sub == aud == issuerAid}); {@code exp}; that {@code grants} is
+   *
+   * <p><b>Seal key (seam-runtime #2031, S-4; runtime 0.123.0+).</b> The TCT is signed by a seal key
+   * the pinned issuer certifies, never by the issuer itself: (1) {@code
+   * ext["com.zer07labs.seam.seal-key-cert"]} is exactly {@code {cert, sig}}, strict base64url; (2) the
+   * certificate parses ({@link #parseSealKeyCert}), names exactly {@code issuerAid}, and the issuer's
+   * strict Ed25519 signature over {@code sha256(cert)} holds; (3) the JWS verifies under the seal key,
+   * {@code iss == sub == aud ==} the seal AID and {@code cnf.jkt} is its thumbprint; (4) {@code
+   * not_before <= iat*1000 <= not_after}, no grace. An issuer-signed TCT (every TCT before S-4) is
+   * refused: no backward compatibility. The checks below are otherwise unchanged:
+   * {@code exp}; that {@code grants} is
    * exactly {@code ["aitp.attestation"]}; and that {@code ext} is exactly {@code
-   * {"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":<hex>}}} with the hex equal to
+   * {"com.zer07labs.seam":{"type":"seam:commitment","commitment_digest":<hex>}}} (plus the certificate member) with the hex equal to
    * the recomputed {@code seam-commitment-digest:v5} of this exact commitment (decided content,
    * committer, governing document digest, and sealed explanation). Since Flows W2 the statement may
    * instead carry {@code "commitment_digest_domain":"seam-commitment-digest:v6"}: the exact member
@@ -983,34 +1202,96 @@ public final class SeamCrypto {
    * non-canonical confidence.
    */
   public static boolean verifyTct(String issuerAid, String tctJws, Commitment c, long nowS) {
+    return verifyTctAt(issuerAid, tctJws, c, nowS, null);
+  }
+
+  /**
+   * {@link #verifyTct(String, String, Commitment, long)} <b>bound to the record's chained seal
+   * time</b> — the evidence-grade check (seam-commitment-digest.v6 §Seal key step 6,
+   * evidence-bundle.v1 §Verifying step 4): additionally {@code sealedAtMs >= 0} and the TCT's {@code
+   * iat == floor(sealedAtMs / 1000)}.
+   *
+   * <p>{@code iat} is self-asserted, so {@link #verifyTct} alone proves a certified seal key signed
+   * the statement, not when: a leaked seal key can backdate a token anywhere in its certificate
+   * window. {@code sealedAtMs} must be the {@code sealed_at} of the record's <b>chained</b> {@code
+   * DECISION_SEALED} link (record-digest bound), never a value from the token and never a served
+   * {@code DecisionRecordView.sealed_at}. A Java {@code long} is the runtime's i64 bound exactly, so
+   * a negative value (an unsigned {@code uint64} beyond it) is refused. Same rule as seam-verify
+   * {@code verify_tct_sealed_at} and the runtime's {@code verify_commitment_sealed_at} (seam-runtime
+   * #2031); pinned by {@code conformance/tct_sealed_at_vector.json}.
+   */
+  public static boolean verifyTctSealedAt(
+      String issuerAid, String tctJws, Commitment c, long nowS, long sealedAtMs) {
+    return verifyTctAt(issuerAid, tctJws, c, nowS, sealedAtMs);
+  }
+
+  /**
+   * {@link #verifyTctSealedAt(String, String, Commitment, long, long)} for an option-selection
+   * decision: {@link #verifyTct(String, String, Commitment, long, SelectionBlock)} with the
+   * evidence-grade {@code iat} binding.
+   */
+  public static boolean verifyTctSealedAt(
+      String issuerAid,
+      String tctJws,
+      Commitment c,
+      long nowS,
+      SelectionBlock selection,
+      long sealedAtMs) {
+    return verifyTctSelection(issuerAid, tctJws, c, nowS, selection, sealedAtMs);
+  }
+
+  private static boolean verifyTctAt(
+      String issuerAid, String tctJws, Commitment c, long nowS, Long sealedAtMs) {
     try {
       String[] parts = tctJws.split("\\.");
       if (parts.length != 3) return false;
-      byte[] pub;
-      try {
-        pub = aidToPubkey(issuerAid);
-      } catch (RuntimeException e) {
-        return false;
-      }
-      if (pub.length != 32) return false;
-      if (!ed25519Verify(pub, (parts[0] + "." + parts[1]).getBytes(StandardCharsets.US_ASCII),
-          b64urlDecode(parts[2]))) {
-        return false;
-      }
       String headerJson = new String(b64urlDecode(parts[0]), StandardCharsets.UTF_8);
       String payloadJson = new String(b64urlDecode(parts[1]), StandardCharsets.UTF_8);
       if (hasDuplicateKey(headerJson) || hasDuplicateKey(payloadJson)) return false;
       Map<String, Object> header = GSON.fromJson(headerJson, MAP);
       Map<String, Object> payload = GSON.fromJson(payloadJson, MAP);
       if (header == null || payload == null) return false;
+      // S-4 (1) + (2): peek the certificate member from the not-yet-verified payload and verify it
+      // under the PINNED issuer; it names the seal key that must have signed the token.
+      if (!(payload.get("ext") instanceof Map<?, ?> peekExt)
+          || !(peekExt.get(SEAL_KEY_CERT_EXT_KEY) instanceof Map<?, ?> member)
+          || member.size() != 2
+          || !(member.get("cert") instanceof String certB64)
+          || !(member.get("sig") instanceof String sigB64)) {
+        return false;
+      }
+      byte[] certBytes = b64urlDecodeStrict(certB64);
+      byte[] certSig = b64urlDecodeStrict(sigB64);
+      if (certBytes == null || certSig == null) return false;
+      SealKeyCert cert = verifySealKeyCert(issuerAid, certBytes, certSig);
+      if (cert == null) return false;
+      String sealAid = cert.sealAid();
+      // (3) the token is a self-attestation by the certified seal key.
+      if (!ed25519Verify(cert.sealPk(), (parts[0] + "." + parts[1]).getBytes(StandardCharsets.US_ASCII),
+          b64urlDecode(parts[2]))) {
+        return false;
+      }
       if (!"EdDSA".equals(header.get("alg")) || !"aitp-tct+jwt".equals(header.get("typ"))) {
         return false;
       }
-      if (!(issuerAid.equals(payload.get("iss"))
-          && issuerAid.equals(payload.get("sub"))
-          && issuerAid.equals(payload.get("aud")))) {
+      if (!(sealAid.equals(payload.get("iss"))
+          && sealAid.equals(payload.get("sub"))
+          && sealAid.equals(payload.get("aud")))) {
         return false;
       }
+      if (!(payload.get("cnf") instanceof Map<?, ?> cnf)
+          || !ed25519Jkt(cert.sealPk()).equals(cnf.get("jkt"))) {
+        return false;
+      }
+      if (!(payload.get("ext") instanceof Map<?, ?> verifiedExt)
+          || !member.equals(verifiedExt.get(SEAL_KEY_CERT_EXT_KEY))) {
+        return false;
+      }
+      // (4) iat is a JSON integer inside the certificate window, no grace.
+      Long iat = topLevelInteger(payloadJson, "iat");
+      if (iat == null || !cert.covers(iat)) return false;
+      // Evidence grade (S-4): iat is the chained seal second.
+      if (sealedAtMs != null && (sealedAtMs < 0 || iat != sealedAtMs / 1000)) return false;
       Object exp = payload.get("exp");
       if (!(exp instanceof Number) || nowS >= ((Number) exp).longValue()) return false;
       if (!(payload.get("grants") instanceof List<?> grants)
@@ -1018,7 +1299,12 @@ public final class SeamCrypto {
           || !ATTESTATION_GRANT.equals(grants.get(0))) {
         return false;
       }
-      if (!(payload.get("ext") instanceof Map<?, ?> ext) || ext.size() != 1) return false;
+      // ext is exactly the statement and the certificate member, nothing else.
+      if (!(payload.get("ext") instanceof Map<?, ?> ext)
+          || ext.size() != 2
+          || !ext.containsKey(SEAL_KEY_CERT_EXT_KEY)) {
+        return false;
+      }
       // Flows W2: the statement's exact member set selects v5 or v6 (the duplicate-member guard ran
       // over the raw payload above, so it covers every depth of ext). Recompute under that version
       // only: never both, never a fallback.
@@ -1042,7 +1328,17 @@ public final class SeamCrypto {
    */
   public static boolean verifyTct(
       String issuerAid, String tctJws, Commitment c, long nowS, SelectionBlock selection) {
-    if (selection == null) return verifyTct(issuerAid, tctJws, c, nowS);
+    return verifyTctSelection(issuerAid, tctJws, c, nowS, selection, null);
+  }
+
+  private static boolean verifyTctSelection(
+      String issuerAid,
+      String tctJws,
+      Commitment c,
+      long nowS,
+      SelectionBlock selection,
+      Long sealedAtMs) {
+    if (selection == null) return verifyTctAt(issuerAid, tctJws, c, nowS, sealedAtMs);
     try {
       byte[] field9 = selectionDigest(selectionBody(selection));
       if (c.selectionDigest() != null && !Arrays.equals(c.selectionDigest(), field9)) return false;
@@ -1051,7 +1347,7 @@ public final class SeamCrypto {
               c.id(), c.action(), c.authority(), c.supersedes(), c.authMethod(), c.trustBasis(),
               c.committer(), c.explanationDigest(), c.explanation(), field9, c.certificateDigest(),
               c.governingDocSha256(), c.trailers(), c.gateBody(), c.env());
-      if (!verifyTct(issuerAid, tctJws, framed, nowS)) return false;
+      if (!verifyTctAt(issuerAid, tctJws, framed, nowS, sealedAtMs)) return false;
       if (c.explanation() == null) return false;
       return verifySelection(selection, c.explanation(), c.action()).ok();
     } catch (RuntimeException e) {

@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -522,13 +523,31 @@ func hasDuplicateKey(raw []byte) bool {
 	return err == nil // trailing content after the value
 }
 
-// VerifyTCT independently verifies a sealed commitment's rooted TCT — zero server trust, stock crypto.
-// It verifies the EdDSA JWS against the issuer's key (recovered from its AID), checks the self-issued
-// claims (`typ`, `iss==sub==aud==issuer_aid`, `exp`), and the RFC-AITP-0005 self-attestation shape:
-// `grants` is exactly ["aitp.attestation"], and `ext` is exactly
-// {"com.zer07labs.seam": {"type": "seam:commitment", "commitment_digest": "<64 lowercase hex>"}},
-// whose digest must equal `seam-commitment-digest:v5` of this exact commitment — the decided content,
-// the committer, and the sealed explanation. A statement that also carries
+// VerifyTCT independently verifies a sealed commitment's rooted TCT against the PINNED issuer AID — zero
+// server trust, stock crypto.
+//
+// Deep-cleanup S-4 (seam-runtime #2031, runtime 0.123.0): the TCT is a self-attestation by a short-lived
+// SEAL key that the pinned issuer certifies (seal_key.go). Steps, each fail-closed:
+//
+//  1. read `ext["com.zer07labs.seam.seal-key-cert"]` from the (not yet verified) payload: exactly
+//     {cert, sig}, both strict base64url;
+//  2. parse the certificate and verify it under the pinned issuer, which it must name (VerifySealKeyCert;
+//     strict Ed25519 over sha256(cert));
+//  3. verify the JWS under the seal key, with iss == sub == aud == the seal key's untagged AID and
+//     `cnf.jkt` its thumbprint; the verified `ext` must carry the same certificate member;
+//  4. `iat` must be an integer with not_before_ms ≤ iat·1000 ≤ not_after_ms, no grace;
+//  5. the statement and digest checks below, unchanged.
+//
+// No backward compatibility: a TCT signed directly by the issuer (every TCT before 0.123.0) is refused.
+// This proves a key the pinned issuer certified signed the statement, claiming an `iat` inside the
+// window; it does not prove when the token was made. Evidence-grade verification binds `iat` to the
+// chained `sealed_at`: VerifyTCTSealedAt.
+//
+// Then the RFC-AITP-0005 self-attestation shape: `alg`/`typ`, `exp`, `grants` is exactly
+// ["aitp.attestation"], and `ext` is exactly the statement plus the certificate member, where the
+// statement is {"type": "seam:commitment", "commitment_digest": "<64 lowercase hex>"}, whose digest must
+// equal `seam-commitment-digest:v5` of this exact commitment — the decided content, the committer, and
+// the sealed explanation. A statement that also carries
 // "commitment_digest_domain": "seam-commitment-digest:v6" selects v6 instead (SelectCommitmentVersion),
 // and the digest is recomputed under v6 only, with fields 10-12 from c.Trailers. A repeated JSON key anywhere in the header or payload
 // refuses the token, and a digest carried in `grants` (the retired v2 shape) does not verify.
@@ -537,19 +556,26 @@ func hasDuplicateKey(raw []byte) bool {
 // c.Explanation (VerifySelection) and must verify; a block with nil Explanation fails closed. Any
 // malformed/forged input fails closed (returns false), never panics.
 func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
+	return verifyTCT(issuerAID, tctJWS, c, nowS, nil)
+}
+
+// VerifyTCTSealedAt is VerifyTCT bound to the record's chained seal time — the evidence-grade check
+// (seam-commitment-digest.v6 §Seal key step 6, evidence-bundle.v1 §Verifying step 4). Additionally
+// sealedAtMs must be at most math.MaxInt64 and the TCT's `iat` must equal floor(sealedAtMs / 1000).
+//
+// `iat` is self-asserted, so VerifyTCT alone proves a certified seal key signed the statement, not when:
+// a leaked seal key can backdate a token anywhere in its certificate window. sealedAtMs must be the
+// `sealed_at` of the record's CHAINED DECISION_SEALED link (record-digest bound), never a value from the
+// token and never a served DecisionRecordView.SealedAt. Same rule as seam-verify `verify_tct_sealed_at`
+// and the runtime's `verify_commitment_sealed_at` (seam-runtime #2031); pinned by
+// conformance/tct_sealed_at_vector.json.
+func VerifyTCTSealedAt(issuerAID, tctJWS string, c Commitment, nowS int64, sealedAtMs uint64) bool {
+	return verifyTCT(issuerAID, tctJWS, c, nowS, &sealedAtMs)
+}
+
+func verifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64, sealedAtMs *uint64) bool {
 	parts := strings.Split(tctJWS, ".")
 	if len(parts) != 3 {
-		return false
-	}
-	pub, err := aidToPubkey(issuerAID)
-	if err != nil || len(pub) != ed25519.PublicKeySize {
-		return false
-	}
-	sig, err := b64urlDecode(parts[2])
-	if err != nil {
-		return false
-	}
-	if !ed25519.Verify(ed25519.PublicKey(pub), []byte(parts[0]+"."+parts[1]), sig) {
 		return false
 	}
 	headerBytes, err := b64urlDecode(parts[0])
@@ -560,6 +586,10 @@ func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 	if err != nil {
 		return false
 	}
+	sig, err := b64urlDecode(parts[2])
+	if err != nil {
+		return false
+	}
 	if hasDuplicateKey(headerBytes) || hasDuplicateKey(payloadBytes) {
 		return false
 	}
@@ -567,13 +597,54 @@ func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 	if json.Unmarshal(headerBytes, &header) != nil || json.Unmarshal(payloadBytes, &payload) != nil {
 		return false
 	}
-	if header["alg"] != "EdDSA" || header["typ"] != "aitp-tct+jwt" {
+	// (1) + (2) The seal-key certificate, read before the signature is checked (the token's signer is
+	// only known once the certificate names it), verified under the PINNED issuer.
+	peekedExt, _ := payload["ext"].(map[string]any)
+	peeked, ok := peekedExt[SealKeyCertExtKey]
+	if !ok {
 		return false
 	}
+	certBytes, certSig, ok := sealKeyCertMember(peeked)
+	if !ok {
+		return false
+	}
+	cert, ok := VerifySealKeyCert(issuerAID, certBytes, certSig)
+	if !ok {
+		return false
+	}
+	// (3) The token is a self-attestation by the certified seal key.
+	if !ed25519.Verify(ed25519.PublicKey(cert.SealPK[:]), []byte(parts[0]+"."+parts[1]), sig) {
+		return false
+	}
+	sealAID := cert.SealAID()
 	iss, _ := payload["iss"].(string)
 	sub, _ := payload["sub"].(string)
 	aud, _ := payload["aud"].(string)
-	if !(iss == sub && sub == aud && aud == issuerAID) {
+	if !(iss == sub && sub == aud && aud == sealAID) {
+		return false
+	}
+	cnf, _ := payload["cnf"].(map[string]any)
+	if jkt, _ := cnf["jkt"].(string); jkt != jwkThumbprint(cert.SealPK[:]) {
+		return false
+	}
+	verifiedExt, _ := payload["ext"].(map[string]any)
+	if !reflect.DeepEqual(verifiedExt[SealKeyCertExtKey], peeked) {
+		return false
+	}
+	// (4) iat, an integer literal (never a float spelling), inside the certificate window, no grace.
+	var rawClaims map[string]json.RawMessage
+	if json.Unmarshal(payloadBytes, &rawClaims) != nil {
+		return false
+	}
+	iat, ok := jsonInt64(rawClaims["iat"])
+	if !ok || !cert.Covers(iat) {
+		return false
+	}
+	// Evidence grade (S-4): iat is the chained seal second.
+	if sealedAtMs != nil && (*sealedAtMs > math.MaxInt64 || iat != int64(*sealedAtMs/1000)) {
+		return false
+	}
+	if header["alg"] != "EdDSA" || header["typ"] != "aitp-tct+jwt" {
 		return false
 	}
 	// This type assertion is the NORMATIVE `exp` rule for all five SDKs — `exp` must be a JSON
@@ -606,19 +677,19 @@ func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 	if !ok || len(grants) != 1 || grants[0] != AttestationGrant {
 		return false
 	}
+	// Exactly the statement and the certificate member: no other namespace.
 	ext, ok := payload["ext"].(map[string]any)
-	if !ok || len(ext) != 1 {
+	if !ok || len(ext) != 2 {
+		return false
+	}
+	if _, ok := ext[CommitmentExtNamespace]; !ok {
 		return false
 	}
 	// v5 or v6 is chosen by the statement's exact member set, read from the raw ext text
 	// (SelectCommitmentVersion), and the digest is recomputed under that version only: never both, never
 	// a fallback. A 2-member statement is v5, exactly as before; Trailers (if held) are checked under that
 	// version's scheme rules.
-	var rawPayload map[string]json.RawMessage
-	if json.Unmarshal(payloadBytes, &rawPayload) != nil {
-		return false
-	}
-	version, got, err := selectFromExt(rawPayload["ext"])
+	version, got, err := selectFromExt(rawClaims["ext"])
 	if err != nil {
 		return false
 	}

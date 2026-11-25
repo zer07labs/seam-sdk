@@ -16,6 +16,7 @@ retired grants form.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -338,11 +339,12 @@ def test_unspecified_kind_from_the_wire_fails_closed():
 
 # -- The self-attestation TCT shape (RFC-AITP-0005 / owner plan B5) ---------------------------------
 #
-# Re-signed with the vector's own issuer key (seed `[7u8; 32]`) so the signature is valid and only
-# the claim under test changes; otherwise every case below would fail on the signature and prove
-# nothing about the claim checks.
+# Re-signed with the vector's own SEAL key (seam-runtime #2031, S-4: the runtime's seeded test seal key
+# of issuer seed `[7u8; 32]`, `sha256("seam.seal-key.fixed.v1" ‖ seed)`) so the signature is valid and
+# only the claim under test changes; otherwise every case below would fail on the signature and prove
+# nothing about the claim checks. The certificate member rides along unchanged.
 
-_SEED = bytes([7] * 32)
+_SEED = hashlib.sha256(b"seam.seal-key.fixed.v1" + bytes([7] * 32)).digest()
 
 
 def _b64(b: bytes) -> str:
@@ -376,7 +378,10 @@ def test_the_resigned_vector_still_verifies():
     """The control: if re-signing alone broke verification, every refusal below would be vacuous."""
     c, h, p = _vector_claims()
     assert p["grants"] == ["aitp.attestation"]
-    assert list(p["ext"]) == ["com.zer07labs.seam"]
+    assert sorted(p["ext"]) == [
+        "com.zer07labs.seam",
+        "com.zer07labs.seam.seal-key-cert",
+    ]
     assert _verify(c, h, p) is True
 
 
