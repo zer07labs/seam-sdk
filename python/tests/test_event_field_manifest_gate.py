@@ -429,9 +429,10 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
     # (seam-runtime#1910, 0.117.0): ChainManifest.tenant_len/tenant_head (D-163, DECISIONS 2026-11-24).
     # 170 since runtime 0.121.0 (seam-runtime#1959): AuthorizeEvaluated.subject_digest (tag 10) reserved.
     # 173 since runtime 0.124.0 (seam-runtime#2039, S-3): SeamEvent.leaf_index/leaf_count/inclusion_path
-    # (tags 31-33), the Merkle batch proof the verifier folds.
-    assert len(fields) == 173, (
-        f"expected 173 declared event fields, found {len(fields)}"
+    # (tags 31-33), the Merkle batch proof the verifier folds. 176 with its history boundary: the v3
+    # ChainManifest.manifest_version/tenant_batch_boundary and ChainManifestEntry.batch_boundary.
+    assert len(fields) == 176, (
+        f"expected 176 declared event fields, found {len(fields)}"
     )
     messages = {line.split("/")[0] for line in fields}
     assert messages == {
