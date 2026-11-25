@@ -64,7 +64,6 @@ __all__ = [
     "KNOWN_KINDS",
     "DEFAULT_ADMIN_TIMEOUT_S",
     "ENROLMENT_KIND_AGENT",
-    "ENROLMENT_KIND_CHANGESET_WORKER",
     "ENROLMENT_KIND_OUTCOME_REPORTER",
     "ENROLMENT_KIND_VOTER",
     "ENROLMENT_KINDS",
@@ -74,19 +73,17 @@ __all__ = [
 # What an AID is enrolled FOR (runtime 0.71.0, OI-R2a): the CLOSED set the runtime parses strictly on
 # `EnrollTenantRequest.kind`, and the value `TenantView.kind` / `WhoAmIResponse.kind` report. Name a
 # kind with these rather than hand-typing the string — any other value, `""` included, is the
-# runtime's INVALID_ARGUMENT. An `outcome_reporter` or `changeset_worker` credential is refused
+# runtime's INVALID_ARGUMENT. An `outcome_reporter` credential is refused
 # PERMISSION_DENIED (`SUBJECT_KIND_CONFINED`) on every verb outside its kind. A `voter` (runtime 0.87.0,
 # #1687) is signer-only: it permits no data-plane verb and exists to sign `seam-voter-pop-v1` proofs for
 # the one `participant_id` it is bound to.
 ENROLMENT_KIND_AGENT = "agent"
 ENROLMENT_KIND_OUTCOME_REPORTER = "outcome_reporter"
-ENROLMENT_KIND_CHANGESET_WORKER = "changeset_worker"
 ENROLMENT_KIND_VOTER = "voter"
 ENROLMENT_KINDS = frozenset(
     {
         ENROLMENT_KIND_AGENT,
         ENROLMENT_KIND_OUTCOME_REPORTER,
-        ENROLMENT_KIND_CHANGESET_WORKER,
         ENROLMENT_KIND_VOTER,
     }
 )
