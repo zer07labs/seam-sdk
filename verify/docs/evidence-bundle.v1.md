@@ -1,7 +1,7 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 312e84f tracking dc1-trains/s9-o7 (refreshed 2026-11-24).
-     seam-runtime deep-cleanup S9-O7, NOT yet on runtime main. Movement since 59cae17: §Verifying step 2 drops
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ e790cb5 on runtime main (refreshed 2026-11-24).
+     seam-runtime deep-cleanup S9-O7 (runtime#1967). Movement since 59cae17: §Verifying step 2 drops
      `--strict` (the flag is gone; an unchained non-advisory event fails every run) and names that check. No
-     manifest, digest or member-format change. Re-pin to runtime main once it lands (D-048).
+     manifest, digest or member-format change (D-048).
      Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 59cae17 (refreshed 2026-11-19).
      seam-runtime 0.97.0 (#1782, #1788), on runtime main. Movement since 780b1b7: the withheld table only. An
