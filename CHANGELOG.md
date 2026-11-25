@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.123.0 — 2026-11-25
+
 ### Changed (deep-cleanup S-4 — BREAKING, lockstep with seam-runtime #2031, the 0.123.0 train)
 
 - **Every TCT verifier now verifies the S-4 seal-key shape and only that shape:** Python `verify_tct`, TS
