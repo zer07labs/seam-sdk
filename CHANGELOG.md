@@ -45,6 +45,8 @@ Lands with seam-runtime #2039 (0.124.0 train); stacked on #445.
 - `contract/event-field-manifest.txt` lists the six new event fields (176).
 - The Python, TS, Go, Java and Kotlin clients verify no chain links, so they are unchanged.
 
+## 0.123.0 — 2026-11-25
+
 ### Changed (deep-cleanup S-4 — BREAKING, lockstep with seam-runtime #2031, the 0.123.0 train)
 
 - **Every TCT verifier now verifies the S-4 seal-key shape and only that shape:** Python `verify_tct`, TS
