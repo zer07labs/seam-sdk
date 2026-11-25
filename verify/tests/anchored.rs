@@ -152,7 +152,7 @@ fn attestation_event(
     };
     let line = serde_json::json!({
         "schema_version": "seam-event.v1",
-        "event_id": format!("att#{seq}"),
+        "stream_id": "dev", "event_id": format!("dev/att#{seq}"),
         "seq": seq,
         "occurred_at": at,
         "classification": "Internal",
@@ -186,7 +186,7 @@ fn sealed_link(seq: u64, prev: &[u8]) -> (String, Vec<u8>) {
     };
     let line = serde_json::json!({
         "schema_version": "seam-event.v1",
-        "event_id": format!("d{seq}#{seq}"),
+        "stream_id": "dev", "event_id": format!("dev/d{seq}#{seq}"),
         "seq": seq,
         "kind": "DECISION_SEALED",
         "prev_checksum": b64e(prev),

@@ -333,7 +333,7 @@ fn sealed_link(seq: u64, prev: &[u8], tenant: &str) -> (String, Vec<u8>) {
     };
     let line = serde_json::json!({
         "schema_version": "seam-event.v1",
-        "event_id": format!("d{seq}#{seq}"),
+        "stream_id": "dev", "event_id": format!("dev/d{seq}#{seq}"),
         "seq": seq,
         "tenant": tenant,
         "kind": "DECISION_SEALED",
@@ -440,7 +440,7 @@ fn attestation_event_signed(
     };
     serde_json::json!({
         "schema_version": "seam-event.v1",
-        "event_id": format!("att#{seq}"),
+        "stream_id": "dev", "event_id": format!("dev/att#{seq}"),
         "seq": seq,
         "tenant": tenant,
         "occurred_at": at,
@@ -600,7 +600,7 @@ fn an_uncovered_entry_in_one_tenant_of_an_anchored_window_refuses_the_whole_call
     };
     let unknown = serde_json::json!({
         "schema_version": "seam-event.v1",
-        "event_id": "u#12",
+        "stream_id": "dev", "event_id": "dev/u#12",
         "seq": 12,
         "tenant": "globex",
         "kind": "FUTURE_ENTRY",

@@ -63,7 +63,7 @@ fn stub_payload(kind: &str) -> Option<(&'static str, &'static str)> {
 /// helper-built stream satisfies the kind/payload binding and each test keeps exercising what it names.
 fn event(seq: u64, kind: &str, prev: &[u8], digest: Option<&[u8]>, extra: &str) -> String {
     let mut s = format!(
-        r#"{{"schema_version":"seam-event.v1","event_id":"e{seq}","seq":{seq},"kind":"{kind}","prev_checksum":"{}""#,
+        r#"{{"schema_version":"seam-event.v1","stream_id":"dev","event_id":"dev/e{seq}","seq":{seq},"kind":"{kind}","prev_checksum":"{}""#,
         b64(prev)
     );
     if let Some(d) = digest {
@@ -191,7 +191,7 @@ fn two_chain_anchors_over_a_quiet_stream_are_not_a_forgery() {
     let mut c = chain(3);
     for occurred in ["100", "200"] {
         c.push(format!(
-            r#"{{"schema_version":"seam-event.v1","event_id":"chain-anchor:3#3","seq":3,"kind":"AUDIT_ENTRY","prev_checksum":"","occurred_at":{occurred},"audit_entry":{{"action":"chain_anchor","subject":"audit-chain","reason":"len=3"}}}}"#
+            r#"{{"schema_version":"seam-event.v1","stream_id":"dev","event_id":"dev/chain-anchor:3#3","seq":3,"kind":"AUDIT_ENTRY","prev_checksum":"","occurred_at":{occurred},"audit_entry":{{"action":"chain_anchor","subject":"audit-chain","reason":"len=3"}}}}"#
         ));
     }
     let (code, out) = run("anchors", &c, &[]);
@@ -206,7 +206,7 @@ fn an_advisory_event_does_not_advance_the_head() {
     let mut c = chain(3);
     c.insert(
         1,
-        r#"{"schema_version":"seam-event.v1","event_id":"ld1","seq":1,"kind":"LEARNING_DECISION","prev_checksum":"","learning_decision":{}}"#.to_string(),
+        r#"{"schema_version":"seam-event.v1","stream_id":"dev","event_id":"dev/ld1","seq":1,"kind":"LEARNING_DECISION","prev_checksum":"","learning_decision":{}}"#.to_string(),
     );
     let (code, out) = run("advisory", &c, &[]);
     assert_eq!(code, VERIFIED, "{out}");
@@ -220,7 +220,7 @@ fn an_advisory_event_does_not_advance_the_head() {
 fn an_unchained_non_advisory_event_fails_the_stream() {
     let mut c = chain(3);
     c.push(
-        r#"{"schema_version":"seam-event.v1","event_id":"old","seq":99,"kind":"DECISION_SEALED","prev_checksum":"","payload":{"decision_id":"old"}}"#
+        r#"{"schema_version":"seam-event.v1","stream_id":"dev","event_id":"dev/old","seq":99,"kind":"DECISION_SEALED","prev_checksum":"","payload":{"decision_id":"old"}}"#
             .to_string(),
     );
 
@@ -394,7 +394,7 @@ fn two_audit_entries_differing_only_in_payload_do_not_dedupe_into_one() {
     let digest = Sha256::digest(b"audit").to_vec();
     let audit = |reason: &str| {
         format!(
-            r#"{{"schema_version":"seam-event.v1","event_id":"audit:2#2","seq":2,"kind":"AUDIT_ENTRY","prev_checksum":"{}","digest":"{}","checksum":"{}","audit_entry":{{"action":"execute.scope_deny","subject":"agent-1","reason":"{reason}"}}}}"#,
+            r#"{{"schema_version":"seam-event.v1","stream_id":"dev","event_id":"dev/audit:2#2","seq":2,"kind":"AUDIT_ENTRY","prev_checksum":"{}","digest":"{}","checksum":"{}","audit_entry":{{"action":"execute.scope_deny","subject":"agent-1","reason":"{reason}"}}}}"#,
             b64(&head_after),
             b64(&digest),
             b64(&link(&head_after, &digest))
@@ -539,4 +539,26 @@ fn a_crafted_kind_cannot_break_out_of_the_json_report() {
         "the crafted kind must not have overwritten the verdict:\n{out}"
     );
     assert_eq!(v["unverified_content"], 1, "{out}");
+}
+
+/// S10-O1 (seam-runtime deep-cleanup): every seam-event.v1 event names its delivery stream and carries the
+/// `{stream_id}/` id prefix. An unstamped event or a bare `event_id` is refused, never verified as a
+/// pre-stream window — the same rule as the runtime's internal `seam-verify`.
+#[test]
+fn a_bare_event_id_or_a_missing_stream_id_is_refused() {
+    let good = chain(3);
+    let (code, out) = run("stamped", &good, &[]);
+    assert_eq!(code, VERIFIED, "{out}");
+
+    let mut unstamped = good.clone();
+    unstamped[1] = unstamped[1].replace(r#""stream_id":"dev","event_id":"dev/"#, r#""event_id":""#);
+    let (code, out) = run("unstamped", &unstamped, &[]);
+    assert_eq!(code, FAILED, "{out}");
+    assert!(out.contains("no valid stream_id"), "{out}");
+
+    let mut bare = good;
+    bare[2] = bare[2].replace(r#""event_id":"dev/"#, r#""event_id":""#);
+    let (code, out) = run("bare", &bare, &[]);
+    assert_eq!(code, FAILED, "{out}");
+    assert!(out.contains("is not prefixed by its stream"), "{out}");
 }

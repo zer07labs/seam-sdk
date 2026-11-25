@@ -134,7 +134,7 @@ const SLOTS: [Slot; 11] = [
 /// One unchained event of `kind` carrying the payloads of `slots`, as the JSON projection.
 fn json_event(kind: &str, slots: &[&Slot]) -> String {
     let mut s = format!(
-        r#"{{"schema_version":"seam-event.v1","event_id":"e1","seq":1,"tenant":"acme","kind":"{kind}","prev_checksum":"""#
+        r#"{{"schema_version":"seam-event.v1","stream_id":"dev","event_id":"dev/e1","seq":1,"tenant":"acme","kind":"{kind}","prev_checksum":"""#
     );
     for slot in slots {
         s.push_str(&format!(r#","{}":{}"#, slot.key, slot.json));
@@ -158,7 +158,8 @@ fn varint(mut v: u64, out: &mut Vec<u8>) {
 fn pb_event(kind: &str, slots: &[&Slot]) -> String {
     let mut raw = SeamEventPb {
         schema_version: "seam-event.v1".into(),
-        event_id: "e1".into(),
+        event_id: "dev/e1".into(),
+        stream_id: "dev".into(),
         seq: 1,
         tenant: "acme".into(),
         kind: kind.into(),
@@ -293,11 +294,11 @@ fn an_unknown_kind_may_carry_no_known_payload() {
 /// payload was nulled is refused like a stripped one, not treated as carrying an empty payload.
 #[test]
 fn a_null_payload_reads_as_absent() {
-    let line = r#"{"schema_version":"seam-event.v1","event_id":"e1","seq":1,"tenant":"acme","kind":"DECISION_SEALED","prev_checksum":"","payload":null}"#;
+    let line = r#"{"schema_version":"seam-event.v1","stream_id":"dev","event_id":"dev/e1","seq":1,"tenant":"acme","kind":"DECISION_SEALED","prev_checksum":"","payload":null}"#;
     let err = chain_err(line);
     assert!(err.contains("carries no DECISION_SEALED payload"), "{err}");
     // ...and likewise for an unmodelled slot: null is not presence.
-    let line = r#"{"schema_version":"seam-event.v1","event_id":"e1","seq":1,"tenant":"acme","kind":"SESSION_LIFECYCLE","prev_checksum":"","session_lifecycle":null}"#;
+    let line = r#"{"schema_version":"seam-event.v1","stream_id":"dev","event_id":"dev/e1","seq":1,"tenant":"acme","kind":"SESSION_LIFECYCLE","prev_checksum":"","session_lifecycle":null}"#;
     let err = chain_err(line);
     assert!(
         err.contains("carries no SESSION_LIFECYCLE payload"),
@@ -434,12 +435,12 @@ fn chained_anchor_stream() -> String {
     let d1 = Sha256::digest(b"anchor").to_vec();
     let h1 = link(&h0, &d1);
     let seal = serde_json::json!({
-        "schema_version": "seam-event.v1", "event_id": "d0#0", "seq": 0, "kind": "DECISION_SEALED",
+        "schema_version": "seam-event.v1", "stream_id": "dev", "event_id": "dev/d0#0", "seq": 0, "kind": "DECISION_SEALED",
         "prev_checksum": b64e(&genesis), "digest": b64e(&d0), "checksum": b64e(&h0),
         "payload": {"decision_id": "d0"},
     });
     let anchor = serde_json::json!({
-        "schema_version": "seam-event.v1", "event_id": "chain-anchor:1#1", "seq": 1,
+        "schema_version": "seam-event.v1", "stream_id": "dev", "event_id": "dev/chain-anchor:1#1", "seq": 1,
         "kind": "AUDIT_ENTRY", "prev_checksum": b64e(&h0), "digest": b64e(&d1),
         "checksum": b64e(&h1),
         "audit_entry": {"action": "chain_anchor", "subject": "audit-chain", "reason": "len=1"},
@@ -478,7 +479,7 @@ fn a_chained_advisory_kind_is_refused() {
     let genesis = vec![0u8; 32];
     let d = Sha256::digest(b"x").to_vec();
     let line = serde_json::json!({
-        "schema_version": "seam-event.v1", "event_id": "ld#0", "seq": 0, "kind": "LEARNING_DECISION",
+        "schema_version": "seam-event.v1", "stream_id": "dev", "event_id": "dev/ld#0", "seq": 0, "kind": "LEARNING_DECISION",
         "prev_checksum": b64e(&genesis), "digest": b64e(&d), "checksum": b64e(&link(&genesis, &d)),
         "learning_decision": {"arm": "a"},
     })

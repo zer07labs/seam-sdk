@@ -231,6 +231,32 @@ pub fn check_kind_payload(e: &Event) -> Result<(), String> {
     Ok(())
 }
 
+/// S10-O1 (seam-runtime deep-cleanup) — refuse an event without a valid `stream_id` (tag 27) or whose
+/// `event_id` is not `{stream_id}/{local}`. A bare `event_id` is the pre-#1488 legacy shape, which no runtime
+/// writes any more (seam-event.v1 § stream_id "Required"); there is no history boundary to accept it under.
+pub fn require_streams(events: &[Event]) -> Result<(), String> {
+    for e in events {
+        if !crate::chain_key::is_valid_stream_id(&e.stream_id) {
+            return Err(format!(
+                "seq {} ({}): no valid stream_id — every seam-event.v1 event names its delivery stream; \
+                 a bare, unstamped event is not accepted",
+                e.seq, e.event_id
+            ));
+        }
+        let prefixed = e
+            .event_id
+            .strip_prefix(e.stream_id.as_str())
+            .is_some_and(|rest| rest.starts_with('/') && rest.len() > 1);
+        if !prefixed {
+            return Err(format!(
+                "seq {}: event_id {} is not prefixed by its stream '{}/' — a bare event_id is not accepted",
+                e.seq, e.event_id, e.stream_id
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Collapse at-least-once duplicates.
 ///
 /// A duplicate is **byte-identical**, full stop — that is precisely what a retried delivery is.
