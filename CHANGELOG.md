@@ -16,6 +16,35 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Changed (deep-cleanup S-3 — BREAKING, lockstep with seam-runtime #2039, the 0.124.0 train)
+
+Lands with seam-runtime #2039 (0.124.0 train); stacked on #445.
+
+- **`seam-verify` walks S-3 Merkle batch links.** The runtime now seals one audit entry per batch per chain:
+  `leaf = SHA-256(0x00 ‖ "seam.audit.leaf.v1" ‖ digest)`, RFC 9162 nodes, entry digest
+  `SHA-256("seam.audit.batch.v1" ‖ root ‖ u64be(leaf_count))`, `checksum = SHA-256(prev ‖ entry)`. Each member
+  carries `SeamEvent` tags 31 `leaf_index`, 32 `leaf_count` and 33 `inclusion_path`. Members of one batch are
+  consecutive and share `prev_checksum` and `checksum`, and the verifier folds every member's path. Refusals:
+  `BAD INCLUSION PROOF`, `BATCH MEMBER MISMATCH`, `BATCH MEMBER MISSING` and `INCOMPLETE BATCH`.
+- **History boundary, no wipe.** The wire shape selects the rule: `leaf_count` 0 is the pre-S-3 link over the
+  event's own digest, anything else a batch member. The switch is one-way per chain, so a pre-S-3 link after
+  the chain's first batch is `PRE_S3_ABOVE_BOUNDARY`. Each side is strict, and a walk from genesis needs no
+  boundary input.
+- **`CHAIN_MANIFEST` v3** (`manifest_version` 3, tag 12): signs `seam.audit.chain-manifest.v3` with each
+  chain's `batch_boundary` (entry tag 7) and the tenant chain's `tenant_batch_boundary` (tag 13). A boundary
+  the walk disagrees with is `MANIFEST_BOUNDARY_MISMATCH`, and a boundary not below its length is
+  `boundary_not_below_len`. v2 stays verify-only: a v2 after a v3 is `MANIFEST_DOWNGRADE`, and boundary fields
+  off v3 are `MANIFEST_VERSION`.
+- **`seam-evidence-bundle.v2`** (the v1 format tag is refused). `inclusion` carries the link's own
+  `record_digest`, `leaf_index`, `leaf_count` and `inclusion_path`, plus `chain_index` and `batch_boundary`.
+  Every window link of the decision's chain must sit on its side of the boundary. The shipped fixtures'
+  manifests moved to v2; their chains are pre-S-3.
+- The runtime's re-blessed chain vectors (`conformance/chain/chain_link_vectors.json`,
+  `chain_manifest_vectors.json`, `conformance/flow_ref_unsealed_vectors.json`) and the five verifier goldens
+  are copied byte for byte from #2039 @ `64ec782c4`. Both vendored specs are re-pinned there.
+- `contract/event-field-manifest.txt` lists the six new event fields (176).
+- The Python, TS, Go, Java and Kotlin clients verify no chain links, so they are unchanged.
+
 ### Changed (deep-cleanup S-4 — BREAKING, lockstep with seam-runtime #2031, the 0.123.0 train)
 
 - **Every TCT verifier now verifies the S-4 seal-key shape and only that shape:** Python `verify_tct`, TS

@@ -1,4 +1,8 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 24844931 on runtime main (refreshed 2026-11-25).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 64ec782c4 tracking dc3/s3-merkle-batch-v2 (refreshed 2026-11-25).
+     seam-runtime#2039 (0.124.0 train, deep-cleanup S-3): Merkle batch links (tags 31-33) with a per-chain history boundary
+     (pre-S-3 below it, batches from it, one-way); CHAIN_MANIFEST v3 signs each chain's and the tenant's boundary.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 24844931 on runtime main (refreshed 2026-11-25).
      seam-runtime#2037 (0.123.0 train, deep-cleanup S-4 + SEC2-2) merged: the copy now tracks runtime main at the release commit.
      Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 492e944a on runtime main (refreshed 2026-11-25).
@@ -170,14 +174,17 @@ SeamEvent {
   decision_id:     string?   // present for decision-sealed events
   cost_micros:     u64       // per-event cost signal (R11 — observability, not a record field)
   prev_checksum:   bytes     // hash-chain link → the head this event's chain extends (tag 12)
-  digest:          bytes?    // §A — this entry's record/action digest; CHAINED kinds only (tag 19)
-  checksum:        bytes?    // §A — the head this entry produces = H(prev_checksum ‖ digest) (tag 20)
+  digest:          bytes?    // §A — this member's record/action digest; CHAINED kinds only (tag 19)
+  checksum:        bytes?    // §A — the head its batch entry produces = H(prev_checksum ‖ entry_digest), §Merkle batch link (tag 20)
   tenant_seq:      u64?      // #973 — per-tenant outbox counter, gap-free per `tenant`, UNSEALED; see §Per-tenant `tenant_seq` (tag 25)
   payload:         bytes     // kind-specific body (central seam-guard redaction on the outbox is NOT YET WIRED — see the Redaction note below)
   stream_id:       string    // k8s P7 — the runtime cell's delivery stream (`SEAM_STREAM_ID`); REQUIRED — never empty; UNSEALED; see §Delivery stream (tag 27)
   flow_ref:        FlowRef?  // Flows W1 — flow attribution; UNSEALED; NO WRITER YET; see §Flow attribution `flow_ref` and chain key `chain` (tag 28)
   chain:           ChainRef? // Flows W1 — chain key position, CHAINED kinds only; UNSEALED; NO WRITER YET (tag 29)
   chain_manifest:  ChainManifest? // Flows train 1 — the signed per-tenant chain manifest; payload of CHAIN_MANIFEST; NO WRITER YET; see §`CHAIN_MANIFEST` (tag 30)
+  leaf_index:      u32       // S-3 — this member's 0-based place in its batch; CHAINED kinds only; see §Merkle batch link (tag 31)
+  leaf_count:      u32       // S-3 — the batch's member count (>= 1); CHAINED kinds only (tag 32)
+  inclusion_path:  [bytes]   // S-3 — RFC 9162 inclusion path of `digest` into the batch root, leaf to root (tag 33)
 }
 
 enum EventKind {
@@ -290,7 +297,7 @@ before an attestation breaks a link on the path to a **signed** value.
 
 ```
 ChainHeadAttestation {                     // payload at SeamEvent tag 22
-  attested_len:  u64      // number of chain links covered = the head's 1-based position
+  attested_len:  u64      // number of chain positions covered (S-3: batch members, not entries) = the head's 1-based position
   attested_head: bytes    // the checksum at position attested_len (32 bytes)
   attested_at:   u64      // injected millis
   issuer_aid:    string   // the runtime issuer identity (same key as the TCT + erasure cert)
@@ -1010,7 +1017,9 @@ The decision being scored is identified by the **envelope `decision_id`**, not a
   the Chain bullet below; delivery being one global `seq`-ordered stream does not mean the chained
   events riding it form one global chain.
 - **Chain:** a **chained** event carries three fields — `prev_checksum` (the head it extends), `digest`
-  (its own record/action digest), and `checksum` (the head it produces, `= H(prev_checksum ‖ digest)`).
+  (its own record/action digest), and `checksum` (the head its batch entry produces, `= H(prev_checksum ‖
+  entry_digest)`, where `entry_digest` folds `digest` through the event's batch proof — see
+  [Merkle batch link](#merkle-batch-link-s-3-tags-31-33--breaking) below; a batch of one is the common case).
   **Chained-ness is by field presence, not by `kind`:** an event is on the chain iff `digest` + `checksum`
   are present (equivalently, `prev_checksum` is non-empty). The chained kinds are `DECISION_SEALED`,
   `AUDIT_ENTRY`, `ERASURE_CERTIFICATE` and `CHAIN_HEAD_ATTESTATION` — **except** the `action: "chain_anchor"` `AUDIT_ENTRY`, which is
@@ -1030,9 +1039,9 @@ The decision being scored is identified by the **envelope `decision_id`**, not a
   for each distinct `tenant` value seen, track its own `running_head`, initialized to 32 zero bytes
   (genesis) the first time that tenant's `AUDIT_ENTRY` is observed; for each event **that has a
   `digest`**, in `seq` order **within that tenant's own subsequence**, assert `prev_checksum ==
-  running_head`, assert `checksum == H(prev_checksum ‖ digest)` (**this link is now cryptographically
-  checkable** — the `digest` input is on the wire, §A), then advance that tenant's `running_head =
-  checksum`. A consumer that walks the raw interleaved stream with a single shared `running_head`
+  running_head`, assert `checksum == H(prev_checksum ‖ entry_digest)` (**this link is now cryptographically
+  checkable** — the `digest` input and its batch proof are on the wire, §A), then advance that tenant's
+  `running_head = checksum` once the batch's last member is seen (§Merkle batch link). A consumer that walks the raw interleaved stream with a single shared `running_head`
   across tenants will see spurious chain breaks the moment two tenants both have chain activity — this
   is not a transport bug, it is the (correct) per-tenant chain shape. This detects a forged/inserted/
   rewritten event within a tenant's chain, not merely a dropped one; an attacker stripping tags 19/20
@@ -1041,6 +1050,70 @@ The decision being scored is identified by the **envelope `decision_id`**, not a
   (`audit-anchor.md`). The `digest` is computed per §Record digest below (v4) — it covers every
   structural column a consumer acts on, `SHA256(ciphertext)`, and the sub-digests and bindings carried in
   payload tags 11-17, so a consumer recomputes it from the wire; it discloses nothing a consumer does not already hold.
+
+### Merkle batch link (S-3, tags 31-33) — BREAKING
+
+Since S-3 (contract train 0.124.0) the chain links **batches**, not single digests. One commit chains ONE
+entry per chain, over the digests of every chained event it appends to that chain, in append order; a commit
+that appends one chained event to a chain is a **batch of one**. Every chained event carries its place in
+its batch: `leaf_index` (tag 31, 0-based), `leaf_count` (tag 32, `>= 1`) and `inclusion_path` (tag 33, the
+RFC 9162 §2.1.3 inclusion path, leaf to root, 32-byte hashes, at most 32 of them).
+
+```
+leaf          = SHA256(0x00 ‖ "seam.audit.leaf.v1" ‖ digest)
+node(l, r)    = SHA256(0x01 ‖ l ‖ r)
+root          = RFC 9162 MTH over the batch's leaves (the largest power of two < n on the left)
+entry_digest  = SHA256("seam.audit.batch.v1" ‖ root ‖ u64be(leaf_count))
+checksum      = SHA256(prev_checksum ‖ entry_digest)          // the existing link, over entry_digest
+```
+
+The root is recomputed from `digest`, `leaf_index`, `leaf_count` and `inclusion_path` with the RFC 9162
+§2.1.3.2 verification fold; a path of the wrong length, a hash that is not 32 bytes, `leaf_index >=
+leaf_count` or `leaf_count == 0` does not fold and is refused (BAD INCLUSION PROOF). There is no chain
+position in `entry_digest`: the link already orders it.
+
+**Walking a batch.** The `leaf_count` members of one batch are consecutive in their chain's subsequence,
+from `leaf_index` 0 to `leaf_count - 1`, and they all carry the **same** `prev_checksum` and `checksum`. A
+verifier opens a batch at a member with `leaf_index == 0`: it checks `prev_checksum == running_head` and the
+link over the member's folded `entry_digest`. Each later member must continue the open batch: the next
+`leaf_index`, the same `leaf_count`, `prev_checksum` and `checksum`, and a path that folds to the same
+`entry_digest` (BATCH MEMBER MISMATCH). `running_head` advances to `checksum` after the last member. A batch
+that does not start at index 0 is BATCH MEMBER MISSING; one cut short by another link or by the end of the
+window is INCOMPLETE BATCH.
+
+**Positions.** A batch covers `leaf_count` chain positions: an attestation's `attested_len`, an anchor's
+length and `GET /v1/audit`'s `chain_index` all count members, not entries.
+
+**The store.** A seal batch's `audit_entry` row is named `batch:<lowercase hex root>`, with `batch_root` and
+`leaf_count` columns; each sealed record stores its `batch_root`, `leaf_index`, `leaf_count` and
+`inclusion_path`. Any other chained entry is a batch of one under its own entry id. A store verifier
+proves every record of a seal batch into its root and refuses a batch whose present (non-tenant-destroyed)
+members are not exactly `leaf_count`.
+
+**History boundary (no wipe).** Rows written before S-3 stay as they are; nothing is rewritten or
+reseeded. Each chain has a **batch boundary**: the chain position of its first S-3 entry, or none if it has
+no S-3 entry yet. Each side of it is strict:
+
+- **Below the boundary (or on a chain with none), a link is pre-S-3:** `leaf_count` 0 (tag 32 absent),
+  tags 31 and 33 absent, `checksum = H(prev_checksum ‖ digest)`, one position per link. A pre-S-3 link
+  with tag 31 or 33 set is refused.
+- **At or above it, a link is a batch member** under the rule above.
+- The switch is **one way**: a pre-S-3 link after a batch member on the same chain is refused
+  (`PRE_S3_ABOVE_BOUNDARY`), and a pre-S-3 link inside an open batch is BATCH MEMBER MISMATCH.
+
+The two shapes are told apart by `leaf_count` and are bound by the checksum itself (a pre-S-3 link over a
+digest is not the link over that digest's batch of one), so a chain walk that starts at genesis needs no
+boundary input. A **window** that starts mid-chain cannot see where the boundary is, so every artifact that
+lets a verifier start mid-chain states it, and the verifier checks the window against it: the
+`CHAIN_MANIFEST` (v3, below), the evidence bundle (`inclusion.batch_boundary`, `evidence-bundle.v1.md`) and
+the archive bundle (`ArchiveBundle` V5: each proof's `chain_index` and `batch_boundary`). A stated boundary
+that disagrees with the links (moved up or down, or dropped while the chain has a batch) is refused.
+
+In the store the boundary is the `audit_batch_boundary` row of the chain (migration 0062), written once by an
+insert trigger on the chain's first `batch_root` row, inside the writer's transaction under its chain lock,
+and never changed (the app role only reads it). The database also refuses a pre-S-3 row on a chain that has
+a boundary. A chain with no row is all pre-S-3; a batch row on such a chain fails verification, so a boundary
+deleted out of band reads as tampering, as does a moved one. The runtime never writes a pre-S-3 link.
 
 ### Per-tenant `tenant_seq` (additive, tag 25 — every kind, UNSEALED) — #973
 
@@ -1260,10 +1333,13 @@ attestation v3 = P("seam.audit.chain-head-attestation.v3") ‖ P(le64 attested_l
   payload: ChainHeadAttestation fields 1-7 plus stream_id = 8, flow_id = 9, env = 10, chain_kind = 11,
            version = 12 (all omitted on v1/v2); entry domain seam.audit.chain-attest-entry.v2
 
-manifest       = P("seam.audit.chain-manifest.v2") ‖ P(stream_id) ‖ P(tenant) ‖ P(governing_doc_sha256)
+manifest v3    = P("seam.audit.chain-manifest.v3") ‖ P(stream_id) ‖ P(tenant) ‖ P(governing_doc_sha256)
                  ‖ P(le64 governing_generated_at) ‖ P(le64 manifest_at) ‖ P(le32 n)
-                 ‖ n × { P(flow_id) ‖ P(env) ‖ V ‖ P(le64 len) ‖ P(head) ‖ P(le32 state) }
+                 ‖ n × { P(flow_id) ‖ P(env) ‖ V ‖ P(le64 len) ‖ P(head) ‖ P(le32 state) ‖ B(batch_boundary) }
                  ‖ P(issuer_aid) ‖ P(le32 digest_schema) ‖ P(le64 tenant_len) ‖ P(tenant_head)
+                 ‖ B(tenant_batch_boundary)
+  B(x) = P("") when absent, else P(le64 x)
+manifest v2    = the same without either B(…), domain "seam.audit.chain-manifest.v2" (verify-only)
   entry domain seam.audit.chain-manifest-entry.v1
 
 erasure v2     = P("seam.erasure-certificate.v2") ‖ P(tenant) ‖ P(stream_id) ‖ P(subject)
@@ -1280,9 +1356,20 @@ erasure v2     = P("seam.erasure-certificate.v2") ‖ P(tenant) ‖ P(stream_id)
 ```
 ChainManifest      { stream_id = 1; tenant = 2; governing_doc_sha256 = 3; governing_generated_at = 4;
                      manifest_at = 5; repeated ChainManifestEntry chains = 6; issuer_aid = 7;
-                     digest_schema = 8; signature = 9; tenant_len = 10; tenant_head = 11 }
-ChainManifestEntry { flow_id = 1; env = 2; len = 3; head = 4; state = 5; version = 6 }
+                     digest_schema = 8; signature = 9; tenant_len = 10; tenant_head = 11;
+                     manifest_version = 12; optional tenant_batch_boundary = 13 }
+ChainManifestEntry { flow_id = 1; env = 2; len = 3; head = 4; state = 5; version = 6;
+                     optional batch_boundary = 7 }
 ```
+
+- **S-3: manifest v3 states each chain's batch boundary** (§Merkle batch link, History boundary).
+  `manifest_version` is 3; `batch_boundary` on each entry and `tenant_batch_boundary` for the tenant chain are
+  set iff that chain's boundary is **below** its listed length (`len`, `tenant_len`), else absent. A
+  verifier checks each against the links it walked: a boundary that is not the chain's first batch position
+  (moved), absent while the chain has a batch below `len` (dropped), or not below `len`, is
+  `MANIFEST_BOUNDARY_MISMATCH`. The runtime writes v3 only. `manifest_version` 0 is a v2 manifest
+  (verify-only, no boundary fields; any set is `MANIFEST_VERSION`, as is any other version); a v2 manifest
+  after a v3 one on the same tenant chain is `MANIFEST_DOWNGRADE`.
 
 - The tenant's declared flow chains, signed (fields 1-8, 10 and 11, preimage above). It is appended to the
   **tenant** chain (`chain.kind = 1`), envelope `classification` `Internal`, `namespace` `""`, entry id
@@ -1654,9 +1741,11 @@ Two semantics that keep a mutable registry value safe to seal:
   3. **P3 added the key-revocation predicate** (ACDP-0014). Same place, same shape, same reason:
      `facade::refuse_revoked_key` sits behind the same composite as guard 2, refuses grounds whose
      producer signing key Seam could not CLEAR against the revocations it holds (`Revoked`,
-     `Unplaceable`). Since acdp 0.15 (B8) those verdicts already fail the resolve itself, at every
-     site including the read-only `ResolveContext` facade, so this predicate is a backstop. Latent for
-     the same reason guard 2 is.
+     `Unplaceable`, `KeyUnidentified` — deliberately not "signed by a revoked key", since under the
+     third of those Seam does not know the key was revoked), and is likewise **not** applied at the
+     read-only `ResolveContext` facade, which serves the verdict instead (RFC-ACDP-0014 §10: a §7
+     fail-closed is *"a verification verdict, not a wire condition"*). Latent for the same reason
+     guard 2 is.
 
   P1a records the status verbatim and adds no ingress refusal of its own; a second, P1a-local
   implementation of the predicate would have had to be unified with this one.
@@ -1702,18 +1791,17 @@ Rationale and threat model: [`docs/design/acdp-retraction-not-erasure-decision.m
 
 `ResolveContext` also returns a per-binding `revocation` (proto tag 12 / HTTP `revocation`) and
 `revocation_trust_class` (tag 13): Seam's own RFC-ACDP-0014 §7 assessment of the producer's **body
-signing key**, in a lowercase-with-underscore vocabulary of exactly three values —
-`not_revoked` | `pre_compromise` | `unknown` —
+signing key**, in a lowercase-with-underscore vocabulary of exactly six values —
+`not_revoked` | `pre_compromise` | `revoked` | `unplaceable` | `key_unidentified` | `unknown` —
 with a two-value trust class, `producer_signed` | `registry_attested` (§5 / §6), present only when a
 statement actually acted.
 
-**A key Seam cannot clear is never served** (since acdp 0.15, B8; owner decision 2026-10-18): a key
-revoked at or after the boundary (§7 step 3), a revoked key with no creditable placement (§7 step 4)
-and a discovery that could not answer all fail the resolve, so there is no verified content to carry
-a verdict. They surface as errors instead: `CONTEXT_KEY_REVOKED`,
+**Three of the six are reserved, never served** (since acdp 0.15, B8; owner decision 2026-10-18):
+`revoked`, `unplaceable` and `key_unidentified`. Those cases now fail the resolve, so there is no
+verified content to carry them. They surface as errors instead: `CONTEXT_KEY_REVOKED`,
 `CONTEXT_REVOCATION_UNAVAILABLE` (transient lookup failure) or `CONTEXT_REVOCATION_UNKNOWN` (any other
-reason the check cannot answer). The former `revoked`, `unplaceable` and `key_unidentified` values
-were removed from the vocabulary (P3-D1, 2026-11-25).
+reason the check cannot answer). The values stay in the vocabulary, so a consumer must still parse
+them.
 
 **Neither is in any digest**, for the same reason and with the same structural guarantee as
 `retraction`: both live on a sibling `ResolvedContext`, never on `ContextBinding`, so neither can
@@ -1748,9 +1836,10 @@ revocation permanent, so forgetting one because a registry is unreachable would 
 the other direction. An implementation that collapses *every* verdict to `unknown` on a failed lookup
 is not conformant with what this field means.
 
-None of the three served values refuses at the two decision paths: `not_revoked` and `unknown` say
-no revocation acted on this signature, and `pre_compromise` is still attributable (§7 step 2). The
-refusing cases never reach a served value; they refuse with the errors above at every site.
+Three of the six **refuse** at the two decision paths — `revoked`, `unplaceable`, `key_unidentified`
+— and none of them refuses here (§10: a §7 fail-closed is *"a verification verdict, not a wire
+condition"*). `key_unidentified` claims strictly less than the other two: it does not assert this key
+is revoked, only that Seam holds revocations it could not compare this signature against.
 
 Rationale and threat model: [`docs/design/acdp-key-revocation-decision.md`](../design/acdp-key-revocation-decision.md).
 
@@ -1834,14 +1923,6 @@ stripped ones.
 predicate. Publishing raw subjects on an append-only outbox that connectors fan out to SIEM and Iceberg
 would make erasure unenforceable at the sink. Publishing their digest does not. The same reasoning
 applies to context content.
-
-**Stored subjects are keyed tags (SEC2-2).** The runtime never stores a raw subject in the record:
-each `participation[].subject` (and the subject head of the stored `trust_basis`, `"{tag}:{level}"`) is
-the tenant's keyed, rotation-stable erasure tag `hmac-sha256:<ekid>:<hex>` — the same tag that names the
-subject's `subject-tombstone:<tag>` audit entry. The digest frames the stored values, so it is keyed
-too: a sink holding `participation_digest` cannot confirm a guessed low-entropy subject against it.
-The sealed commitment keeps the raw `trust_basis` (it is encrypted and TCT-signed), and
-`trust_basis_commitment` still commits to that raw value. The frame layout is unchanged.
 
 **Erasure keeps working.** Crypto-shred destroys the record's DEK; it never touches the `participation`
 or `context_provenance` columns, nor the `participants`, `classification`, `auth_method` or
@@ -1994,7 +2075,7 @@ Together these give the rule `DecisionSealed` actually obeys — apply it when a
 > believe.
 
 **Producers MUST NOT emit a zero-length tag 10, 11, 12, 13, 14, 15, 16 or 17.** The canonical encoder cannot: prost
-skips a singular scalar at its default, and the hand-written `DecisionSealed` struct it encodes through
+skips a singular scalar at its default, and the hand-written `DecisionSealedPb` it encodes through
 declares these fields singular — the cardinality the descriptor pin below holds to this contract.
 
 **Consumers MUST read a zero-length occurrence as absence** — on all eight tags, whether the field was
@@ -2155,6 +2236,9 @@ A breaking change bumps to `seam-event.v2`; the runtime may emit both during a m
 `"seam-event.v1"`: P7 (record digest v4, payload tags 14-17) was a contract break inside
 `seam-event.v1`. Tolerant reading does **not** extend to it: a verifier that meets a record
 `schema_version` it does not implement refuses (UNKNOWN SCHEMA VERSION) rather than skipping the record.
+S-3 (tags 31-33, the Merkle batch link) is likewise a contract break inside `seam-event.v1`: the chain
+link changed, and a verifier that does not fold the batch proof reports every link broken.
+
 A new record-digest formula retires the previous one outright — there is one formula per build, no
 dual-emit, and no read path for retired versions — and it is released as one coordinated contract change
 (runtime, `seam-sdk` verifier and vectors, and the golden manifest re-pin together).
