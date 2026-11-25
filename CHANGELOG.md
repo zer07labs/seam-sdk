@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.124.0 — 2026-11-25
+
 ### Changed (deep-cleanup S-3 — BREAKING, lockstep with seam-runtime #2039, the 0.124.0 train)
 
 Lands with seam-runtime #2039 (0.124.0 train); stacked on #445.
