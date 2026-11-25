@@ -1,4 +1,7 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 24844931 on runtime main (refreshed 2026-11-25).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 828cc61c on runtime main (refreshed 2026-11-25).
+     seam-runtime#2040 (deep-cleanup A4-O1, doc-only): §Pre-#1293 rows — the one-time sink digest drop is discharged.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 24844931 on runtime main (refreshed 2026-11-25).
      seam-runtime#2037 (0.123.0 train, deep-cleanup S-4 + SEC2-2) merged: the copy now tracks runtime main at the release commit.
      Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 492e944a on runtime main (refreshed 2026-11-25).
@@ -725,10 +728,12 @@ compatibility is kept:
 - Rows written before #484 carry **bare** `sha256:` values (brute-forceable permanently), and rows
   written between #484 and #1293 carry commitments under the retired **deployment-wide** key, which
   is derivable by anyone holding the issuer seed and which the runtime no longer holds. **Neither can
-  be recomputed** by the route above. The runtime's copies have aged out of the outbox; **a sink MUST
-  drop or null `subject_digests` (and the since-reserved `subject_digest`) / `tool_input_digest` on every
-  `AUTHORIZE_EVALUATED` row emitted before the #1293 deploy** (one-time), keeping `authorize_id` for
-  joins.
+  be recomputed** by the route above. The one-time drop of those digests that sinks used to owe is
+  **discharged**: the runtime's copies have aged out of the outbox. The only sink copy that held them,
+  the shared MinIO archive, was deleted (seam-connectors D-124). The archive sink now writes the null form
+  (seam-connectors D-089), and prd and partner data before then is test data (owner rule). No sink
+  obligation remains for these rows. A sink that finds one anyway nulls `subject_digests` (and the
+  since-reserved `subject_digest`) / `tool_input_digest` and keeps `authorize_id` for joins.
 - **Rows across the cutover never join on a commitment.** A query spanning the deploy returns nothing
   rather than erroring. Join on `authorize_id`.
 - **The SDK handle-log join.** An SDK's local handle log records the *request-side*
