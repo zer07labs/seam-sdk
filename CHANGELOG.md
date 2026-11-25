@@ -43,6 +43,9 @@ Lands with seam-runtime #2039 (0.124.0 train); stacked on #445.
   `chain_manifest_vectors.json`, `conformance/flow_ref_unsealed_vectors.json`) and the five verifier goldens
   are copied byte for byte from #2039 @ `64ec782c4` (unchanged at `eba2f32f8`). Both vendored specs are re-pinned to `eba2f32f8`.
 - `contract/event-field-manifest.txt` lists the six new event fields (176).
+- Two batches on one chain verify only when each batch's members are contiguous (one open batch per chain);
+  an interleaved window is `BATCH MEMBER MISMATCH`. Pinned by a walk test mirroring the runtime's; #2039's
+  group commit now emits each batch contiguously (Fable 0.124.0 gate, item 1).
 - The Python, TS, Go, Java and Kotlin clients verify no chain links, so they are unchanged.
 
 ## 0.123.0 — 2026-11-25

@@ -2794,6 +2794,48 @@ mod tests {
         assert!(err.contains("INCOMPLETE BATCH"), "{err}");
     }
 
+    /// Two batches on one chain (a runtime group commit of `[ns1, ns2, ns1]` makes a 2-member and a 1-member
+    /// batch: one per chain and namespace/flow attribution). One batch is open per chain, so the window must
+    /// carry each batch's members contiguously: `[A0, A1, B0]` verifies, and the interleaved `[A0, B0, A1]`
+    /// (chain positions T, T+2, T+1, what the runtime emitted before seam-runtime #2039's fix) is refused.
+    /// Mirrors seam-runtime `chains::tests::two_batches_on_one_chain_verify_only_when_each_is_contiguous`.
+    #[test]
+    fn two_batches_on_one_chain_verify_only_when_each_is_contiguous() {
+        use crate::merkle::{
+            batch_digest, leaf_hash,
+            tests::{path, root},
+        };
+        let a: Vec<[u8; 32]> = vec![[0xA0; 32], [0xA1; 32]];
+        let b = [0xB0u8; 32];
+        let a_leaves: Vec<_> = a.iter().map(|x| leaf_hash(x)).collect();
+        let ha = link(&GENESIS, &batch_digest(&root(&a_leaves), 2));
+        let hb = link(&ha, &batch_digest(&leaf_hash(&b), 1));
+        let paths = [path(&a_leaves, 0), path(&a_leaves, 1)];
+        let member = |seq: u64, which: (usize, usize)| match which {
+            (0, m) => audit(seq, &GENESIS, &a[m], &ha, Some((m as u32, 2, &paths[m]))),
+            _ => audit(seq, &ha, &b, &hb, Some((0, 1, &[]))),
+        };
+        let window = |order: [(usize, usize); 3]| -> Vec<Event> {
+            order
+                .iter()
+                .enumerate()
+                .map(|(k, &w)| member(k as u64 + 1, w))
+                .collect()
+        };
+        let r = match run(&window([(0, 0), (0, 1), (1, 0)])) {
+            Ok(r) => r,
+            Err(e) => panic!("contiguous batches verify: {e}"),
+        };
+        assert_eq!(
+            r.tenants["acme"].links, 3,
+            "two batches cover three positions"
+        );
+        let err = run(&window([(0, 0), (1, 0), (0, 1)]))
+            .err()
+            .expect("interleaved batches are refused");
+        assert!(err.contains("BATCH MEMBER MISMATCH"), "{err}");
+    }
+
     #[test]
     fn the_switch_to_batches_is_one_way() {
         let ev = crossing();

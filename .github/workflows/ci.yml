@@ -269,7 +269,7 @@ jobs:
       # merges (images.yml pushes only on main, so an unmerged branch has no image). First used for the
       # 0.44.0 train (seam-runtime#1269); pair it with a BUF_MODULE pin in the Makefile, and raise
       # timeout-minutes to 45 while it is set (a cold release build of seamd takes most of 20).
-      SEAM_RUNTIME_BUILD_REF: "eba2f32f8e03ba66f24259c38ee6469073956ae8"  # seam-runtime #2039 (S-3, 0.124.0 train) head; clear when it is on main
+      SEAM_RUNTIME_BUILD_REF: "c0b5695944e1bf00286f8c92ad2399ead7d29bfd"  # seam-runtime #2039 (S-3, 0.124.0 train) head, contiguous-batch fix; clear when it is on main
     steps:
       - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - name: Mint a seam-deps-bot App token, scoped to seam-runtime
