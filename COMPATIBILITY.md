@@ -58,7 +58,7 @@ boundary above, that means an SDK ≥ 0.33.2 needs a runtime image built from se
 
 ### Runtime 0.123.0: commitment TCTs are signed by a certified seal key (S-4), and old verifiers reject them
 
-Runtime 0.123.0 (seam-runtime #2031, deep-cleanup S-4) no longer signs a commitment TCT with the issuer key.
+Runtime 0.123.0 (seam-runtime #2036, the re-cut of #2031, deep-cleanup S-4) no longer signs a commitment TCT with the issuer key.
 The issuer certifies a short-lived in-memory **seal key** for each replica. The seal key signs every TCT as a
 self-attestation (`iss == sub == aud` = the seal key's AID), and the certificate travels in the TCT's `ext`
 as `com.zer07labs.seam.seal-key-cert`. A relying party still pins only the issuer AID. The rule is the
