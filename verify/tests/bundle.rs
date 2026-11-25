@@ -12,6 +12,16 @@
 //! the chained link. Batched windows are exercised end to end by the runtime's own `seamd` evidence-bundle
 //! tests run against this verifier (`SEAM_SDK_DIR`).
 //!
+//! **`shredded/` is a fresh export** from seam-runtime#2039 @ `eba2f32f8` (0.123.0 merged in), not an edit:
+//! issuer seed 7×32, the same `d0`/anchor/`d1`/`d2`/attestation history as the other fixtures, `d1`'s
+//! DEK destroyed, exported with `disclose_context`. Its chain is S-3 batched (`leaf_count` 1, boundary 0),
+//! so it is the fixture that walks real batch links through `bundle`. It is the only one that can be
+//! re-exported: the other four carry a Commitment, and the runtime now mints `seam-commitment-digest:v6`
+//! TCTs, which this verifier's bundle reader does not read yet (v5 only: `src/bundle.rs` `parse_commitment`,
+//! `commitment::commitment_digest`, `commitment::verify_tct_sealed_at`; DECISIONS.md A-FW2-3). Each
+//! fails a fresh export at step 4 and passes steps 1-3, so they stay the mechanical v2 edits above until
+//! that reader lands.
+//!
 //! **Re-exported for #1711 (commitment digest v5, the seam-sdk 0.88.0 train): every directory below was
 //! rewritten by the runtime's own exporter at seam-runtime@c2817d8d (PR #1727, branch
 //! `feat/1711-commitment-v5-p1`, stacked on #1713, not yet on main), the same way as the #1687 export
@@ -232,7 +242,7 @@ fn a_shredded_record_verifies_its_link_and_says_why_the_commitment_is_missing() 
     let (code, out) = verify(&fixture("shredded"), ISSUER);
     assert_eq!(code, VERIFIED, "{out}");
     assert!(
-        out.contains("withheld: commitment (the record is crypto-shredded"),
+        out.contains("withheld: commitment (the record is erased"),
         "{out}"
     );
     assert!(!out.contains("TCT"), "{out}");

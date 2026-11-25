@@ -41,7 +41,7 @@ Lands with seam-runtime #2039 (0.124.0 train); stacked on #445.
   manifests moved to v2; their chains are pre-S-3.
 - The runtime's re-blessed chain vectors (`conformance/chain/chain_link_vectors.json`,
   `chain_manifest_vectors.json`, `conformance/flow_ref_unsealed_vectors.json`) and the five verifier goldens
-  are copied byte for byte from #2039 @ `64ec782c4`. Both vendored specs are re-pinned there.
+  are copied byte for byte from #2039 @ `64ec782c4` (unchanged at `eba2f32f8`). Both vendored specs are re-pinned to `eba2f32f8`.
 - `contract/event-field-manifest.txt` lists the six new event fields (176).
 - The Python, TS, Go, Java and Kotlin clients verify no chain links, so they are unchanged.
 

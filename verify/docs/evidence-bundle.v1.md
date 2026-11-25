@@ -1,4 +1,7 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 64ec782c4 tracking dc3/s3-merkle-batch-v2 (refreshed 2026-11-25).
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ eba2f32f8 tracking dc3/s3-merkle-batch-v2 (refreshed 2026-11-25).
+     seam-runtime#2039 with 0.123.0 (#2037) merged in, and the tenant-chain boundary checked in selected mode too
+     (c550f4f9a). Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 64ec782c4 tracking dc3/s3-merkle-batch-v2 (refreshed 2026-11-25).
      seam-runtime#2039 (0.124.0 train, deep-cleanup S-3): format seam-evidence-bundle.v2; inclusion carries the batch proof,
      chain_index and batch_boundary, and every window link of the chain sits on its side of the boundary.
      Prior pin, kept for history:
@@ -262,7 +265,7 @@ what the adverse party is told.
 
 | Item | When | Reason |
 |---|---|---|
-| `participation` | always | `participation[].subject` is the GDPR erasure predicate. Only `participation_digest` is chained and published. |
+| `participation` | always | `participation[].subject` is the GDPR erasure predicate (stored as the subject's keyed tag `hmac-sha256:<ekid>:<hex>`, never raw). Only `participation_digest` is chained and published. |
 | `context` | without `--disclose context`, or the record is erased | A disclosure decision, made by the exporter per bundle. An erased record's context is withheld even when disclosure is asked for, because the bindings are personal data that survive the shred in plaintext. |
 | `policy` | without `--disclose policy`, no policy bound, or the bound bytes are no longer loadable | As stated in the reason. |
 | `commitment`, `binding` | the record is erased (key destroyed or erasure decided; a legal hold wins), tiered to cold storage, or missing | An erased record's plaintext is withdrawn, though its link still verifies. A cold record must be replayed from its archive bundle first. |
@@ -302,7 +305,12 @@ failure:
    ‖ record_digest)`. Every chained event of the same chain in `events.jsonl` must be on its side of the
    boundary (`seam-event.v1.md` §Merkle batch link, History boundary).
 4. **Commitment.** If `signed_artifact` is present, the TCT verifies against the pinned AID and its
-   grant carries this Commitment's digest. The Commitment's `supersedes` equals the chained payload's.
+   grant carries this Commitment's digest. Since S-4 the TCT is signed by a seal key the pinned issuer
+   certifies: the certificate in its `ext` verifies under the pinned AID, the TCT verifies under the seal
+   AID it names, and its `iat` lies in the certificate window. Its `iat` must also equal
+   `floor(sealed_at / 1000)` for the **chained** payload's `sealed_at` (step 6 of
+   [commitment-digest v6 §Seal key](seam-commitment-digest.v6.md#seal-key)): `iat` is self-asserted, so
+   this is what stops a token backdated with a leaked seal key. The Commitment's `supersedes` equals the chained payload's.
    (Informative, not checked by `seam-verify`: an auditor holding the record can recompute the TCT
    `jti` — `id` = `decision_id`, the record id, not `Commitment.id`; `seal_ms` = `sealed_at` in ms,
    never the TCT's `iat` — see [authorize.v1, *TCT `jti`*](authorize.v1.md#admission-checks-p8-w3-a1a4-p9-w3-a5).
