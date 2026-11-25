@@ -1,4 +1,7 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ eba2f32f8 tracking dc3/s3-merkle-batch-v2 (refreshed 2026-11-25).
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ e70d1130 on runtime main (refreshed 2026-11-25).
+     seam-runtime 0.124.0 (#2050, S-3 Merkle batches) on main.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ eba2f32f8 tracking dc3/s3-merkle-batch-v2 (refreshed 2026-11-25).
      seam-runtime#2039 with 0.123.0 (#2037) merged in, and the tenant-chain boundary checked in selected mode too
      (c550f4f9a). Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 64ec782c4 tracking dc3/s3-merkle-batch-v2 (refreshed 2026-11-25).
