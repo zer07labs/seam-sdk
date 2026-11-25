@@ -19,7 +19,8 @@ use seam_verify::wire::Event;
 use serde_json::{json, Value};
 
 const ISSUER: &str = "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw";
-const HEAD: &str = "f2bc8d903e098caef377406a1fe5198ebdd5454051ee2467ecbbb3946c67052d";
+// The golden's head under S-3 batch links (seam-runtime#2039 @ 64ec782c4).
+const HEAD: &str = "25c6417807879b5fe0b58e2b286caa4dd5de1051b6af03cb66ed53390ace3c20";
 
 static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 

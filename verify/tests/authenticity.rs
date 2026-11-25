@@ -160,13 +160,20 @@ fn an_authentic_attestation_spliced_onto_another_chain_is_refused() {
         .collect();
 
     // The attestation is the last line of the attested golden. Relink it: prev_checksum = fabricated head,
-    // checksum = H(prev ‖ digest). The attestation PAYLOAD (attested_len/head/signature) is untouched.
+    // checksum = H(prev ‖ entry), the entry being its S-3 batch of one (the goldens are batched since
+    // seam-runtime#2039). The attestation PAYLOAD (attested_len/head/signature) is untouched.
     let mut att: serde_json::Value = serde_json::from_str(attested.last().unwrap()).unwrap();
+    assert_eq!(
+        att["leaf_count"], 1,
+        "the golden attestation is a batch of one"
+    );
     let digest = b64d(att["digest"].as_str().unwrap());
+    let entry = seam_verify::merkle::entry_digest(&digest, 0, 1, &[] as &[Vec<u8>])
+        .expect("a batch of one");
     let new_checksum = {
         let mut h = Sha256::new();
         h.update(&fab_head);
-        h.update(&digest);
+        h.update(entry);
         h.finalize().to_vec()
     };
     att["prev_checksum"] = serde_json::Value::String(b64e(&fab_head));

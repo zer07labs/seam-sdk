@@ -24,7 +24,8 @@ const VERIFIED: i32 = 0;
 const FAILED: i32 = 2;
 
 const GOLDEN: &str = "session_cancelled_chain.jsonl";
-const PIN: &str = "0f21af191a13ca2653d1f191f52952ef6d3c953edaf638e3ef4b2639da9deece";
+// Re-blessed with S-3 Merkle batch links (seam-runtime#2039 @ 64ec782c4).
+const PIN: &str = "ab37f25c9790fe2c86238c99e9f6b0fb665aec70c61ed89e786151b679a5ba86";
 
 /// The issuer AID on both of the vector's `CHAIN_HEAD_ATTESTATION` rows.
 const ISSUER: &str = "aid:pubkey:QwRr_kCSs-lJlOraFdzCDYqqB7ZY_TlU644O-4vcpd4";

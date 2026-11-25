@@ -169,6 +169,13 @@ pub struct ChainManifestPb {
     /// tag 11 (D-163) — that chain's head (`genesis(K)` when `tenant_len = 0`).
     #[prost(bytes = "vec", tag = "11")]
     pub tenant_head: Vec<u8>,
+    /// tag 12 (S-3) — 3 on a v3 manifest (`seam.audit.chain-manifest.v3`, signs the history boundaries),
+    /// 0 on v1/v2.
+    #[prost(uint32, tag = "12")]
+    pub manifest_version: u32,
+    /// tag 13 (S-3, v3) — the tenant chain's history boundary below `tenant_len`, absent when none.
+    #[prost(uint64, optional, tag = "13")]
+    pub tenant_batch_boundary: Option<u64>,
 }
 
 /// `ChainManifestEntry`: one declared flow chain. `(flow_id, env, version)` is the chain key's flow part;
@@ -187,6 +194,9 @@ pub struct ChainManifestEntryPb {
     pub state: u32,
     #[prost(uint32, tag = "6")]
     pub version: u32,
+    /// tag 7 (S-3, v3) — this chain's history boundary below `len`, absent when none.
+    #[prost(uint64, optional, tag = "7")]
+    pub batch_boundary: Option<u64>,
 }
 
 /// `FlowRef` (envelope tag 28): `{flow_id = 1, rev = 2, env = 3, version = 4}`. `version` is the CP flow
@@ -570,6 +580,12 @@ pub struct ChainManifestJson {
     pub tenant_len: u64,
     #[serde(default)]
     pub tenant_head: String,
+    /// Tag 12 (S-3): 3 on a v3 manifest, 0 (omitted) on v1/v2.
+    #[serde(default)]
+    pub manifest_version: u32,
+    /// Tag 13 (S-3, v3): the tenant chain's history boundary; omitted when absent.
+    #[serde(default)]
+    pub tenant_batch_boundary: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -586,6 +602,9 @@ pub struct ChainManifestEntryJson {
     pub state: u32,
     #[serde(default)]
     pub version: u32,
+    /// Tag 7 (S-3, v3): this chain's history boundary; omitted when absent.
+    #[serde(default)]
+    pub batch_boundary: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -1024,6 +1043,7 @@ impl Event {
                                     head: b64(&c.head)?,
                                     state: c.state,
                                     version: c.version,
+                                    batch_boundary: c.batch_boundary,
                                 })
                             })
                             .collect::<Result<_, _>>()?,
@@ -1032,6 +1052,8 @@ impl Event {
                         signature: b64(&m.signature)?,
                         tenant_len: m.tenant_len,
                         tenant_head: b64(&m.tenant_head)?,
+                        manifest_version: m.manifest_version,
+                        tenant_batch_boundary: m.tenant_batch_boundary,
                     })
                 });
             let decision = j.payload.map(|p| -> Result<Decision, String> {

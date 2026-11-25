@@ -121,6 +121,9 @@ pub struct TenantChain {
     pub base_len: u64,
     /// S-3: the Merkle batch whose later members are still due ([`OpenBatch`]).
     pub open: Option<OpenBatch>,
+    /// S-3: the absolute chain position of the first batch member walked — the chain's history boundary
+    /// as this window sees it. `None` while every link has been pre-S-3.
+    pub first_batch: Option<u64>,
 }
 
 /// S-3 — a batch whose first member has linked and whose later members are still due. Every member of one
@@ -134,77 +137,58 @@ pub struct OpenBatch {
     next: u32,
 }
 
-/// S-3 — each chain's **history boundary**: the absolute 0-based chain position of its first S-3 link.
-/// Links below it verify under the pre-S-3 rule (`checksum = H(prev ‖ digest)`, no tags 31-33); links at
-/// or above it under the strict Merkle batch rule. Each side is strict: an S-3 shape below the boundary
-/// and a pre-S-3 shape at or above it are refused, so a moved boundary is refused too. A chain absent
-/// here has no boundary and is entirely pre-S-3.
-#[derive(Debug, Clone, Default)]
-pub struct Boundaries {
-    /// Tenant-scheme chains (no tag 29), by tenant.
-    pub tenants: BTreeMap<String, u64>,
-    /// Chain-keyed chains (tag 29), by key.
-    pub chains: BTreeMap<ChainKey, u64>,
-}
-
-/// One link step on `chain` for event `e` at absolute position `pos`, under the rule its side of
-/// `boundary` names. `Ok(true)` when the link opened or continued a batch (no running-head check was
-/// needed for a later member); the caller has already compared `prev_checksum` to the running head for a
-/// link that is not a later batch member ([`continues_batch`]). Returns the refusal text otherwise.
+/// S-3 — one link step on `chain` for event `e` at absolute chain position `pos`. The rule is chosen by the
+/// wire shape (spec §Merkle batch link, History boundary): `leaf_count` 0 is a pre-S-3 link over the event's
+/// own `digest` (no tags 31/33 allowed), anything else a batch member whose proof must fold. The switch is
+/// one way: the first batch member records the chain's walked boundary ([`TenantChain::first_batch`]), and a
+/// pre-S-3 link after it is `PRE_S3_ABOVE_BOUNDARY`. The caller has already compared `prev_checksum` to the
+/// running head unless a batch is open.
 fn link_rule(
     chain: &mut TenantChain,
     e: &Event,
     digest: &[u8],
     checksum: &[u8],
     pos: u64,
-    boundary: Option<u64>,
     whom: &str,
 ) -> Result<(), String> {
-    let s3 = boundary.is_some_and(|b| pos >= b);
-    let shaped = e.leaf_count != 0 || e.leaf_index != 0 || !e.inclusion_path.is_empty();
-    if !s3 {
-        if shaped {
+    let entry = if e.leaf_count == 0 {
+        if e.leaf_index != 0 || !e.inclusion_path.is_empty() {
             return Err(format!(
-                "seq {}: S-3 LINK BELOW THE HISTORY BOUNDARY — position {pos} {whom} carries a batch \
-                 proof (tags 31-33), but the chain's boundary is {}. History below the boundary links \
-                 under the pre-S-3 rule only.",
-                e.seq,
-                boundary.map_or("absent".to_string(), |b| b.to_string())
+                "seq {}: BAD INCLUSION PROOF — a pre-S-3 link (leaf_count 0) {whom} carries proof fields \
+                 (tag 31 or 33).",
+                e.seq
             ));
         }
-        let expect = link(&e.prev_checksum, digest);
-        if checksum != expect.as_slice() {
+        if let Some(b) = chain.first_batch {
             return Err(format!(
-                "seq {}: FORGED LINK — checksum != H(prev_checksum ‖ digest) {whom} (pre-S-3 history).\n  \
-                 expected {}\n  got      {}\n  \
-                 This event's own digest does not produce the head it claims. Its body was rewritten.",
-                e.seq,
-                hex(&expect),
-                hex(checksum)
+                "seq {}: PRE_S3_ABOVE_BOUNDARY — a pre-S-3 (unbatched) link at chain position {pos} {whom}, \
+                 at or above the chain's S-3 history boundary {b}.",
+                e.seq
             ));
         }
-        return Ok(());
-    }
-    if e.leaf_count == 0 {
-        return Err(format!(
-            "seq {}: UNPROVEN MEMBER — position {pos} {whom} is at or above the chain's S-3 history \
-             boundary {} but carries no batch proof (tags 31-33): a pre-S-3 link shape here is refused.",
-            e.seq,
-            boundary.unwrap_or_default()
-        ));
-    }
-    let entry = crate::merkle::entry_digest(digest, e.leaf_index, e.leaf_count, &e.inclusion_path)
-        .ok_or_else(|| {
-            format!(
-                "seq {}: BAD INCLUSION PROOF — leaf {} of {} with a {}-hash path does not fold to a root \
-                 {whom}.",
-                e.seq,
-                e.leaf_index,
-                e.leaf_count,
-                e.inclusion_path.len()
-            )
-        })?;
+        None
+    } else {
+        Some(
+            crate::merkle::entry_digest(digest, e.leaf_index, e.leaf_count, &e.inclusion_path)
+                .ok_or_else(|| {
+                    format!(
+                        "seq {}: BAD INCLUSION PROOF — leaf {} of {} with a {}-hash path does not fold to \
+                         a root {whom}.",
+                        e.seq,
+                        e.leaf_index,
+                        e.leaf_count,
+                        e.inclusion_path.len()
+                    )
+                })?,
+        )
+    };
     if let Some(b) = chain.open.as_mut() {
+        let Some(entry) = entry else {
+            return Err(format!(
+                "seq {}: BATCH MEMBER MISMATCH — a pre-S-3 link inside an open batch {whom}.",
+                e.seq
+            ));
+        };
         if e.prev_checksum != b.prev
             || checksum != b.checksum.as_slice()
             || entry != b.entry
@@ -223,23 +207,33 @@ fn link_rule(
         }
         return Ok(());
     }
-    let expect = link(&e.prev_checksum, &entry);
+    let linked: &[u8] = entry.as_ref().map_or(digest, |h| h.as_slice());
+    let expect = link(&e.prev_checksum, linked);
     if checksum != expect.as_slice() {
         return Err(format!(
-            "seq {}: FORGED LINK — checksum != H(prev_checksum ‖ entry digest) {whom}.\n  \
+            "seq {}: FORGED LINK — checksum != H(prev_checksum ‖ {}) {whom}.\n  \
              expected {}\n  got      {}\n  \
-             The member's digest, folded through its batch proof, does not produce the head it claims.",
+             This event's own digest does not produce the head it claims. Its body was rewritten.",
             e.seq,
+            if entry.is_some() {
+                "entry digest"
+            } else {
+                "digest"
+            },
             hex(&expect),
             hex(checksum)
         ));
     }
+    let Some(entry) = entry else {
+        return Ok(());
+    };
     if e.leaf_index != 0 {
         return Err(format!(
             "seq {}: BATCH MEMBER MISSING — a batch starts at member {} of {}, not 0, {whom}.",
             e.seq, e.leaf_index, e.leaf_count
         ));
     }
+    chain.first_batch.get_or_insert(pos);
     if e.leaf_count > 1 {
         chain.open = Some(OpenBatch {
             prev: e.prev_checksum.clone(),
@@ -250,6 +244,12 @@ fn link_rule(
         });
     }
     Ok(())
+}
+
+/// Whether a walked chain agrees with a signed history boundary `claimed` for its first `len` positions:
+/// a first batch at or past `len` is outside the claim, so it is not seen.
+pub fn boundary_agrees(first_batch: Option<u64>, claimed: Option<u64>, len: u64) -> bool {
+    first_batch.filter(|b| *b < len) == claimed
 }
 
 /// The refusal for a batch still open at the end of the window: members are missing.
@@ -535,18 +535,7 @@ pub fn chain_by_tenant(
     events: &[Event],
     anchors: &BTreeMap<String, (u64, Vec<u8>)>,
 ) -> Result<ChainReport, String> {
-    walk(events, anchors, &Boundaries::default(), true)
-}
-
-/// [`chain_by_tenant`] with each chain's S-3 history boundary ([`Boundaries`]); `manifest_heads` false is
-/// the [`chain_selected`] mode.
-pub fn chain_bounded(
-    events: &[Event],
-    anchors: &BTreeMap<String, (u64, Vec<u8>)>,
-    boundaries: &Boundaries,
-    manifest_heads: bool,
-) -> Result<ChainReport, String> {
-    walk(events, anchors, boundaries, manifest_heads)
+    walk(events, anchors, true)
 }
 
 /// [`chain`] over a window holding **one selected chain** (`seam-verify chain --chain`): every check runs
@@ -554,13 +543,12 @@ pub fn chain_bounded(
 /// selection by construction. A manifest in the window is still well-formed, recomputed and at its signed
 /// tenant head (D-163).
 pub fn chain_selected(events: &[Event]) -> Result<ChainReport, String> {
-    walk(events, &BTreeMap::new(), &Boundaries::default(), false)
+    walk(events, &BTreeMap::new(), false)
 }
 
 fn walk(
     events: &[Event],
     anchors: &BTreeMap<String, (u64, Vec<u8>)>,
-    boundaries: &Boundaries,
     manifest_heads: bool,
 ) -> Result<ChainReport, String> {
     let mut tenants: BTreeMap<String, TenantChain> = BTreeMap::new();
@@ -587,6 +575,8 @@ fn walk(
     let mut keyed: BTreeMap<ChainKey, TenantChain> = BTreeMap::new();
     // `(stream_id, tenant)` chains that already hold a v2 (D-163) manifest: a v1 one cannot follow.
     let mut covering_tenants: BTreeSet<(String, String)> = BTreeSet::new();
+    // `(stream_id, tenant)` chains that already hold a v3 (S-3 history boundary) manifest.
+    let mut v3_tenants: BTreeSet<(String, String)> = BTreeSet::new();
 
     for e in events {
         // First, before the link/advisory split and before the unchained refusal — as the runtime
@@ -635,6 +625,7 @@ fn walk(
                 max_schema_by_link: vec![0],
                 base_len: 0,
                 open: None,
+                first_batch: None,
             });
             if cref.seq != chain.links as u64 {
                 return Err(format!(
@@ -664,11 +655,18 @@ fn walk(
                 digest,
                 checksum,
                 chain.links as u64,
-                boundaries.chains.get(&key).copied(),
                 &format!("on {key}"),
             )?;
             if let Some(m) = &e.manifest {
-                check_manifest_entry(e, m, cref, digest, &mut covering_tenants)?;
+                check_manifest_entry(
+                    e,
+                    m,
+                    cref,
+                    digest,
+                    chain.first_batch,
+                    &mut covering_tenants,
+                    &mut v3_tenants,
+                )?;
                 r.manifests.push((e.seq, m.clone()));
             }
             chain.head = checksum.clone();
@@ -707,6 +705,7 @@ fn walk(
                 max_schema_by_link: vec![0],
                 base_len,
                 open: None,
+                first_batch: None,
             }
         });
 
@@ -744,7 +743,6 @@ fn walk(
             digest,
             checksum,
             chain.base_len + chain.links as u64,
-            boundaries.tenants.get(&e.tenant).copied(),
             &format!("for tenant {:?}", e.tenant),
         )?;
         chain.head = checksum.clone();
@@ -821,8 +819,12 @@ fn check_manifest_entry(
     m: &crate::wire::ChainManifestPb,
     cref: &crate::wire::ChainRefPb,
     digest: &[u8],
+    first_batch: Option<u64>,
     covering_tenants: &mut BTreeSet<(String, String)>,
+    v3_tenants: &mut BTreeSet<(String, String)>,
 ) -> Result<(), String> {
+    crate::manifest::check_version(m)
+        .map_err(|why| format!("tenant '{}': seq {}: {why}", e.tenant, e.seq))?;
     crate::manifest::check_structure(m).map_err(|rule| {
         format!(
             "tenant '{}': seq {}: MALFORMED MANIFEST ({rule}) — the CHAIN_MANIFEST's chain list breaks \
@@ -854,12 +856,28 @@ fn check_manifest_entry(
              expected {}\n  got      {}",
             e.tenant,
             e.seq,
-            if crate::manifest::is_v1(m) { "v1" } else { "v2" },
+            if crate::manifest::is_v1(m) {
+                "v1"
+            } else if crate::manifest::is_v3(m) {
+                "v3"
+            } else {
+                "v2"
+            },
             hex(&expect),
             hex(digest)
         ));
     }
     let tenant = (e.stream_id.clone(), e.tenant.clone());
+    // S-3: once a v3 manifest (signed history boundaries) is on the tenant chain, an older one cannot follow.
+    if crate::manifest::is_v3(m) {
+        v3_tenants.insert(tenant.clone());
+    } else if v3_tenants.contains(&tenant) {
+        return Err(format!(
+            "tenant '{}': seq {}: MANIFEST_DOWNGRADE — a pre-v3 manifest (no signed S-3 history boundary) \
+             after a v3 manifest on the same tenant chain.",
+            e.tenant, e.seq
+        ));
+    }
     if crate::manifest::is_v1(m) {
         if covering_tenants.contains(&tenant) {
             return Err(format!(
@@ -875,6 +893,20 @@ fn check_manifest_entry(
             "tenant '{}': seq {}: MANIFEST_TENANT_HEAD_MISMATCH — the manifest signs tenant chain length \
              {}, but it sits at chain kind {} position {} or after another head.",
             e.tenant, e.seq, m.tenant_len, cref.kind, cref.seq
+        ));
+    }
+    // S-3: a v3 manifest signs where the tenant chain switched to batches below `tenant_len`; the walk
+    // stands at exactly `tenant_len` positions here.
+    if crate::manifest::is_v3(m)
+        && !boundary_agrees(first_batch, m.tenant_batch_boundary, m.tenant_len)
+    {
+        return Err(format!(
+            "tenant '{}': seq {}: MANIFEST_BOUNDARY_MISMATCH — the tenant chain does not switch to Merkle \
+             batches at the S-3 history boundary {:?} the manifest signs (walked: {:?}).",
+            e.tenant,
+            e.seq,
+            m.tenant_batch_boundary,
+            first_batch.filter(|b| *b < m.tenant_len)
         ));
     }
     covering_tenants.insert(tenant);
@@ -909,6 +941,17 @@ fn check_manifest_heads(r: &ChainReport) -> Result<(), String> {
                      not have the head the manifest lists.",
                     m.tenant, c.flow_id, c.env, c.version, c.len
                 ));
+            }
+            // S-3: a v3 manifest signs where each chain switched to batches below `len`; the walk must agree.
+            if crate::manifest::is_v3(m) {
+                let walked = r.chains.get(&key).and_then(|tc| tc.first_batch);
+                if !boundary_agrees(walked, c.batch_boundary, c.len) {
+                    return Err(format!(
+                        "tenant '{}': seq {seq}: MANIFEST_BOUNDARY_MISMATCH — chain {:?} {:?} v{} does not \
+                         switch to Merkle batches at the S-3 history boundary {:?} the manifest signs.",
+                        m.tenant, c.flow_id, c.env, c.version, c.batch_boundary
+                    ));
+                }
             }
         }
     }
@@ -2026,6 +2069,16 @@ mod tests {
         head: Vec<u8>,
         extra: Option<crate::wire::ChainManifestEntryPb>,
     ) -> Result<(), String> {
+        v7_bounded(len, head, extra, None)
+    }
+
+    /// [`v7`] with S-3: `Some((walked first batch, signed boundary))` makes the manifest v3.
+    fn v7_bounded(
+        len: u64,
+        head: Vec<u8>,
+        extra: Option<crate::wire::ChainManifestEntryPb>,
+        boundary: Option<(Option<u64>, Option<u64>)>,
+    ) -> Result<(), String> {
         use crate::wire::{ChainManifestEntryPb, ChainManifestPb};
         let key = ChainKey::new(2, "cell-a", "acme", "f", "live", 0).unwrap();
         let g = key.genesis().to_vec();
@@ -2041,6 +2094,7 @@ mod tests {
                 max_schema_by_link: vec![0, 0, 0],
                 base_len: 0,
                 open: None,
+                first_batch: boundary.and_then(|(walked, _)| walked),
             },
         );
         let mut chains = vec![ChainManifestEntryPb {
@@ -2050,6 +2104,7 @@ mod tests {
             head,
             state: 1,
             version: 0,
+            batch_boundary: boundary.and_then(|(_, signed)| signed),
         }];
         chains.extend(extra);
         r.manifests.push((
@@ -2058,10 +2113,31 @@ mod tests {
                 stream_id: "cell-a".into(),
                 tenant: "acme".into(),
                 chains,
+                manifest_version: if boundary.is_some() { 3 } else { 0 },
                 ..Default::default()
             },
         ));
         check_manifest_heads(&r)
+    }
+
+    /// V7 under a v3 manifest: each listed chain's signed S-3 boundary must be where the walk switched.
+    #[test]
+    fn v7_checks_each_listed_boundary() {
+        let key = ChainKey::new(2, "cell-a", "acme", "f", "live", 0).unwrap();
+        let h1 = link(&key.genesis(), &[1; 32]);
+        let h2 = link(&h1, &[2; 32]);
+        v7_bounded(2, h2.clone(), None, Some((Some(1), Some(1)))).unwrap();
+        v7_bounded(2, h2.clone(), None, Some((None, None))).unwrap();
+        // A first batch at or past the listed length is outside the claim.
+        v7_bounded(1, h1.clone(), None, Some((Some(1), None))).unwrap();
+        for (walked, signed) in [(Some(1), None), (None, Some(1)), (Some(1), Some(0))] {
+            assert!(
+                v7_bounded(2, h2.clone(), None, Some((walked, signed)))
+                    .unwrap_err()
+                    .contains("MANIFEST_BOUNDARY_MISMATCH"),
+                "{walked:?} vs {signed:?}"
+            );
+        }
     }
 
     #[test]
@@ -2089,6 +2165,7 @@ mod tests {
             head,
             state: 1,
             version: 1,
+            batch_boundary: None,
         };
         let sg = ChainKey::new(2, "cell-a", "acme", "f", "sandbox", 1)
             .unwrap()
@@ -2658,19 +2735,13 @@ mod tests {
         out
     }
 
-    fn at(b: u64) -> Boundaries {
-        let mut x = Boundaries::default();
-        x.tenants.insert("acme".into(), b);
-        x
-    }
-
-    fn run(events: &[Event], b: &Boundaries) -> Result<ChainReport, String> {
-        chain_bounded(events, &BTreeMap::new(), b, true)
+    fn run(events: &[Event]) -> Result<ChainReport, String> {
+        chain(events)
     }
 
     #[test]
     fn a_three_member_batch_verifies_across_the_boundary() {
-        let r = match run(&crossing(), &at(2)) {
+        let r = match run(&crossing()) {
             Ok(r) => r,
             Err(e) => panic!("old → new verifies: {e}"),
         };
@@ -2688,16 +2759,13 @@ mod tests {
         let mut e = ev[3].clone();
         e.inclusion_path[0][0] ^= 1;
         ev[3] = e.with_identity_for_tests();
-        let err = run(&ev, &at(2)).err().expect("refused");
+        let err = run(&ev).err().expect("refused");
         assert!(err.contains("BATCH MEMBER MISMATCH"), "{err}");
         let mut ev = crossing();
         let mut e = ev[2].clone();
         e.inclusion_path[1][5] ^= 1;
         ev[2] = e.with_identity_for_tests();
-        assert!(run(&ev, &at(2))
-            .err()
-            .expect("refused")
-            .contains("FORGED LINK"));
+        assert!(run(&ev).err().expect("refused").contains("FORGED LINK"));
     }
 
     #[test]
@@ -2707,7 +2775,7 @@ mod tests {
             let mut e = ev[k].clone();
             e.leaf_index = i;
             ev[k] = e.with_identity_for_tests();
-            assert!(run(&ev, &at(2)).is_err(), "member {k} as index {i}");
+            assert!(run(&ev).is_err(), "member {k} as index {i}");
         }
     }
 
@@ -2718,27 +2786,59 @@ mod tests {
             let mut e = ev[2].clone();
             e.leaf_count = n;
             ev[2] = e.with_identity_for_tests();
-            assert!(run(&ev, &at(2)).is_err(), "count {n}");
+            assert!(run(&ev).is_err(), "count {n}");
         }
         // The batch cut short by the end of the window.
         let ev = crossing();
-        let err = run(&ev[..4], &at(2)).err().expect("refused");
+        let err = run(&ev[..4]).err().expect("refused");
         assert!(err.contains("INCOMPLETE BATCH"), "{err}");
     }
 
     #[test]
-    fn each_side_of_the_boundary_is_strict() {
+    fn the_switch_to_batches_is_one_way() {
         let ev = crossing();
-        // No boundary: the chain is all pre-S-3, so the batch is an S-3 shape below it.
-        let err = run(&ev, &Boundaries::default()).err().expect("refused");
-        assert!(err.contains("S-3 LINK BELOW THE HISTORY BOUNDARY"), "{err}");
-        // Moved later: the first batch member sits below it.
-        let err = run(&ev, &at(3)).err().expect("refused");
-        assert!(err.contains("S-3 LINK BELOW THE HISTORY BOUNDARY"), "{err}");
-        // Moved earlier: a pre-S-3 link sits at or above it.
-        let err = run(&ev, &at(1)).err().expect("refused");
-        assert!(err.contains("UNPROVEN MEMBER"), "{err}");
-        // A pre-S-3 window with no boundary still verifies.
-        assert!(run(&ev[..2], &Boundaries::default()).is_ok());
+        let Ok(r) = run(&ev) else {
+            panic!("old → new verifies")
+        };
+        assert_eq!(
+            r.tenants["acme"].first_batch,
+            Some(2),
+            "the walked boundary"
+        );
+        // A pre-S-3 link after the last batch: refused even though it links.
+        let mut ev2 = ev.clone();
+        let last = ev2.last().unwrap();
+        let (prev, d) = (last.checksum.clone().unwrap(), [7u8; 32]);
+        ev2.push(audit(7, &prev, &d, &link(&prev, &d), None));
+        let err = run(&ev2).err().expect("refused");
+        assert!(err.contains("PRE_S3_ABOVE_BOUNDARY"), "{err}");
+        // A pre-S-3 link inside an open batch: the batch has already set the boundary.
+        let mut ev3 = ev.clone();
+        let m = &ev3[3];
+        let (prev, sum) = (m.prev_checksum.clone(), m.checksum.clone().unwrap());
+        ev3[3] = audit(4, &prev, &[3u8; 32], &sum, None);
+        let err = run(&ev3).err().expect("refused");
+        assert!(err.contains("PRE_S3_ABOVE_BOUNDARY"), "{err}");
+        // A pre-S-3 link carrying proof fields.
+        let mut ev4 = ev.clone();
+        let mut e = ev4[1].clone();
+        e.inclusion_path = vec![vec![0u8; 32]];
+        ev4[1] = e.with_identity_for_tests();
+        let err = run(&ev4).err().expect("refused");
+        assert!(err.contains("BAD INCLUSION PROOF"), "{err}");
+    }
+
+    #[test]
+    fn a_signed_boundary_must_match_the_walk() {
+        assert!(boundary_agrees(Some(2), Some(2), 6));
+        assert!(
+            boundary_agrees(Some(6), None, 6),
+            "a first batch at len is outside the claim"
+        );
+        assert!(boundary_agrees(None, None, 6));
+        assert!(!boundary_agrees(Some(2), Some(3), 6), "moved up");
+        assert!(!boundary_agrees(Some(2), Some(1), 6), "moved down");
+        assert!(!boundary_agrees(Some(2), None, 6), "dropped");
+        assert!(!boundary_agrees(None, Some(2), 6), "invented");
     }
 }

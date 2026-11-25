@@ -23,17 +23,29 @@
 //! A v1 manifest gets no tenant-head check, and one after a v2 manifest on the same tenant chain is
 //! `MANIFEST_DOWNGRADE`. This matches seam-runtime `crates/seam-verify/src/chains.rs` @ `253f4995`.
 //!
+//! **Domain v3 (S-3 history boundary, runtime 0.124.0).** `manifest_version` 3 signs each chain's S-3
+//! history boundary: `B(batch_boundary)` after each chain's state and `B(tenant_batch_boundary)` after
+//! `tenant_head`, where `B(x) = P("")` when absent, else `P(le64 x)`. The runtime writes v3 only; v2
+//! (`manifest_version` 0) is verify-only and carries no boundary fields (any set, or any other version, is
+//! `MANIFEST_VERSION`); a v2 after a v3 on the same tenant chain is `MANIFEST_DOWNGRADE`; a signed boundary
+//! the walk disagrees with is `MANIFEST_BOUNDARY_MISMATCH` (both checked in [`crate::verify`]).
+//!
 //! The structural rules run before any signature work, in the spec's order: `chains_not_ascending`, then
-//! per entry a [`ChainKey`] rule for a malformed `(flow_id, env, version)`, `state_unknown`, and
-//! `empty_head_not_genesis`. Rule names are advisory, like every rule name.
+//! per entry a [`ChainKey`] rule for a malformed `(flow_id, env, version)`, `state_unknown`,
+//! `empty_head_not_genesis` and (S-3) `boundary_not_below_len`, then the tenant's `boundary_not_below_len`. Rule names are advisory, like every rule name.
 
 use sha2::{Digest, Sha256};
 
 use crate::chain_key::ChainKey;
 use crate::wire::ChainManifestPb;
 
-/// Signed-payload domain of a `CHAIN_MANIFEST` (v2, D-163).
-pub const CHAIN_MANIFEST_DOMAIN: &[u8] = b"seam.audit.chain-manifest.v2";
+/// Signed-payload domain of a `CHAIN_MANIFEST` (v3, S-3 history boundary).
+pub const CHAIN_MANIFEST_DOMAIN: &[u8] = b"seam.audit.chain-manifest.v3";
+/// Signed-payload domain of a `CHAIN_MANIFEST` sealed before the S-3 history boundary (v2, D-163):
+/// verified, never written.
+pub const CHAIN_MANIFEST_V2_DOMAIN: &[u8] = b"seam.audit.chain-manifest.v2";
+/// The `manifest_version` of a v3 manifest.
+pub const CHAIN_MANIFEST_V3: u32 = 3;
 /// Signed-payload domain of a `CHAIN_MANIFEST` sealed before D-163 (runtime 0.115-0.116): fields 1-8 only.
 pub const CHAIN_MANIFEST_V1_DOMAIN: &[u8] = b"seam.audit.chain-manifest.v1";
 /// Chain-entry digest domain of a `CHAIN_MANIFEST` entry.
@@ -47,20 +59,56 @@ fn put(v: &mut Vec<u8>, x: &[u8]) {
 /// Whether `m` was sealed before D-163 (domain v1): `tenant_len` 0 and an empty `tenant_head`. A v2
 /// manifest always signs a 32-byte head, so no v2 manifest has this shape.
 pub fn is_v1(m: &ChainManifestPb) -> bool {
-    m.tenant_len == 0 && m.tenant_head.is_empty()
+    m.manifest_version == 0 && m.tenant_len == 0 && m.tenant_head.is_empty()
 }
 
-/// The signed preimage under the domain `m` was sealed with ([`is_v1`]): fields 1-8 under v1, fields 1-8,
-/// 10 and 11 under v2, framed. Not hashed: [`signed_digest`] and [`entry_digest`] both consume it.
+/// Whether `m` is a v3 manifest (S-3 history boundary).
+pub fn is_v3(m: &ChainManifestPb) -> bool {
+    m.manifest_version == CHAIN_MANIFEST_V3
+}
+
+/// `MANIFEST_VERSION`: a version other than 0 (v1/v2) or 3, or boundary fields on a manifest that does
+/// not sign them.
+pub fn check_version(m: &ChainManifestPb) -> Result<(), String> {
+    if is_v3(m) {
+        return Ok(());
+    }
+    if m.manifest_version != 0
+        || m.tenant_batch_boundary.is_some()
+        || m.chains.iter().any(|c| c.batch_boundary.is_some())
+    {
+        return Err(format!(
+            "MANIFEST_VERSION — manifest_version {} with boundary fields only a v3 manifest signs, or a \
+             version this verifier does not know.",
+            m.manifest_version
+        ));
+    }
+    Ok(())
+}
+
+/// `B(x)`: `P("")` when absent, else `P(le64 x)`.
+fn put_boundary(v: &mut Vec<u8>, b: Option<u64>) {
+    match b {
+        Some(b) => put(v, &b.to_le_bytes()),
+        None => put(v, b""),
+    }
+}
+
+/// The signed preimage under the domain `m` was sealed with ([`is_v1`], [`is_v3`]): fields 1-8 under v1,
+/// fields 1-8, 10 and 11 under v2, and those plus each chain's and the tenant's `B(boundary)` under v3,
+/// framed. Not hashed: [`signed_digest`] and [`entry_digest`] both consume it.
 pub fn signed_preimage(m: &ChainManifestPb) -> Vec<u8> {
     let v1 = is_v1(m);
+    let v3 = is_v3(m);
     let mut v = Vec::new();
     put(
         &mut v,
         if v1 {
             CHAIN_MANIFEST_V1_DOMAIN
-        } else {
+        } else if v3 {
             CHAIN_MANIFEST_DOMAIN
+        } else {
+            CHAIN_MANIFEST_V2_DOMAIN
         },
     );
     put(&mut v, m.stream_id.as_bytes());
@@ -81,12 +129,18 @@ pub fn signed_preimage(m: &ChainManifestPb) -> Vec<u8> {
         put(&mut v, &c.len.to_le_bytes());
         put(&mut v, &c.head);
         put(&mut v, &c.state.to_le_bytes());
+        if v3 {
+            put_boundary(&mut v, c.batch_boundary);
+        }
     }
     put(&mut v, m.issuer_aid.as_bytes());
     put(&mut v, &m.digest_schema.to_le_bytes());
     if !v1 {
         put(&mut v, &m.tenant_len.to_le_bytes());
         put(&mut v, &m.tenant_head);
+    }
+    if v3 {
+        put_boundary(&mut v, m.tenant_batch_boundary);
     }
     v
 }
@@ -129,6 +183,13 @@ pub fn check_structure(m: &ChainManifestPb) -> Result<(), &'static str> {
         if c.len == 0 && c.head.as_slice() != key.genesis().as_slice() {
             return Err("empty_head_not_genesis");
         }
+        // S-3 (v3): a boundary is the chain's first batch position BELOW its listed length.
+        if c.batch_boundary.is_some_and(|b| b >= c.len) {
+            return Err("boundary_not_below_len");
+        }
+    }
+    if m.tenant_batch_boundary.is_some_and(|b| b >= m.tenant_len) {
+        return Err("boundary_not_below_len");
     }
     Ok(())
 }

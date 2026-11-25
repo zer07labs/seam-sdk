@@ -6,13 +6,16 @@
 //! * `chain_link_vectors.json` — every `chain` row decoded from BOTH projections (JSON and pb must give the
 //!   same event), walked by the verifier from `genesis(K)` to `head_hex`, each `DECISION_SEALED` digest
 //!   recomputed as record digest v4 (the `AUDIT_ENTRY` digests are opaque stand-ins, linked only, as the
-//!   file's `rule` says); and every `chain_refusal` row refused at its `fails_at` entry, by its rule;
+//!   file's `rule` says); and every `chain_refusal` row refused at its `fails_at` entry, by its rule —
+//!   S-3 (seam-runtime#2039 @ `64ec782c4`): the Merkle batch rows, the chain that crosses the history
+//!   boundary, and the boundary refusals (a row's `batch_boundary` is the boundary a signed artifact states;
+//!   the walk must switch to batches exactly there, [`boundary_agrees`]);
 //! * `../conformance/flow_ref_unsealed_vectors.json` case f — the FlowRef version rule.
 //!
 //! Reader scope is decode, keying and genesis (W2). The V-checks beyond that are W5 (see `src/chain_key.rs`).
 
 use seam_verify::chain_key::ChainKey;
-use seam_verify::verify::{chain, hex, record_digest_v4};
+use seam_verify::verify::{boundary_agrees, chain, hex, record_digest_v4, ChainReport};
 use seam_verify::wire::Event;
 use serde_json::Value;
 
@@ -128,11 +131,19 @@ fn every_chain_row_walks_from_genesis_to_its_head() {
         assert_eq!(hex(&k.genesis()), row["genesis_hex"], "{name}");
         assert_eq!(hex(&c.heads[0]), row["genesis_hex"], "{name}");
         assert_eq!(hex(&c.head), row["head_hex"], "{name}");
-        assert_eq!(c.links, 3, "{name}");
+        assert_eq!(c.links, events.len(), "{name}");
+        // A stated boundary agrees with where the walk switched to batches.
+        if let Some(b) = row.get("batch_boundary") {
+            assert!(
+                boundary_agrees(c.first_batch, b.as_u64(), c.links as u64),
+                "{name}: boundary {b} vs walked {:?}",
+                c.first_batch
+            );
+        }
         // The sole-chain mirror reports the same head at the top level.
         assert_eq!(hex(&r.head), row["head_hex"], "{name}");
     }
-    assert_eq!(walked, 5);
+    assert_eq!(walked, 7);
 }
 
 #[test]
@@ -152,6 +163,26 @@ fn every_chain_refusal_fails_at_its_entry() {
             .map(|e| entry(e, name))
             .collect();
         let at = row["fails_at"].as_u64().unwrap() as usize;
+        let rule = row["rule"].as_str().unwrap();
+        // A stated boundary the walk disagrees with: the links verify, the claim does not. The first
+        // entry on the wrong side of it is where the walk and the claim part.
+        if let Some(claim) = row.get("batch_boundary") {
+            let r: ChainReport = chain(&events).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let c = r.chains.values().next().unwrap();
+            let len = c.links as u64;
+            assert!(
+                !boundary_agrees(c.first_batch, claim.as_u64(), len),
+                "{name}"
+            );
+            let walked = c.first_batch.expect("the crossing chain has a batch");
+            let parted = claim.as_u64().map_or(walked, |b| b.min(walked));
+            assert_eq!(parted, at as u64, "{name}: {rule}");
+            assert!(
+                (rule == "batch_below_boundary") == claim.as_u64().is_none_or(|b| b > walked),
+                "{name}: {rule}"
+            );
+            continue;
+        }
         let err = chain(&events)
             .err()
             .unwrap_or_else(|| panic!("{name}: must refuse"));
@@ -159,19 +190,42 @@ fn every_chain_refusal_fails_at_its_entry() {
             err.starts_with(&format!("seq {}:", events[at].seq)),
             "{name}: must fail at entry {at}: {err}"
         );
-        let rule = row["rule"].as_str().unwrap();
-        if rule == "genesis_mismatch" {
-            assert!(err.contains("NOT GENESIS"), "{name}: {err}");
-        } else {
-            assert!(
+        match rule {
+            "genesis_mismatch" => assert!(err.contains("NOT GENESIS"), "{name}: {err}"),
+            "checksum_mismatch" => assert!(
+                [
+                    "FORGED LINK",
+                    "BAD INCLUSION PROOF",
+                    "BATCH MEMBER MISMATCH"
+                ]
+                .iter()
+                .any(|m| err.contains(m)),
+                "{name}: {err}"
+            ),
+            // Rule names are advisory: a moved index can also stop the path folding.
+            "batch_member_mismatch" => assert!(
+                [
+                    "BATCH MEMBER MISMATCH",
+                    "BATCH MEMBER MISSING",
+                    "BAD INCLUSION PROOF"
+                ]
+                .iter()
+                .any(|m| err.contains(m)),
+                "{name}: {err}"
+            ),
+            "pre_s3_at_or_above_boundary" => {
+                assert!(err.contains("PRE_S3_ABOVE_BOUNDARY"), "{name}: {err}")
+            }
+            _ => assert!(
                 err.contains("INVALID CHAIN KEY") && err.contains(&format!("({rule})")),
                 "{name}: {rule}: {err}"
-            );
+            ),
         }
-        // The prefix before the failing entry still walks.
-        assert!(chain(&events[..at]).is_ok(), "{name}");
+        // The prefix before the failing entry still walks (unless it stops inside a batch).
+        let mid_batch = at > 0 && events[at - 1].leaf_index + 1 < events[at - 1].leaf_count;
+        assert_eq!(chain(&events[..at]).is_ok(), !mid_batch, "{name}");
     }
-    assert_eq!(refused, 5);
+    assert_eq!(refused, 12);
 }
 
 fn flow_live_lines() -> Vec<Value> {
