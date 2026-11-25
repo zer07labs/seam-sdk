@@ -1,4 +1,7 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ a61adee tracking dc3/s4-seal-key-v2 (refreshed 2026-11-25).
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 24844931 on runtime main (refreshed 2026-11-25).
+     seam-runtime#2037 (0.123.0 train, deep-cleanup S-4 + SEC2-2) merged: the copy now tracks runtime main at the release commit.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ a61adee tracking dc3/s4-seal-key-v2 (refreshed 2026-11-25).
      seam-runtime deep-cleanup S-4 (runtime#2031, the 0.123.0 train), not yet on main. Movement since e790cb5: §Verifying
      step 4 only. The TCT is signed by a seal key the pinned issuer certifies (commitment-digest v6 §Seal key):
      the certificate in its `ext` verifies under the pinned AID, the TCT under the seal AID it names, its `iat`
@@ -49,7 +52,8 @@
      this file) and `seam-commitment-digest.v3.md` (NOT vendored; its commitment and explanation digests are
      implemented in `src/commitment.rs` and pinned there by `conformance/commitment_digest_v3_vector.json`).
      Re-pinned to the contract freeze 1ac5de5: context.json bindings carry `receipt_key_status`, and a
-     verifier refuses a bundle that breaks its pairing with receipt_hash or its closed vocabulary. -->
+     verifier refuses a bundle that breaks its pairing with receipt_hash or its closed vocabulary.
+-->
 
 # `seam-evidence-bundle.v1` — the self-contained evidence bundle
 
@@ -248,7 +252,7 @@ what the adverse party is told.
 
 | Item | When | Reason |
 |---|---|---|
-| `participation` | always | `participation[].subject` is the GDPR erasure predicate. Only `participation_digest` is chained and published. |
+| `participation` | always | `participation[].subject` is the GDPR erasure predicate (stored as the subject's keyed tag `hmac-sha256:<ekid>:<hex>`, never raw). Only `participation_digest` is chained and published. |
 | `context` | without `--disclose context`, or the record is erased | A disclosure decision, made by the exporter per bundle. An erased record's context is withheld even when disclosure is asked for, because the bindings are personal data that survive the shred in plaintext. |
 | `policy` | without `--disclose policy`, no policy bound, or the bound bytes are no longer loadable | As stated in the reason. |
 | `commitment`, `binding` | the record is erased (key destroyed or erasure decided; a legal hold wins), tiered to cold storage, or missing | An erased record's plaintext is withdrawn, though its link still verifies. A cold record must be replayed from its archive bundle first. |

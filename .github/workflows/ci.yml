@@ -260,7 +260,7 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     # Bounded because this job SPAWNS A SERVER. If the binary ever stops recognising a flag and
     # starts serving instead of exiting, an unbounded job waits on the 6-hour platform default.
-    timeout-minutes: 45  # 45 while SEAM_RUNTIME_BUILD_REF is set (see below); back to 20 when cleared
+    timeout-minutes: 20  # 45 while SEAM_RUNTIME_BUILD_REF is set (see below); back to 20 when cleared
     permissions:
       packages: read
     env:
@@ -269,7 +269,7 @@ jobs:
       # merges (images.yml pushes only on main, so an unmerged branch has no image). First used for the
       # 0.44.0 train (seam-runtime#1269); pair it with a BUF_MODULE pin in the Makefile, and raise
       # timeout-minutes to 45 while it is set (a cold release build of seamd takes most of 20).
-      SEAM_RUNTIME_BUILD_REF: "0e03d5e9bec3959dadbfde382ef95ce02ec64717"  # seam-runtime #2036 (S-4 re-cut of #2031, 0.123.0 train); clear after prd serves S-4
+      SEAM_RUNTIME_BUILD_REF: ""  # cleared: seam-runtime 0.123.0 (#2037, S-4) is on main and serving prd
     steps:
       - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1
       - name: Mint a seam-deps-bot App token, scoped to seam-runtime
