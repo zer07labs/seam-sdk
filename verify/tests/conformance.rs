@@ -204,7 +204,7 @@ fn sealed_line(seq: u64, prev: &[u8], digest: &[u8], payload: &Value) -> (String
     };
     let ev = json!({
         "schema_version": "seam-event.v1",
-        "event_id": format!("v4#{seq}"),
+        "stream_id": "dev", "event_id": format!("dev/v4#{seq}"),
         "seq": seq,
         "occurred_at": 1_700_000_000_000u64 + seq,
         "kind": "DECISION_SEALED",
@@ -254,7 +254,7 @@ fn attestation_line(
     };
     json!({
         "schema_version": "seam-event.v1",
-        "event_id": format!("att#{seq}"),
+        "stream_id": "dev", "event_id": format!("dev/att#{seq}"),
         "seq": seq,
         "occurred_at": at,
         "classification": "Internal",

@@ -108,7 +108,7 @@ fn sealed_link(seq: u64, prev: &[u8]) -> (String, Vec<u8>) {
     };
     let line = serde_json::json!({
         "schema_version": "seam-event.v1",
-        "event_id": format!("d{seq}#{seq}"),
+        "stream_id": "dev", "event_id": format!("dev/d{seq}#{seq}"),
         "seq": seq,
         "kind": "DECISION_SEALED",
         "prev_checksum": b64e(prev),
@@ -141,7 +141,7 @@ fn attestation_event(
     };
     let line = serde_json::json!({
         "schema_version": "seam-event.v1",
-        "event_id": format!("att#{seq}"),
+        "stream_id": "dev", "event_id": format!("dev/att#{seq}"),
         "seq": seq,
         "occurred_at": at,
         "classification": "Internal",
@@ -311,7 +311,7 @@ fn a_spliced_tail_as_long_as_the_anchor_is_still_caught() {
         };
         let line = serde_json::json!({
             "schema_version": "seam-event.v1",
-            "event_id": "d3#3",
+            "stream_id": "dev", "event_id": "dev/d3#3",
             "seq": 3,
             "kind": "DECISION_SEALED",
             "prev_checksum": b64e(&c.heads[3]),
@@ -369,7 +369,7 @@ fn an_untenanted_expect_anchor_never_stands_for_a_tenant_chain() {
         };
         serde_json::json!({
             "schema_version": "seam-event.v1",
-            "event_id": format!("d{seq}#{seq}"),
+            "stream_id": "dev", "event_id": format!("dev/d{seq}#{seq}"),
             "seq": seq,
             "tenant": tenant,
             "kind": "DECISION_SEALED",

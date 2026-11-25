@@ -266,6 +266,10 @@ fn cmd_chain(
         }
     }
 
+    // S10-O1: every event names its stream and carries the `{stream_id}/` id prefix.
+    if let Err(e) = verify::require_streams(&events) {
+        return fail(&e, json, "CHAIN VERIFICATION FAILED");
+    }
     // Collapse retries BEFORE sorting: two copies of one event sort adjacent, and the second would
     // otherwise read as a second link on the same head.
     // FLOW_REF_CONFLICT (client-surfaces A9) is collected here and reported as a warning: exit 0.

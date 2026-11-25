@@ -284,7 +284,7 @@ fn a_policy_denied_event_does_not_break_strict_issuer_verification() {
     // REFUSED COMMITMENT, so a stream under a strict policy carries many, not one.
     let mut stream = golden("attested_chain.jsonl");
     stream.push_str(
-        "\n{\"schema_version\":\"seam-event.v1\",\"event_id\":\"sess01#pd#9\",\"seq\":9,\
+        "\n{\"schema_version\":\"seam-event.v1\",\"stream_id\":\"dev\",\"event_id\":\"dev/sess01#pd#9\",\"seq\":9,\
          \"occurred_at\":1701,\"tenant\":\"acme\",\"namespace\":\"fraud\",\
          \"kind\":\"POLICY_DENIED\",\"prev_checksum\":\"\",\
          \"policy_denied\":{\"policy_version\":\"p1\",\"mode\":\"macp.mode.decision.v1\",\
@@ -313,7 +313,7 @@ fn an_authorize_evaluated_event_does_not_break_issuer_verification() {
     // verdict unconditionally, so this false refusal hit any real delivered stream.
     let mut stream = golden("attested_chain.jsonl");
     stream.push_str(
-        "\n{\"schema_version\":\"seam-event.v1\",\"event_id\":\"az01#az#9\",\"seq\":9,\
+        "\n{\"schema_version\":\"seam-event.v1\",\"stream_id\":\"dev\",\"event_id\":\"dev/az01#az#9\",\"seq\":9,\
          \"occurred_at\":1701,\"tenant\":\"acme\",\"namespace\":\"fraud\",\
          \"kind\":\"AUTHORIZE_EVALUATED\",\"prev_checksum\":\"\",\
          \"authorize_evaluated\":{\"authorize_id\":\"az01\",\"agent_aid\":\"aid:pubkey:agent\",\
@@ -390,7 +390,7 @@ fn attestation_event(
         h.finalize().to_vec()
     };
     let line = format!(
-        "{{\"schema_version\":\"seam-event.v1\",\"event_id\":\"att#{seq}\",\"seq\":{seq},\
+        "{{\"schema_version\":\"seam-event.v1\",\"stream_id\":\"dev\",\"event_id\":\"dev/att#{seq}\",\"seq\":{seq},\
          \"occurred_at\":{at},\"classification\":\"Internal\",\"kind\":\"CHAIN_HEAD_ATTESTATION\",\
          \"prev_checksum\":\"{}\",\"digest\":\"{}\",\"checksum\":\"{}\",\
          \"chain_head_attestation\":{{\"attested_len\":{len},\"attested_head\":\"{}\",\
@@ -595,7 +595,7 @@ fn v4_stream(records: &[(serde_json::Value, Vec<u8>)]) -> String {
         lines.push(
             serde_json::json!({
                 "schema_version": "seam-event.v1",
-                "event_id": format!("v4#{seq}"),
+                "stream_id": "dev", "event_id": format!("dev/v4#{seq}"),
                 "seq": seq,
                 "occurred_at": 1_700u64 + seq as u64,
                 "kind": "DECISION_SEALED",
@@ -904,7 +904,7 @@ fn two_v4_records_differing_only_in_a_digest_column_are_not_one_event() {
         let line = |payload: &serde_json::Value| {
             serde_json::json!({
                 "schema_version": "seam-event.v1",
-                "event_id": "v4#0",
+                "stream_id": "dev", "event_id": "dev/v4#0",
                 "seq": 0,
                 "occurred_at": 1_700,
                 "kind": "DECISION_SEALED",
@@ -948,7 +948,7 @@ fn sealed_line(seq: u64, prev: &[u8], payload: &serde_json::Value) -> (String, V
         h.finalize().to_vec()
     };
     let line = serde_json::json!({
-        "schema_version": "seam-event.v1", "event_id": format!("dec#{seq}"), "seq": seq,
+        "schema_version": "seam-event.v1", "stream_id": "dev", "event_id": format!("dev/dec#{seq}"), "seq": seq,
         "occurred_at": 1_700 + seq, "kind": "DECISION_SEALED", "prev_checksum": b64e(prev),
         "digest": b64e(&d), "checksum": b64e(&checksum), "payload": payload,
     })
@@ -985,7 +985,7 @@ fn an_attestation_below_the_prefix_ceiling_is_refused() {
     };
     let sealed = serde_json::json!({
         "schema_version": "seam-event.v1",
-        "event_id": "dec#0",
+        "stream_id": "dev", "event_id": "dev/dec#0",
         "seq": 0,
         "occurred_at": 1_700,
         "kind": "DECISION_SEALED",
@@ -1043,7 +1043,7 @@ fn a_stale_attestation_over_an_earlier_prefix_still_passes() {
         h.finalize().to_vec()
     };
     let entry = serde_json::json!({
-        "schema_version": "seam-event.v1", "event_id": "aud#0", "seq": 0, "occurred_at": 1_700,
+        "schema_version": "seam-event.v1", "stream_id": "dev", "event_id": "dev/aud#0", "seq": 0, "occurred_at": 1_700,
         "kind": "AUDIT_ENTRY", "classification": "Internal", "prev_checksum": b64e(&head0), "digest": b64e(&d0),
         "checksum": b64e(&c1),
         "audit_entry": {"action": "party_registered", "subject": "agent-1", "reason": ""},
@@ -1080,7 +1080,7 @@ fn a_ceiling_above_the_prefix_maximum_is_legitimate() {
         h.finalize().to_vec()
     };
     let sealed = serde_json::json!({
-        "schema_version": "seam-event.v1", "event_id": "dec#0", "seq": 0, "occurred_at": 1_700,
+        "schema_version": "seam-event.v1", "stream_id": "dev", "event_id": "dev/dec#0", "seq": 0, "occurred_at": 1_700,
         "kind": "DECISION_SEALED", "prev_checksum": b64e(&head0), "digest": b64e(&d),
         "checksum": b64e(&checksum), "payload": v4,
     })
@@ -1113,7 +1113,7 @@ fn a_prefix_with_no_sealed_records_cannot_violate_the_ceiling() {
         h.finalize().to_vec()
     };
     let entry = serde_json::json!({
-        "schema_version": "seam-event.v1", "event_id": "aud#0", "seq": 0, "occurred_at": 1_700,
+        "schema_version": "seam-event.v1", "stream_id": "dev", "event_id": "dev/aud#0", "seq": 0, "occurred_at": 1_700,
         "kind": "AUDIT_ENTRY", "classification": "Internal", "prev_checksum": b64e(&head0), "digest": b64e(&d),
         "checksum": b64e(&checksum),
         "audit_entry": {"action": "party_registered", "subject": "agent-1", "reason": ""},
@@ -1154,7 +1154,7 @@ fn a_vacuous_attestation_is_refused_outright() {
         h.finalize().to_vec()
     };
     let sealed = serde_json::json!({
-        "schema_version": "seam-event.v1", "event_id": "dec#0", "seq": 0, "occurred_at": 1_700,
+        "schema_version": "seam-event.v1", "stream_id": "dev", "event_id": "dev/dec#0", "seq": 0, "occurred_at": 1_700,
         "kind": "DECISION_SEALED", "prev_checksum": b64e(&head0), "digest": b64e(&d),
         "checksum": b64e(&checksum), "payload": p,
     })
@@ -1201,7 +1201,7 @@ fn a_vacuous_attestation_is_refused_even_beside_a_valid_one() {
         h.finalize().to_vec()
     };
     let sealed = serde_json::json!({
-        "schema_version": "seam-event.v1", "event_id": "dec#0", "seq": 0, "occurred_at": 1_700,
+        "schema_version": "seam-event.v1", "stream_id": "dev", "event_id": "dev/dec#0", "seq": 0, "occurred_at": 1_700,
         "kind": "DECISION_SEALED", "prev_checksum": b64e(&head0), "digest": b64e(&d),
         "checksum": b64e(&checksum), "payload": p,
     })
@@ -1250,7 +1250,7 @@ fn a_mismatched_prefix_max_slice_refuses_instead_of_skipping_the_check() {
         h.finalize().to_vec()
     };
     let sealed = serde_json::json!({
-        "schema_version": "seam-event.v1", "event_id": "dec#0", "seq": 0, "occurred_at": 1_700,
+        "schema_version": "seam-event.v1", "stream_id": "dev", "event_id": "dev/dec#0", "seq": 0, "occurred_at": 1_700,
         "kind": "DECISION_SEALED", "prev_checksum": b64e(&head0), "digest": b64e(&d),
         "checksum": b64e(&checksum), "payload": p,
     })

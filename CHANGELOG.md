@@ -16,6 +16,13 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Changed (deep-cleanup S10-O1 — breaking, lockstep with seam-runtime's internal `seam-verify`)
+
+- `seam-verify` (the public verifier) refuses a chain that holds an event without a valid `stream_id`, or whose
+  `event_id` is not prefixed `{stream_id}/`. Every seam-event.v1 event the runtime writes is stamped (since
+  0.57.0 on the wire; the `SEAM_STREAM_ID_CUTOFF_SEQ` window is retired), so a bare or mixed window is no longer
+  verified as a pre-stream one. Test fixtures now carry stream `dev`.
+
 ### Removed (deep-cleanup DC-3 train A, runtime OR-7 — breaking, version-locked to the runtime)
 
 - `ENROLMENT_KIND_CHANGESET_WORKER` (TS and Python) and its member of `ENROLMENT_KINDS` / the TS `EnrolmentKind`
