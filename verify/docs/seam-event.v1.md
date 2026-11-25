@@ -1642,8 +1642,8 @@ Two semantics that keep a mutable registry value safe to seal:
   3. **P3 added the key-revocation predicate** (ACDP-0014). Same place, same shape, same reason:
      `facade::refuse_revoked_key` sits behind the same composite as guard 2, refuses grounds whose
      producer signing key Seam could not CLEAR against the revocations it holds (`Revoked`,
-     `Unplaceable`, `KeyUnidentified` — deliberately not "signed by a revoked key", since under the
-     third of those Seam does not know the key was revoked), and is likewise **not** applied at the
+     `Unplaceable` — deliberately "could not clear", not "signed by a revoked key"; the pre-B8 third
+     verdict, `KeyUnidentified`, is deleted, P3-D1), and is likewise **not** applied at the
      read-only `ResolveContext` facade, which serves the verdict instead (RFC-ACDP-0014 §10: a §7
      fail-closed is *"a verification verdict, not a wire condition"*). Latent for the same reason
      guard 2 is.
@@ -1692,17 +1692,18 @@ Rationale and threat model: [`docs/design/acdp-retraction-not-erasure-decision.m
 
 `ResolveContext` also returns a per-binding `revocation` (proto tag 12 / HTTP `revocation`) and
 `revocation_trust_class` (tag 13): Seam's own RFC-ACDP-0014 §7 assessment of the producer's **body
-signing key**, in a lowercase-with-underscore vocabulary of exactly six values —
-`not_revoked` | `pre_compromise` | `revoked` | `unplaceable` | `key_unidentified` | `unknown` —
+signing key**, in a lowercase-with-underscore vocabulary of exactly five values —
+`not_revoked` | `pre_compromise` | `revoked` | `unplaceable` | `unknown` —
 with a two-value trust class, `producer_signed` | `registry_attested` (§5 / §6), present only when a
 statement actually acted.
 
-**Three of the six are reserved, never served** (since acdp 0.15, B8; owner decision 2026-10-18):
-`revoked`, `unplaceable` and `key_unidentified`. Those cases now fail the resolve, so there is no
+**Two of the five are reserved, never served** (since acdp 0.15, B8; owner decision 2026-10-18):
+`revoked` and `unplaceable`. Those cases now fail the resolve, so there is no
 verified content to carry them. They surface as errors instead: `CONTEXT_KEY_REVOKED`,
 `CONTEXT_REVOCATION_UNAVAILABLE` (transient lookup failure) or `CONTEXT_REVOCATION_UNKNOWN` (any other
 reason the check cannot answer). The values stay in the vocabulary, so a consumer must still parse
-them.
+them. The pre-B8 sixth value, `key_unidentified`, is deleted (P3-D1): no resolve could produce it, and
+its case refuses as `CONTEXT_REVOCATION_UNKNOWN`.
 
 **Neither is in any digest**, for the same reason and with the same structural guarantee as
 `retraction`: both live on a sibling `ResolvedContext`, never on `ContextBinding`, so neither can
@@ -1737,10 +1738,8 @@ revocation permanent, so forgetting one because a registry is unreachable would 
 the other direction. An implementation that collapses *every* verdict to `unknown` on a failed lookup
 is not conformant with what this field means.
 
-Three of the six **refuse** at the two decision paths — `revoked`, `unplaceable`, `key_unidentified`
-— and none of them refuses here (§10: a §7 fail-closed is *"a verification verdict, not a wire
-condition"*). `key_unidentified` claims strictly less than the other two: it does not assert this key
-is revoked, only that Seam holds revocations it could not compare this signature against.
+Two of the five **refuse** at the two decision paths — `revoked` and `unplaceable` — and neither
+refuses here (§10: a §7 fail-closed is *"a verification verdict, not a wire condition"*).
 
 Rationale and threat model: [`docs/design/acdp-key-revocation-decision.md`](../design/acdp-key-revocation-decision.md).
 
