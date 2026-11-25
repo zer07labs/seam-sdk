@@ -945,7 +945,37 @@ object SeamCrypto {
      * never throws — including explanation entries that disagree with the published
      * `explanationDigest`, an unknown kind, or a non-canonical confidence.
      */
-    fun verifyTct(issuerAid: String, tctJws: String, commitment: Commitment, nowS: Long): Boolean {
+    fun verifyTct(issuerAid: String, tctJws: String, commitment: Commitment, nowS: Long): Boolean =
+        verifyTctAt(issuerAid, tctJws, commitment, nowS, null)
+
+    /**
+     * [verifyTct] **bound to the record's chained seal time** — the evidence-grade check
+     * (seam-commitment-digest.v6 §Seal key step 6, evidence-bundle.v1 §Verifying step 4): additionally
+     * `sealedAtMs >= 0` and the TCT's `iat == floor(sealedAtMs / 1000)`.
+     *
+     * `iat` is self-asserted, so [verifyTct] alone proves a certified seal key signed the statement, not
+     * when: a leaked seal key can backdate a token anywhere in its certificate window. [sealedAtMs] must be
+     * the `sealed_at` of the record's **chained** `DECISION_SEALED` link (record-digest bound), never a
+     * value from the token and never a served `DecisionRecordView.sealed_at`. A `Long` is the runtime's
+     * i64 bound exactly, so a negative value (an unsigned `uint64` beyond it) is refused. Same rule as
+     * seam-verify `verify_tct_sealed_at` and the runtime's `verify_commitment_sealed_at` (seam-runtime
+     * #2031); pinned by `conformance/tct_sealed_at_vector.json`.
+     */
+    fun verifyTctSealedAt(
+        issuerAid: String,
+        tctJws: String,
+        commitment: Commitment,
+        nowS: Long,
+        sealedAtMs: Long,
+    ): Boolean = verifyTctAt(issuerAid, tctJws, commitment, nowS, sealedAtMs)
+
+    private fun verifyTctAt(
+        issuerAid: String,
+        tctJws: String,
+        commitment: Commitment,
+        nowS: Long,
+        sealedAtMs: Long?,
+    ): Boolean {
         return try {
             val parts = tctJws.split(".")
             if (parts.size != 3) return false
@@ -980,6 +1010,8 @@ object SeamCrypto {
             // (4) iat is a JSON integer inside the certificate window, no grace.
             val iat = topLevelInteger(payloadJson, "iat") ?: return false
             if (!cert.covers(iat)) return false
+            // Evidence grade (S-4): iat is the chained seal second.
+            if (sealedAtMs != null && (sealedAtMs < 0 || iat != sealedAtMs / 1000)) return false
             val exp = payload["exp"] as? Number ?: return false
             if (nowS >= exp.toLong()) return false // RFC 7519: reject at/after expiry
             val grants = payload["grants"] as? List<*> ?: return false

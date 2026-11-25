@@ -2208,13 +2208,20 @@ export class SeamClient {
    * decoding lossily. Mirrors the Python SDK, where the equivalent `.decode()` raises
    * `UnicodeDecodeError` — both SDKs fail loud on a corrupted artifact instead of silently
    * returning `false`, which would be indistinguishable from an ordinary invalid decision.
+   *
+   * **Evidence grade needs `opts.sealedAtMs`** (S-4, runtime 0.123.0): the `sealed_at` of this decision's
+   * **chained** `DECISION_SEALED` link (e.g. a streamed event `verifyStreamedRecordDigest` accepted), never the
+   * served `DecisionRecordView.sealedAt`. Given, the TCT's self-asserted `iat` must equal
+   * `floor(sealedAtMs / 1000)` ({@link verifyTct}), which refuses a token backdated with a leaked seal key.
+   * Without it, this proves a certified seal key signed the statement, not when.
    */
   async verifyDecision(
     decisionId: string,
     expectedIssuer: string,
-    opts?: DecisionReadOptions,
+    opts?: DecisionReadOptions & { sealedAtMs?: bigint | number },
   ): Promise<boolean> {
-    const proof = await this.getCommitmentProof(decisionId, opts);
+    const { sealedAtMs, ...readOpts } = opts ?? {};
+    const proof = await this.getCommitmentProof(decisionId, readOpts);
     if (proof.issuerAid !== expectedIssuer)
       throw new IssuerMismatchError(proof.issuerAid, expectedIssuer);
     const c = proof.commitment;
@@ -2228,7 +2235,7 @@ export class SeamClient {
       tct,
       commitmentView(c),
       undefined,
-      { decision },
+      { decision, sealedAtMs },
     );
   }
 }

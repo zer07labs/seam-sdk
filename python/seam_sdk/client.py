@@ -1530,6 +1530,7 @@ class SeamClient:
         credential: Optional[Agent] = None,
         clearance: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
+        sealed_at_ms: Optional[int] = None,
     ) -> bool:
         """Fetch a sealed decision's proof and verify its rooted TCT locally — zero server trust.
 
@@ -1545,6 +1546,13 @@ class SeamClient:
 
         ``credential`` is passed to the proof fetch (:meth:`get_commitment_proof`); omitted, it defaults
         to the client's bound agent, which a credential-only deployment needs for this subject-scoped read.
+
+        **Evidence grade needs ``sealed_at_ms``** (S-4, runtime 0.123.0): the ``sealed_at`` of this
+        decision's **chained** ``DECISION_SEALED`` link — e.g. from a streamed event
+        :func:`~seam_sdk.admin.verify_streamed_record_digest` accepted — never the served
+        ``DecisionRecordView.sealed_at``. Given, the TCT's self-asserted ``iat`` must equal
+        ``sealed_at_ms // 1000`` (:func:`~seam_sdk.crypto.verify_tct`), which refuses a token backdated
+        with a leaked seal key. Without it, this proves a certified seal key signed the statement, not when.
         """
         proof = self.get_commitment_proof(
             decision_id, credential=credential, clearance=clearance, timeout=timeout
@@ -1561,6 +1569,7 @@ class SeamClient:
             c.signed_artifact.decode(),
             commitment_view(c),
             decision=decision,
+            sealed_at_ms=sealed_at_ms,
         )
 
 

@@ -540,8 +540,8 @@ func hasDuplicateKey(raw []byte) bool {
 //
 // No backward compatibility: a TCT signed directly by the issuer (every TCT before 0.123.0) is refused.
 // This proves a key the pinned issuer certified signed the statement, claiming an `iat` inside the
-// window; it does not prove when the token was made (evidence-grade verification binds `iat` to the
-// chained `sealed_at`, which this function does not see).
+// window; it does not prove when the token was made. Evidence-grade verification binds `iat` to the
+// chained `sealed_at`: VerifyTCTSealedAt.
 //
 // Then the RFC-AITP-0005 self-attestation shape: `alg`/`typ`, `exp`, `grants` is exactly
 // ["aitp.attestation"], and `ext` is exactly the statement plus the certificate member, where the
@@ -556,6 +556,24 @@ func hasDuplicateKey(raw []byte) bool {
 // c.Explanation (VerifySelection) and must verify; a block with nil Explanation fails closed. Any
 // malformed/forged input fails closed (returns false), never panics.
 func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
+	return verifyTCT(issuerAID, tctJWS, c, nowS, nil)
+}
+
+// VerifyTCTSealedAt is VerifyTCT bound to the record's chained seal time — the evidence-grade check
+// (seam-commitment-digest.v6 §Seal key step 6, evidence-bundle.v1 §Verifying step 4). Additionally
+// sealedAtMs must be at most math.MaxInt64 and the TCT's `iat` must equal floor(sealedAtMs / 1000).
+//
+// `iat` is self-asserted, so VerifyTCT alone proves a certified seal key signed the statement, not when:
+// a leaked seal key can backdate a token anywhere in its certificate window. sealedAtMs must be the
+// `sealed_at` of the record's CHAINED DECISION_SEALED link (record-digest bound), never a value from the
+// token and never a served DecisionRecordView.SealedAt. Same rule as seam-verify `verify_tct_sealed_at`
+// and the runtime's `verify_commitment_sealed_at` (seam-runtime #2031); pinned by
+// conformance/tct_sealed_at_vector.json.
+func VerifyTCTSealedAt(issuerAID, tctJWS string, c Commitment, nowS int64, sealedAtMs uint64) bool {
+	return verifyTCT(issuerAID, tctJWS, c, nowS, &sealedAtMs)
+}
+
+func verifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64, sealedAtMs *uint64) bool {
 	parts := strings.Split(tctJWS, ".")
 	if len(parts) != 3 {
 		return false
@@ -620,6 +638,10 @@ func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 	}
 	iat, ok := jsonInt64(rawClaims["iat"])
 	if !ok || !cert.Covers(iat) {
+		return false
+	}
+	// Evidence grade (S-4): iat is the chained seal second.
+	if sealedAtMs != nil && (*sealedAtMs > math.MaxInt64 || iat != int64(*sealedAtMs/1000)) {
 		return false
 	}
 	if header["alg"] != "EdDSA" || header["typ"] != "aitp-tct+jwt" {

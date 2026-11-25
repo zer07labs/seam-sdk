@@ -877,6 +877,16 @@ function sealKeyCertMember(v: unknown): { cert: Uint8Array; sig: Uint8Array } {
   return { cert: b64urlDecodeStrict(v.cert), sig: b64urlDecodeStrict(v.sig) };
 }
 
+/** `0 ≤ sealedAtMs ≤ i64::MAX` and `iat == floor(sealedAtMs / 1000)` — the S-4 evidence-grade rule. */
+function iatIsSealSecond(iat: bigint, sealedAtMs: bigint | number): boolean {
+  let ms: bigint;
+  if (typeof sealedAtMs === "bigint") ms = sealedAtMs;
+  else if (typeof sealedAtMs === "number" && Number.isSafeInteger(sealedAtMs)) ms = BigInt(sealedAtMs);
+  else return false;
+  if (ms < 0n || ms > I64_MAX) return false;
+  return iat === ms / 1000n; // bigint division truncates; ms ≥ 0, so this is floor
+}
+
 /** Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only.
  *
  * **Seal-key shape (seam-runtime #2031, deep-cleanup S-4, runtime 0.123.0+).** The TCT is an RFC-AITP-0005
@@ -901,13 +911,23 @@ function sealKeyCertMember(v: unknown): { cert: Uint8Array; sig: Uint8Array } {
  * with the published digest, an unknown kind, or a non-canonical confidence verify `false`. When the
  * commitment carries a `selection` block, the winner is recomputed from the sealed entries
  * ({@link verifySelection}): a block without `explanation` entries, or any selection result other than
- * `verified`, verifies `false`. This never throws. */
+ * `verified`, verifies `false`. This never throws.
+ *
+ * **Evidence grade needs `opts.sealedAtMs`.** `iat` is self-asserted, so without it this proves a certified
+ * seal key signed the statement claiming an `iat` in its window, not when: a leaked seal key can backdate a
+ * token anywhere in that window. With `sealedAtMs` — the `sealed_at` of the record's **chained**
+ * `DECISION_SEALED` link (record-digest bound; e.g. a streamed event `verifyStreamedRecordDigest` accepted,
+ * for this decision), never a value from the token and never the served `DecisionRecordView.sealedAt` — the
+ * token additionally must have `iat == floor(sealedAtMs / 1000)`, and a `sealedAtMs` that is not an integer
+ * in `[0, 2^63 - 1]` verifies `false` (a `number` must also be a safe integer; pass the generated `bigint`).
+ * Same rule as seam-verify `verify_tct_sealed_at` and the runtime's `verify_commitment_sealed_at`
+ * (seam-runtime #2031); pinned by `conformance/tct_sealed_at_vector.json`. */
 export function verifyTct(
   issuerAid: string,
   tctJws: string,
   commitment: Commitment,
   nowS?: number,
-  opts?: { decision?: readonly [tenant: string, sessionId: string] },
+  opts?: { decision?: readonly [tenant: string, sessionId: string]; sealedAtMs?: bigint | number },
 ): boolean {
   // Any malformed/forged input must fail closed (return false), never throw.
   try {
@@ -946,6 +966,8 @@ export function verifyTct(
     const t = BigInt(iat) * 1000n;
     if (t > I64_MAX || t < -I64_MAX - 1n) return false;
     if (!(cert.notBeforeMs <= t && t <= cert.notAfterMs)) return false;
+    // Evidence grade (S-4): iat is the chained seal second.
+    if (opts?.sealedAtMs !== undefined && !iatIsSealSecond(BigInt(iat), opts.sealedAtMs)) return false;
     const now = nowS ?? Math.floor(Date.now() / 1000);
     // `exp` must be a JSON NUMBER, and is truncated to whole seconds before the comparison. Both
     // halves are load-bearing, and neither was true here before:

@@ -1,0 +1,58 @@
+{
+  "spec": "docs/specs/seam-commitment-digest.v6.md §Seal key step 6; evidence-bundle.v1 §Verifying step 4",
+  "rule": "0 <= sealed_at_ms <= i64::MAX and iat == floor(sealed_at_ms / 1000)",
+  "generator": "scripts/emit_tct_sealed_at_vector.py -- every expect is computed from the rule, no SDK run",
+  "source": "conformance/commitment_digest_v6_signed_vector.json",
+  "over": "v6_ungoverned",
+  "iat": 1767225600,
+  "cases": [
+    {
+      "name": "exact_second_boundary",
+      "sealed_at_ms": "1767225600000",
+      "expect": "verified",
+      "note": "sealed_at on a whole second: iat == sealed_at / 1000"
+    },
+    {
+      "name": "last_ms_of_the_second",
+      "sealed_at_ms": "1767225600999",
+      "expect": "verified",
+      "note": "floor, never round: 999 ms into the second is the same iat"
+    },
+    {
+      "name": "iat_plus_1s_at_boundary",
+      "sealed_at_ms": "1767225599000",
+      "expect": "refused",
+      "note": "the token's iat is 1 s AFTER the chained seal second"
+    },
+    {
+      "name": "iat_plus_1s_last_ms",
+      "sealed_at_ms": "1767225599999",
+      "expect": "refused",
+      "note": "1 ms before the boundary is the previous second: iat is +1 s"
+    },
+    {
+      "name": "iat_minus_1s_at_boundary",
+      "sealed_at_ms": "1767225601000",
+      "expect": "refused",
+      "note": "the token's iat is 1 s BEFORE the chained seal second (backdated)"
+    },
+    {
+      "name": "iat_minus_1s_last_ms",
+      "sealed_at_ms": "1767225601999",
+      "expect": "refused",
+      "note": "still the next second: iat is -1 s"
+    },
+    {
+      "name": "zero",
+      "sealed_at_ms": "0",
+      "expect": "refused",
+      "note": "the epoch: a valid sealed_at, not this token's"
+    },
+    {
+      "name": "beyond_i64",
+      "sealed_at_ms": "9223372036854775808",
+      "expect": "refused",
+      "note": "a sealed_at beyond i64 is refused outright (runtime verify_commitment_sealed_at)"
+    }
+  ]
+}

@@ -506,6 +506,7 @@ def verify_tct(
     now_s: int | None = None,
     *,
     decision: tuple[str, str] | None = None,
+    sealed_at_ms: int | None = None,
 ) -> bool:
     """Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only.
 
@@ -537,6 +538,17 @@ def verify_tct(
     framed from it and the winner is recomputed offline (:func:`seam_sdk.selection.verify_selection`):
     the committed action must be the winning option and every vote's signed content must link to it. A
     block with no ``explanation`` entries verifies ``False``. No block is "not a selection decision".
+
+    **Evidence grade needs ``sealed_at_ms``.** ``iat`` is self-asserted, so without it this proves a
+    certified seal key signed the statement claiming an ``iat`` inside its window, not when: a leaked
+    seal key can backdate a token anywhere in that window. With ``sealed_at_ms`` — the ``sealed_at`` of
+    the record's **chained** ``DECISION_SEALED`` link (record-digest bound; e.g. a streamed event that
+    :func:`seam_sdk.admin.verify_streamed_record_digest` accepted, for this decision), never a value
+    from the token and never the served ``DecisionRecordView.sealed_at`` — the token additionally must
+    have ``iat == sealed_at_ms // 1000``, and a ``sealed_at_ms`` outside ``[0, 2**63 - 1]`` verifies
+    ``False``. Same rule as seam-verify ``verify_tct_sealed_at`` and the runtime's
+    ``verify_commitment_sealed_at`` (seam-runtime #2031); pinned by
+    ``conformance/tct_sealed_at_vector.json``.
     """
     # Any malformed/forged input must fail closed (return False), never raise.
     try:
@@ -584,6 +596,14 @@ def verify_tct(
         if not (-(2**63) <= t <= _I64_MAX):
             return False
         if not (cert.not_before_ms <= t <= cert.not_after_ms):
+            return False
+        # Evidence grade (S-4): iat is the chained seal second. `bool` subclasses `int`: refuse it.
+        if sealed_at_ms is not None and (
+            isinstance(sealed_at_ms, bool)
+            or not isinstance(sealed_at_ms, int)
+            or not 0 <= sealed_at_ms <= _I64_MAX
+            or iat != sealed_at_ms // 1000
+        ):
             return False
         now = now_s if now_s is not None else int(time.time())
         # ``exp`` must be a JSON NUMBER. ``int(payload.get("exp", 0))`` accepted a numeric STRING —

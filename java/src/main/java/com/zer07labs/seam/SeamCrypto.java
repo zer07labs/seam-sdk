@@ -1202,6 +1202,46 @@ public final class SeamCrypto {
    * non-canonical confidence.
    */
   public static boolean verifyTct(String issuerAid, String tctJws, Commitment c, long nowS) {
+    return verifyTctAt(issuerAid, tctJws, c, nowS, null);
+  }
+
+  /**
+   * {@link #verifyTct(String, String, Commitment, long)} <b>bound to the record's chained seal
+   * time</b> — the evidence-grade check (seam-commitment-digest.v6 §Seal key step 6,
+   * evidence-bundle.v1 §Verifying step 4): additionally {@code sealedAtMs >= 0} and the TCT's {@code
+   * iat == floor(sealedAtMs / 1000)}.
+   *
+   * <p>{@code iat} is self-asserted, so {@link #verifyTct} alone proves a certified seal key signed
+   * the statement, not when: a leaked seal key can backdate a token anywhere in its certificate
+   * window. {@code sealedAtMs} must be the {@code sealed_at} of the record's <b>chained</b> {@code
+   * DECISION_SEALED} link (record-digest bound), never a value from the token and never a served
+   * {@code DecisionRecordView.sealed_at}. A Java {@code long} is the runtime's i64 bound exactly, so
+   * a negative value (an unsigned {@code uint64} beyond it) is refused. Same rule as seam-verify
+   * {@code verify_tct_sealed_at} and the runtime's {@code verify_commitment_sealed_at} (seam-runtime
+   * #2031); pinned by {@code conformance/tct_sealed_at_vector.json}.
+   */
+  public static boolean verifyTctSealedAt(
+      String issuerAid, String tctJws, Commitment c, long nowS, long sealedAtMs) {
+    return verifyTctAt(issuerAid, tctJws, c, nowS, sealedAtMs);
+  }
+
+  /**
+   * {@link #verifyTctSealedAt(String, String, Commitment, long, long)} for an option-selection
+   * decision: {@link #verifyTct(String, String, Commitment, long, SelectionBlock)} with the
+   * evidence-grade {@code iat} binding.
+   */
+  public static boolean verifyTctSealedAt(
+      String issuerAid,
+      String tctJws,
+      Commitment c,
+      long nowS,
+      SelectionBlock selection,
+      long sealedAtMs) {
+    return verifyTctSelection(issuerAid, tctJws, c, nowS, selection, sealedAtMs);
+  }
+
+  private static boolean verifyTctAt(
+      String issuerAid, String tctJws, Commitment c, long nowS, Long sealedAtMs) {
     try {
       String[] parts = tctJws.split("\\.");
       if (parts.length != 3) return false;
@@ -1250,6 +1290,8 @@ public final class SeamCrypto {
       // (4) iat is a JSON integer inside the certificate window, no grace.
       Long iat = topLevelInteger(payloadJson, "iat");
       if (iat == null || !cert.covers(iat)) return false;
+      // Evidence grade (S-4): iat is the chained seal second.
+      if (sealedAtMs != null && (sealedAtMs < 0 || iat != sealedAtMs / 1000)) return false;
       Object exp = payload.get("exp");
       if (!(exp instanceof Number) || nowS >= ((Number) exp).longValue()) return false;
       if (!(payload.get("grants") instanceof List<?> grants)
@@ -1286,7 +1328,17 @@ public final class SeamCrypto {
    */
   public static boolean verifyTct(
       String issuerAid, String tctJws, Commitment c, long nowS, SelectionBlock selection) {
-    if (selection == null) return verifyTct(issuerAid, tctJws, c, nowS);
+    return verifyTctSelection(issuerAid, tctJws, c, nowS, selection, null);
+  }
+
+  private static boolean verifyTctSelection(
+      String issuerAid,
+      String tctJws,
+      Commitment c,
+      long nowS,
+      SelectionBlock selection,
+      Long sealedAtMs) {
+    if (selection == null) return verifyTctAt(issuerAid, tctJws, c, nowS, sealedAtMs);
     try {
       byte[] field9 = selectionDigest(selectionBody(selection));
       if (c.selectionDigest() != null && !Arrays.equals(c.selectionDigest(), field9)) return false;
@@ -1295,7 +1347,7 @@ public final class SeamCrypto {
               c.id(), c.action(), c.authority(), c.supersedes(), c.authMethod(), c.trustBasis(),
               c.committer(), c.explanationDigest(), c.explanation(), field9, c.certificateDigest(),
               c.governingDocSha256(), c.trailers(), c.gateBody(), c.env());
-      if (!verifyTct(issuerAid, tctJws, framed, nowS)) return false;
+      if (!verifyTctAt(issuerAid, tctJws, framed, nowS, sealedAtMs)) return false;
       if (c.explanation() == null) return false;
       return verifySelection(selection, c.explanation(), c.action()).ok();
     } catch (RuntimeException e) {

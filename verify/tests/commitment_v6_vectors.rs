@@ -15,7 +15,8 @@
 use seam_verify::commitment::{
     commitment_digest_under, decode_commitment_trailers, encode_slot, explanation_digest,
     select_commitment_version, select_commitment_version_in_ext, served_commitment_trailers,
-    verify_commitment_tct, Commitment, CommitmentDigestVersion as V, ExplanationEntry,
+    verify_commitment_tct, verify_commitment_tct_sealed_at, Commitment,
+    CommitmentDigestVersion as V, ExplanationEntry,
 };
 use seam_verify::gate::{decode_gate_body, gate_digest, GateResult};
 use serde_json::Value;
@@ -586,4 +587,47 @@ fn a_served_projection_rebuilds_the_trailers_and_verifies() {
         let r = served_commitment_trailers(gate, doc.as_ref(), env).unwrap_err();
         assert_eq!(r.rule, rule);
     }
+}
+
+/// S-4 evidence grade, pinned by `conformance/tct_sealed_at_vector.json` (emitted by
+/// `scripts/emit_tct_sealed_at_vector.py` over this file's signed vector), the vector the Python, TS, Go,
+/// Java and Kotlin verifiers answer too: `sealed_at_ms <= i64::MAX` and `iat == floor(sealed_at_ms / 1000)`,
+/// the runtime's `verify_commitment_sealed_at` (seam-runtime #2031).
+#[test]
+fn the_sealed_at_vector_binds_iat_to_the_chained_seal_second() {
+    let sv = load("tct_sealed_at_vector.json");
+    assert_eq!(
+        sv["source"],
+        "conformance/commitment_digest_v6_signed_vector.json"
+    );
+    let v = load("commitment_digest_v6_signed_vector.json");
+    let issuer = v["issuer_aid"].as_str().unwrap();
+    let row = case(&v, sv["over"].as_str().unwrap());
+    let mut c = commitment(&row["commitment"]);
+    c.signed_artifact = row["signed_artifact"].as_str().unwrap().into();
+    let trailers = unhex(row["trailers"].as_str().unwrap());
+    assert_eq!(
+        verify_commitment_tct(issuer, &c, &trailers, NOW),
+        Ok(V::V6),
+        "control"
+    );
+    let cases = rows(&sv, "cases");
+    for n in [
+        "exact_second_boundary",
+        "iat_plus_1s_at_boundary",
+        "iat_minus_1s_at_boundary",
+    ] {
+        assert!(cases.iter().any(|r| r["name"] == n), "vector lacks {n}");
+    }
+    for r in cases {
+        let name = r["name"].as_str().unwrap();
+        let ms: u64 = r["sealed_at_ms"].as_str().unwrap().parse().unwrap();
+        let got = verify_commitment_tct_sealed_at(issuer, &c, &trailers, NOW, ms);
+        assert_eq!(
+            got.is_ok(),
+            r["expect"] == "verified",
+            "{name}: sealed_at_ms {ms}: {got:?}"
+        );
+    }
+    assert!(verify_commitment_tct_sealed_at(issuer, &c, &trailers, NOW, u64::MAX).is_err());
 }

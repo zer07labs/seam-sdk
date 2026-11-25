@@ -520,7 +520,7 @@ pub fn verify_tct(
 
 /// [`verify_tct`] **bound to the record's chained seal time** — the evidence-grade check
 /// (`seam-commitment-digest.v6.md` §Seal key step 6, evidence-bundle.v1 step 4): additionally the TCT's
-/// `iat` must equal `floor(sealed_at_ms / 1000)`, where `sealed_at_ms` is the `sealed_at` of the record's
+/// `iat` must equal `floor(sealed_at_ms / 1000)` (and `sealed_at_ms <= i64::MAX`), where `sealed_at_ms` is the `sealed_at` of the record's
 /// chained `DECISION_SEALED` link, never a value from the token. `iat` is self-asserted, so this is what
 /// stops a token backdated into its window with a leaked seal key.
 pub fn verify_tct_sealed_at(
@@ -531,8 +531,18 @@ pub fn verify_tct_sealed_at(
     sealed_at_ms: u64,
 ) -> Result<(), String> {
     let iat = verify_tct_iat(pinned_aid, token, digest, now_secs)?;
-    let want = i64::try_from(sealed_at_ms / 1000)
-        .map_err(|_| "the chained sealed_at is beyond i64".to_string())?;
+    check_iat_is_seal_second(iat, sealed_at_ms)
+}
+
+/// The S-4 evidence-grade rule shared by [`verify_tct_sealed_at`] and
+/// [`verify_commitment_tct_sealed_at`]: `sealed_at_ms <= i64::MAX` and `iat == floor(sealed_at_ms / 1000)`.
+/// The runtime's `verify_commitment_sealed_at` refuses a `sealed_at_ms` beyond i64 before dividing;
+/// dividing first would accept the values in (i64::MAX, i64::MAX rounded up to a whole second].
+/// Pinned across every SDK verifier by `conformance/tct_sealed_at_vector.json`.
+fn check_iat_is_seal_second(iat: i64, sealed_at_ms: u64) -> Result<(), String> {
+    let want = i64::try_from(sealed_at_ms)
+        .map_err(|_| "the chained sealed_at is beyond i64".to_string())?
+        / 1000;
     if iat != want {
         return Err(format!(
             "the TCT's iat {iat} is not the chained seal time floor({sealed_at_ms} / 1000) = {want} \
@@ -1326,7 +1336,33 @@ pub fn verify_commitment_tct(
     trailers: &[u8],
     now_secs: u64,
 ) -> Result<CommitmentDigestVersion, String> {
-    let (claims, _iat) = verify_tct_envelope(pinned_aid, &c.signed_artifact, now_secs)?;
+    verify_commitment_tct_iat(pinned_aid, c, trailers, now_secs).map(|(v, _)| v)
+}
+
+/// [`verify_commitment_tct`] **bound to the record's chained seal time**: additionally
+/// `sealed_at_ms <= i64::MAX` and the TCT's `iat == floor(sealed_at_ms / 1000)`, exactly as
+/// [`verify_tct_sealed_at`]. `sealed_at_ms` is the `sealed_at` of the record's chained `DECISION_SEALED`
+/// link (record-digest bound), never a value from the token: the evidence-grade form for a v5 or v6
+/// commitment.
+pub fn verify_commitment_tct_sealed_at(
+    pinned_aid: &str,
+    c: &Commitment,
+    trailers: &[u8],
+    now_secs: u64,
+    sealed_at_ms: u64,
+) -> Result<CommitmentDigestVersion, String> {
+    let (version, iat) = verify_commitment_tct_iat(pinned_aid, c, trailers, now_secs)?;
+    check_iat_is_seal_second(iat, sealed_at_ms)?;
+    Ok(version)
+}
+
+fn verify_commitment_tct_iat(
+    pinned_aid: &str,
+    c: &Commitment,
+    trailers: &[u8],
+    now_secs: u64,
+) -> Result<(CommitmentDigestVersion, i64), String> {
+    let (claims, iat) = verify_tct_envelope(pinned_aid, &c.signed_artifact, now_secs)?;
     sole_seam_statement(&claims)?;
     let sel = select_from_ext(&claims["ext"])
         .map_err(|r| format!("the TCT's statement selects no commitment digest version: {r}"))?;
@@ -1389,7 +1425,7 @@ pub fn verify_commitment_tct(
              token, an edited field, or a statement naming the wrong version)"
         ));
     }
-    Ok(sel.version)
+    Ok((sel.version, iat))
 }
 
 #[cfg(test)]

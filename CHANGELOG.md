@@ -48,6 +48,27 @@ than trusting a summary here.
   re-minted under the runtime's seeded test seal key, and its manifest entry is re-hashed. No other byte moved.
   The provenance and the regeneration test are in `verify/tests/bundle_seal_key.rs`. A fresh runtime export
   carries a v6 statement, which `seam-verify bundle` does not read yet.
+- **The evidence-grade `iat` binding is in all six verifiers** (0.123.0 gate item 4): `sealed_at_ms <= i64::MAX`
+  and `iat == floor(sealed_at_ms / 1000)`, the runtime's `verify_commitment_sealed_at`. `sealed_at_ms` must be
+  the `sealed_at` of the record's **chained** `DECISION_SEALED` link (record-digest bound), never a value from
+  the token and never the served `DecisionRecordView.sealed_at`; without it a verifier proves a certified seal
+  key signed the statement, not when. New, additive:
+  - Python: `verify_tct(..., sealed_at_ms=)` and `SeamClient`/`AsyncSeamClient.verify_decision(..., sealed_at_ms=)`;
+  - TS: `verifyTct(..., { sealedAtMs })` and `SeamClient.verifyDecision(id, issuer, { sealedAtMs })` (`bigint`,
+    or a safe-integer `number`);
+  - Go: `crypto.VerifyTCTSealedAt(issuerAID, tctJWS, c, nowS, sealedAtMs uint64)`;
+  - Java: `SeamCrypto.verifyTctSealedAt(issuerAid, tctJws, c, nowS, sealedAtMs)` (+ the `SelectionBlock`
+    overload); Kotlin: `SeamCrypto.verifyTctSealedAt(issuerAid, tctJws, commitment, nowS, sealedAtMs)`. A
+    negative `long` (a `uint64` beyond i64) is refused;
+  - Rust: `verify_commitment_tct_sealed_at` (v5 or v6). `verify_tct_sealed_at` now refuses a `sealed_at_ms`
+    beyond `i64::MAX` before dividing, as the runtime does (it accepted the values up to the next whole second).
+
+  Pinned by the new `conformance/tct_sealed_at_vector.json` (exact second boundary, floor at +999 ms, `iat`
+  ±1 s at and inside the boundary, the epoch, beyond i64), emitted by `scripts/emit_tct_sealed_at_vector.py`
+  over the runtime's byte-identical `commitment_digest_v6_signed_vector.json` (the runtime ships no
+  dedicated sealed_at vector).
+- The live erasure tests (Python `test_admin.py`, TS `admin.test.ts`) expect the certificate's `subject` to be
+  the tenant-keyed commitment `hmac-sha256:<8-hex kid>:<64-hex>`, never the raw subject (runtime 0.122.0, SEC2-1).
 
 ### Changed (deep-cleanup S10-O1 — breaking, lockstep with seam-runtime's internal `seam-verify`)
 

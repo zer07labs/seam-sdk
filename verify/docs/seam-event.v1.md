@@ -1,4 +1,8 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 62d94cc2 on runtime main (refreshed 2026-11-24).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 492e944a on runtime main (refreshed 2026-11-25).
+     seam-runtime#1988 (0.122.0, deep-cleanup SEC2-1 + changeset retired): ERASURE_CERTIFICATE.subject is the subject's
+     tenant-keyed commitment, never the raw subject; the reporter_class closed set drops `changeset_worker`.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 62d94cc2 on runtime main (refreshed 2026-11-24).
      seam-runtime#1959 (0.121.0, deep-cleanup 3.3 step 4, train 1): AuthorizeEvaluated.subject_digest (tag 10) deleted and reserved; subject_digests (11) is the one carrier.
      Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 837c48a3 (refreshed 2026-11-24).
@@ -254,6 +258,10 @@ regulator verifies it from the published issuer AID alone (the domain-separated 
 `seam-trust-aitp::verify_erasure_certificate` for the reference verifier). The event is
 **chained** (`prev_checksum` set): the attestation rides the same tamper-evident stream as
 the `gdpr_erasure` audit entries it certifies.
+
+**`subject` is the subject's commitment, never the raw subject** (deep-cleanup SEC2-1): the same
+tenant-keyed commitment the `subject_commitment_tombstoned` entry and `AUTHORIZE_EVALUATED.subject_digests`
+carry, so a sink purges by it directly. Each `gdpr_erasure` entry's `reason` names the commitment too.
 
 ```
 ErasureCertificate {                       // payload at SeamEvent tag 18
@@ -698,11 +706,11 @@ not be compared to each other.
 
 **Erasure of a subject's commitments — the consumer obligation (#1293 D3).** A GDPR erasure
 (`POST /v1/erasure`) first chains a `subject_commitment_tombstoned` `AUDIT_ENTRY` carrying the subject's
-commitment, then crypto-shreds the subject's decision records. The runtime's own outbox rows age out
+commitment, then crypto-shreds the subject's decision records; the `ERASURE_CERTIFICATE` names the same
+commitment as its `subject`. The runtime's own outbox rows age out
 within the retention window (≥ 8 days after relay consumption); the long-lived copies are in the sinks,
 and **a sink that retains `AUTHORIZE_EVALUATED` beyond the outbox window MUST support purge by
-commitment**: given a commitment from the recompute route (today: the erasure operator's runbook step;
-later: automated from the erasure certificate), delete or null every row of that tenant whose
+commitment**: given a commitment from the recompute route or from the erasure certificate's `subject`, delete or null every row of that tenant whose
 any `subject_digests` element equals it. A sink MAY additionally purge on the
 `subject_commitment_tombstoned` entry it receives on the stream. After a tenant crypto-shred no sink
 action is required for linkability (the key is gone), though a sink MAY drop the tenant's rows.
@@ -909,8 +917,8 @@ LearningDecision {                         // payload at SeamEvent tag 14
   allocation_propensity: double?  // BP-9 (tag 13), the variant/arm ALLOCATION probability;
                                   // `propensity` (tag 9) keeps its within-variant meaning
   outcome_owner_class:   string?  // BP-7 (tag 14), stamped at seal from the governing config; a value
-                                  // from the `reporter_class` closed set (`outcome_connector`,
-                                  // `changeset_worker`); produced from 0.74.0 (OI-R1)
+                                  // from the `reporter_class` closed set (`outcome_connector`);
+                                  // produced from 0.74.0 (OI-R1)
 }
 
 LearningOutcome {                          // payload at SeamEvent tag 15
@@ -936,7 +944,7 @@ event of each kind with every new field set (JSON and protobuf). Ownership:
   `outcome.observed_at` / `outcome.reward_metrics` (OI-R6, [`wire-features.md`](wire-features.md)); a
   producer sends the fields only while they are listed.
 - **`reporter_class`** is stamped by the runtime from the authenticated subject's enrolment kind, never
-  client-asserted. Closed set: `agent` | `outcome_connector` | `changeset_worker` | `operator`
+  client-asserted. Closed set: `agent` | `outcome_connector` | `operator`
   (`operator` is reserved; nothing produces it yet). It is **absent when subject enforcement is off**
   — there is no authenticated identity to classify. Consumers read it open: an unrecognised value is a
   new class, not a malformed event.

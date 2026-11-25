@@ -1,4 +1,8 @@
-<!-- Pinned copy of seam-runtime/docs/specs/mgmt-dpop.md @ b0b8f140 (vendored 2026-10-27 for seam-sdk#290).
+<!-- Pinned copy of seam-runtime/docs/specs/mgmt-dpop.md @ 2dd36d2a on runtime main (refreshed 2026-11-25).
+     Movement since b0b8f140: source anchors only (server.rs split into server/auth.rs, #2002; the reference minter is
+     mint_operator_token with OperatorClaimsIn.cnf_jkt, #1988). The grammar and Golden vectors are unchanged.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/mgmt-dpop.md @ b0b8f140 (vendored 2026-10-27 for seam-sdk#290).
      The normative grammar for the operator DPoP signer every SDK ships (`OperatorDpopKey`, the proof
      primitive, the gRPC interceptor and the HTTP header helper). Its Golden vector table is the source of
      `conformance/mgmt_dpop_vector.json`'s `golden` group; the vector's `derived` group is SDK-computed. -->
@@ -29,7 +33,7 @@ boot (`MgmtBindPosture::dpop` in `crates/seamd/src/boot.rs`):
 
 Source: `crates/seam-trust-aitp/src/mgmt_dpop.rs` (the pure check and the reference minter),
 `Seam::verify_mgmt_dpop` in `crates/seamd/src/lib.rs` (the binding decision and the burn),
-`require_management_auth` in `crates/seamd/src/server.rs` (HTTP), and `MgmtDpopBodyLayer` and
+`require_management_auth` in `crates/seamd/src/server/auth.rs` (HTTP), and `MgmtDpopBodyLayer` and
 `management_interceptor` in `crates/seamd/src/grpc.rs` (gRPC).
 
 ## Token
@@ -43,7 +47,7 @@ The operator JWS gains an optional claim:
 - `jkt` is the base64url (no padding) SHA-256 of the canonical JWK `{"crv":"Ed25519","kty":"OKP","x":"<x>"}`,
   so it is exactly 43 characters. Anything else, or any other member in `cnf`, is a malformed token.
 - The minter puts in `cnf.jkt` only a key it has verified, never a value the caller supplies.
-- The reference minter is `seam_trust_aitp::mint_operator_token_dpop_bound`.
+- The reference minter is `seam_trust_aitp::mint_operator_token` with `OperatorClaimsIn.cnf_jkt` set.
 
 ## Presenting a call
 
