@@ -336,6 +336,16 @@ WRONG_CELL_REASON = "WRONG_CELL"
 #: :data:`WRONG_CELL` instead, which is not retryable. A move outlasts its live sessions, so wrap
 #: it with a ``budget_s`` sized for the drain, not the default.
 TENANT_MOVING_REASON = "TENANT_MOVING"
+#: ``FAILED_PRECONDITION`` (HTTP 409), no ``RetryInfo``: the control plane drained the agent version
+#: this open or one-shot decision was admitted under, and the drain floor passed the snapshot
+#: generation it was admitted at (seam-runtime DC2 S5; runtime 0.126.0). Nothing is registered or
+#: sealed. :attr:`SeamRpcError.error_metadata` carries ``admitted_generation`` and ``floor_generation``
+#: (decimal strings). **Not retryable as the same call** (never :func:`is_retryable`): the remedy is
+#: to REOPEN, which re-admits against the current snapshot, and the runtime resolves the pin
+#: server-side — no request names a version. :meth:`seam_sdk.SeamClient.run_decision` and
+#: :meth:`~seam_sdk.SeamClient.open_session` reopen ONCE by themselves (D-VERSION-DRAINED); a second
+#: refusal propagates typed. Any other verb that surfaces it means the session is gone: open a new one.
+VERSION_DRAINED_REASON = "VERSION_DRAINED"
 
 _STATUS_DETAILS_KEY = "grpc-status-details-bin"
 _ERROR_INFO_TYPE = "type.googleapis.com/google.rpc.ErrorInfo"
@@ -575,11 +585,23 @@ def is_tenant_moving(exc: BaseException) -> bool:
     )
 
 
+def is_version_drained(exc: BaseException) -> bool:
+    """True when ``exc`` is the runtime's ``VERSION_DRAINED`` refusal: a
+    :class:`FailedPreconditionError` whose :attr:`~SeamRpcError.reason` is
+    :data:`VERSION_DRAINED_REASON`. Never :func:`is_retryable`: re-sending the same call is not the
+    remedy, reopening is (see :data:`VERSION_DRAINED_REASON`)."""
+    return (
+        isinstance(exc, FailedPreconditionError)
+        and exc.reason == VERSION_DRAINED_REASON
+    )
+
+
 def is_retryable(exc: BaseException) -> bool:
     """True when re-invoking the same SDK call, unchanged, is safe and is the remedy. Today that is
     exactly :func:`is_session_unavailable` or :func:`is_tenant_moving`. Deliberately narrow: the runtime's other retryable
     refusals each need a different recovery first (``CHALLENGE_REFUSED`` a fresh challenge, a fact
-    conflict a re-read chain head), so a blind re-invoke is not their remedy. Classification only:
+    conflict a re-read chain head), so a blind re-invoke is not their remedy. ``VERSION_DRAINED`` is
+    excluded on purpose (:func:`is_version_drained`): its remedy is a reopen. Classification only:
     the SDK still never retries on its own; :func:`seam_sdk.with_session_retry` is the opt-in loop."""
     return is_session_unavailable(exc) or is_tenant_moving(exc)
 

@@ -17,9 +17,11 @@ import { Agent, SeamClient } from "../src/client.js";
 import {
   FailedPreconditionError,
   TENANT_MOVING_REASON,
+  VERSION_DRAINED_REASON,
   WRONG_CELL_REASON,
   isRetryable,
   isTenantMoving,
+  isVersionDrained,
   isWrongCell,
   toSeamError,
   type SeamRpcError,
@@ -183,4 +185,24 @@ test("withSessionRetry waits TENANT_MOVING's hinted delay and retries", async ()
   assert.equal(result, "ok");
   assert.equal(calls, 3);
   assert.deepEqual(slept, [5000, 5000]);
+});
+
+// ── VERSION_DRAINED (DC2 S5, runtime 0.126.0) ────────────────────────────────────────────────────
+
+test("VERSION_DRAINED is typed, carries both generations, and is never retryable", () => {
+  const gens = { admitted_generation: "41", floor_generation: "42" };
+  const err = refused(Code.FailedPrecondition, VERSION_DRAINED_REASON, gens);
+  assert.ok(err instanceof FailedPreconditionError);
+  assert.equal(err.reason, "VERSION_DRAINED");
+  assert.deepEqual(err.errorMetadata, gens);
+  assert.equal(err.retryAfter, undefined);
+  assert.ok(isVersionDrained(err));
+  assert.equal(isRetryable(err), false);
+  assert.equal(isTenantMoving(err) || isWrongCell(err), false);
+  for (const other of [
+    refused(Code.FailedPrecondition, TENANT_MOVING_REASON, { move_id: "mv-1", target_cell: "b" }),
+    refused(Code.FailedPrecondition, WRONG_CELL_REASON, WRONG_CELL_META),
+  ]) {
+    assert.equal(isVersionDrained(other), false);
+  }
 });

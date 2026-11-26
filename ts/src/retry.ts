@@ -10,7 +10,9 @@
 // default 40s budget outlasts the runtime's 30s lease TTL, so one lapsed lease is always waited out. It
 // bounds the time spent waiting, not the calls: each attempt keeps its own `timeoutMs`. It does NOT
 // outlast a tenant move (`TENANT_MOVING`, also `isRetryable`; 5s `RetryInfo`): the source cell drains
-// until its live sessions finish, so pass a `budgetMs` sized for that drain. When the next
+// until its live sessions finish, so pass a `budgetMs` sized for that drain. It never retries
+// `VERSION_DRAINED` (not `isRetryable`): a reopen is its remedy, and `runDecision` / `openSession`
+// already reopen once by themselves. When the next
 // delay would overrun the budget, the last error is thrown as-is. Wrap unary calls only.
 
 import { isRetryable, SeamRpcError, ResourceExhaustedError, UnavailableError } from "./errors.js";

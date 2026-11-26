@@ -181,4 +181,18 @@ class TenantRoutingTest {
         assertFalse(TenantRouting.isTenantMoving(refusal(fp, "WRONG_CELL", TenantRouting.SEAM_ERROR_DOMAIN, Map.of())));
         assertFalse(TenantRouting.isTenantMoving(refusal(Status.Code.UNAVAILABLE.value(), "TENANT_MOVING", TenantRouting.SEAM_ERROR_DOMAIN, Map.of())));
     }
+
+    @Test
+    void versionDrainedIsRecognisedAndIsNeitherMoveNorWrongCell() {
+        int fp = Status.Code.FAILED_PRECONDITION.value();
+        Map<String, String> md = Map.of("admitted_generation", "41", "floor_generation", "42");
+        StatusRuntimeException e = refusal(fp, TenantRouting.VERSION_DRAINED_REASON, TenantRouting.SEAM_ERROR_DOMAIN, md);
+        assertTrue(TenantRouting.isVersionDrained(e));
+        assertFalse(TenantRouting.isTenantMoving(e));
+        assertFalse(TenantRouting.isWrongCell(e));
+        assertEquals(md, TenantRouting.errorInfo(e).orElseThrow().getMetadataMap());
+        assertFalse(TenantRouting.isVersionDrained(refusal(fp, "TENANT_MOVING", TenantRouting.SEAM_ERROR_DOMAIN, Map.of())));
+        assertFalse(TenantRouting.isVersionDrained(refusal(fp, "WRONG_CELL", TenantRouting.SEAM_ERROR_DOMAIN, Map.of())));
+        assertFalse(TenantRouting.isVersionDrained(refusal(Status.Code.UNAVAILABLE.value(), "VERSION_DRAINED", TenantRouting.SEAM_ERROR_DOMAIN, Map.of())));
+    }
 }

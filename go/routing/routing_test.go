@@ -169,3 +169,23 @@ func TestTenantMovingIsRecognisedAndIsNotWrongCell(t *testing.T) {
 		t.Fatal("a non-FAILED_PRECONDITION read as TENANT_MOVING")
 	}
 }
+
+func TestVersionDrainedIsRecognisedAndIsNeitherMoveNorWrongCell(t *testing.T) {
+	md := map[string]string{"admitted_generation": "41", "floor_generation": "42"}
+	err := refusal(t, codes.FailedPrecondition, VersionDrainedReason, SeamErrorDomain, md)
+	if !IsVersionDrained(err) || IsTenantMoving(err) || IsWrongCell(err) {
+		t.Fatal("VERSION_DRAINED misclassified")
+	}
+	if got := SeamErrorInfo(err).GetMetadata(); !reflect.DeepEqual(got, md) {
+		t.Fatalf("metadata %v", got)
+	}
+	for _, other := range []error{
+		refusal(t, codes.FailedPrecondition, TenantMovingReason, SeamErrorDomain, nil),
+		refusal(t, codes.FailedPrecondition, WrongCellReason, SeamErrorDomain, nil),
+		refusal(t, codes.Unavailable, VersionDrainedReason, SeamErrorDomain, nil),
+	} {
+		if IsVersionDrained(other) {
+			t.Fatalf("%v read as VERSION_DRAINED", other)
+		}
+	}
+}

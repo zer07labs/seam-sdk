@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:2504-2526` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:2523-2545` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:2538` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:2557` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3474,3 +3474,48 @@ manifest lines would turn main red at the BSR push and lose the dispatch. This i
 dispatch if it was refused. Locally, against `a196a6c1` (`make generate-local` from an export), the full
 gate set is green and `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exits 0. Decided by: Opus
 (reversible), under the waves flows W5 brief.
+
+## 2026-11-26 — `VERSION_DRAINED` (runtime 0.126.0 train, seam-runtime DC2 S5): one automatic reopen of `RunDecision` / `OpenSession`
+
+### D-VERSION-DRAINED — reopen once on the two admitting verbs; classify everywhere, retry nowhere
+- **The wire (leader-confirmed):** `FAILED_PRECONDITION` / HTTP 409, `ErrorInfo` reason `VERSION_DRAINED`,
+  metadata `admitted_generation` and `floor_generation` (decimal strings), no `RetryInfo`. Returned only by
+  `OpenSession` (at registration, so the session never opened) and `RunDecision` (at its one-shot seal, so
+  nothing sealed). Never mid-session and never at a session's seal.
+- **What "reopen on the current version" means here.** Neither `OpenSessionRequest` nor `RunDecisionRequest`
+  carries a version or a pin. The runtime resolves each participant's Active pin from its installed tenant
+  snapshot at admission (seam-kernel `admit_composition`, rule 1). A draining version is never admitted
+  again once that snapshot installs (seamd `in_flight_pins.rs` step 2). So the reopen is the same call
+  re-admitted: a fresh `IssueChallenge` and presentation. Then the runtime picks the current version.
+- **Chose:** `run_decision` / `runDecision` and `open_session` / `openSession` (Python sync and aio, TS) reopen
+  ONCE by themselves (`_reopen_once_on_drain` / `reopenOnceOnDrain`). Each attempt rebuilds the request with
+  a new presentation and keeps the caller's session id. There is no wait, because the refusal carries no
+  `RetryInfo`. A second refusal propagates typed. This is sound for four reasons:
+  1. nothing was registered or sealed;
+  2. on `RunDecision` the session id is the idempotency key, so a resubmit of an already-sealed decision
+     returns the stored record (seam-runtime #882);
+  3. one-shot voter proofs bind the session id with `opened_at_millis` 0 and a server-resolved policy
+     (`docs/specs/voter-verification.v1.md`), not a version, so the same votes verify on the reopen;
+  4. the reopen's body differs (its presentation is new), so a credentialed `OpenSession` re-signs new bytes
+     under the cached ticket. Nothing is replayed, and the ticket is kept.
+- **Not `is_retryable`.** `with_session_retry` / `withSessionRetry` and `load_shed_retry_classifier` never
+  re-send it, and no other verb reopens. The leader confirmed that the runtime never sends it there.
+  Elsewhere it is classified (`is_version_drained`) and propagates.
+- **Go, Java, Kotlin:** no client, so `routing.IsVersionDrained` / `TenantRouting.isVersionDrained` classify
+  and document the reopen for the caller.
+- **Amends D-WRITES-EXCLUDED and the "never retries on its own" rule, narrowly.** `open_session` still never
+  resends a refused call. The reopen is a new admission and a new body. `RunDecision` was never a credentialed
+  resend path. Leader requirement: "each SDK client handles it and reopens on the current version".
+- **Alternatives:**
+  - Typed error only, with an opt-in `with_version_reopen` helper. This is consistent with D79, but every
+    adapter would re-implement the same one-line reopen, and an un-upgraded caller fails on every drain.
+  - A bounded loop. A second drain within one call means the control plane is draining faster than an
+    admission. Surfacing it beats spinning.
+- **Wire assumptions the runtime must match:**
+  - a refused `RunDecision` / `OpenSession` leaves its session id unused, so the reopen is not
+    `ALREADY_EXISTS`;
+  - the refusal is `FAILED_PRECONDITION`, never `UNAVAILABLE`, so it does not trigger the
+    `SESSION_UNAVAILABLE` ticket drop.
+
+  If either breaks, the reopen fails typed, and it never double-seals.
+- **Status:** DECIDED (Opus, reversible; leader-confirmed wire), landing with the runtime 0.126.0 train.

@@ -45,6 +45,15 @@ const WrongCellReason = "WRONG_CELL"
 // Once the tenant flips, the source cell answers WRONG_CELL instead.
 const TenantMovingReason = "TENANT_MOVING"
 
+// VersionDrainedReason is the ErrorInfo reason of a FAILED_PRECONDITION refusal with no RetryInfo: the
+// control plane drained the agent version an OpenSession or RunDecision was admitted under, and the
+// drain floor passed the snapshot generation it was admitted at (runtime 0.126.0, DC2 S5). Only those
+// two verbs return it; nothing was registered or sealed. Its metadata names `admitted_generation` and
+// `floor_generation` (decimal strings). Never retryable as the same call: REOPEN — re-issue the call
+// with a fresh challenge and presentation (same session id), and the runtime admits it on the current
+// version, which it resolves itself; no request names a version. Reopen once; a second refusal is final.
+const VersionDrainedReason = "VERSION_DRAINED"
+
 // ErrEmptyTenant is returned for an empty tenant, which is refused rather than sent: the router
 // refuses a missing or malformed value uniformly.
 var ErrEmptyTenant = errors.New("routing: tenant must be this caller's enrolled tenant id (non-empty); omit the interceptor to send no x-seam-tenant header")
@@ -119,4 +128,14 @@ func IsTenantMoving(err error) bool {
 	}
 	info := SeamErrorInfo(err)
 	return info != nil && info.GetReason() == TenantMovingReason
+}
+
+// IsVersionDrained reports whether err is the runtime's VERSION_DRAINED refusal. Never retry the same
+// bytes: reopen once on the current version (see VersionDrainedReason).
+func IsVersionDrained(err error) bool {
+	if status.Code(err) != codes.FailedPrecondition {
+		return false
+	}
+	info := SeamErrorInfo(err)
+	return info != nil && info.GetReason() == VersionDrainedReason
 }

@@ -157,4 +157,19 @@ class TenantRoutingTest {
         assertFalse(TenantRouting.isTenantMoving(refusal(fp, "WRONG_CELL", d, emptyMap())))
         assertFalse(TenantRouting.isTenantMoving(refusal(Status.Code.UNAVAILABLE, "TENANT_MOVING", d, emptyMap())))
     }
+
+    @Test
+    fun `VERSION_DRAINED is recognised and is neither TENANT_MOVING nor WRONG_CELL`() {
+        val fp = Status.Code.FAILED_PRECONDITION
+        val d = TenantRouting.SEAM_ERROR_DOMAIN
+        val md = mapOf("admitted_generation" to "41", "floor_generation" to "42")
+        val e = refusal(fp, TenantRouting.VERSION_DRAINED_REASON, d, md)
+        assertTrue(TenantRouting.isVersionDrained(e))
+        assertFalse(TenantRouting.isTenantMoving(e))
+        assertFalse(TenantRouting.isWrongCell(e))
+        assertEquals(md, TenantRouting.errorInfo(e)!!.metadataMap)
+        assertFalse(TenantRouting.isVersionDrained(refusal(fp, "TENANT_MOVING", d, emptyMap())))
+        assertFalse(TenantRouting.isVersionDrained(refusal(fp, "WRONG_CELL", d, emptyMap())))
+        assertFalse(TenantRouting.isVersionDrained(refusal(Status.Code.UNAVAILABLE, "VERSION_DRAINED", d, emptyMap())))
+    }
 }

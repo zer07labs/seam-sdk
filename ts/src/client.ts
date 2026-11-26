@@ -71,7 +71,25 @@ import {
   UnauthenticatedError,
   isSessionUnavailable,
   isTenantMoving,
+  isVersionDrained,
 } from "./errors.js";
+
+/** Run `attempt()`; on `VERSION_DRAINED` run it exactly once more (D-VERSION-DRAINED). Only the two
+ * verbs the runtime refuses it on use it: `runDecision` and `openSession`. Neither request names a
+ * version — the runtime resolves the Active pin from its installed tenant snapshot at admission — so a
+ * reopen is the same call re-admitted against the current snapshot. `attempt` must build its request
+ * afresh (a new challenge and presentation), never resend the refused bytes. Same session id: the
+ * refusal registered and sealed nothing, and on `RunDecision` the id is the idempotency key (a resubmit
+ * of a sealed decision returns the stored record, seam-runtime #882). No wait: the refusal carries no
+ * `RetryInfo`. A second refusal, and every other error, propagates typed — this is not a loop. */
+async function reopenOnceOnDrain<T>(attempt: () => Promise<T>): Promise<T> {
+  try {
+    return await attempt();
+  } catch (e) {
+    if (!isVersionDrained(e)) throw e;
+  }
+  return attempt();
+}
 
 // The credentialed writes the runtime's seen-proof cache burns at admission (seam-runtime
 // `authorize.rs` `replay_guarded`: every credentialed write but `ReportOutcome`, and from runtime 0.72.0
@@ -114,10 +132,13 @@ const REPLAY_GUARDED: ReadonlySet<string> = new Set(
 //     SIX-call bound when they carry a credential (`credential` or a bound agent): they refresh a
 //     rejected ticket once and resend once, exactly as `authorize` does (#275). So do the seven
 //     `submit*` steps (D-SUBMIT-RETRY): the resend re-signs the same request.
-//   * `runDecision` and `openSession` each begin with the challenge→Admit handshake (3x).
+//   * `runDecision` and `openSession` each begin with the challenge→Admit handshake (3x), and on a
+//     `VERSION_DRAINED` refusal reopen ONCE (D-VERSION-DRAINED): a fresh challenge and the call again,
+//     so their worst case doubles.
 //
 // A caller that needs a hard overall bound must impose its own outer clock (the adapters' `Gate`
-// does exactly that). The SDK never retries beyond that single ticket refresh, and only `authorize`,
+// does exactly that). The SDK never retries beyond that single ticket refresh and the one
+// `VERSION_DRAINED` reopen of `runDecision` / `openSession` (a re-admission, not a resend), and only `authorize`,
 // the credentialed reads, `reportOutcome` and the seven `submit*` steps take it — `openSession`,
 // `cancelSession` and `expireSession` make exactly one call (#275, D-WRITES-EXCLUDED). Adapters own
 // every other retry (opt-in: `withSessionRetry`). A deadline breach surfaces as a typed
@@ -1444,6 +1465,11 @@ export class SeamClient {
    * `rules["x-com.zer07labs.seam"].capture_dissent`, refusing the whole decision otherwise; neither rule is
    * mirrored here.
    * A malformed entry rejects with a `TypeError` before any RPC, the handshake included.
+   *
+   * A `VERSION_DRAINED` refusal (runtime 0.126.0+: the version this decision was admitted under was
+   * drained before it sealed; nothing sealed) is answered by ONE automatic reopen — a fresh challenge and
+   * the same request, which the runtime admits on the current version. A second one throws typed
+   * ({@link isVersionDrained}).
    */
   async runDecision(
     agent: Agent,
@@ -1454,18 +1480,22 @@ export class SeamClient {
     onBehalfOf?: string[],
     opts?: UnaryCallOptions,
   ) {
-    return this.coord.runDecision(
-      {
-        sessionId,
-        participants,
-        votes: voteMessages(votes),
-        presentation: await this.presentation(agent, opts),
-        features: features ?? {},
-        // Phase 0b: end-user data subjects. The engine never reads them; the kernel folds each into
-        // the sealed record's participation as an inert `subject:<i>` declaration (GDPR-erasure join).
-        onBehalfOf: onBehalfOf ?? [],
-      },
-      call(opts),
+    // Built once, before any RPC: a malformed vote rejects ahead of the handshake.
+    const voteMsgs = voteMessages(votes);
+    return reopenOnceOnDrain(async () =>
+      this.coord.runDecision(
+        {
+          sessionId,
+          participants,
+          votes: voteMsgs,
+          presentation: await this.presentation(agent, opts),
+          features: features ?? {},
+          // Phase 0b: end-user data subjects. The engine never reads them; the kernel folds each into
+          // the sealed record's participation as an inert `subject:<i>` declaration (GDPR-erasure join).
+          onBehalfOf: onBehalfOf ?? [],
+        },
+        call(opts),
+      ),
     );
   }
 
@@ -1477,7 +1507,11 @@ export class SeamClient {
 
   /** Admit (the PoP handshake) → open an incremental session. `limits` sets the 6.2 budget
    * dimensions; absent, the message count is the server default (32). The legacy `budget` count is
-   * gone (deep-cleanup 3.3 S3-O3); use `limits: { messages: n }`. */
+   * gone (deep-cleanup 3.3 S3-O3); use `limits: { messages: n }`.
+   *
+   * A `VERSION_DRAINED` refusal (runtime 0.126.0+; the session never opened) is answered by ONE automatic
+   * reopen on the current version, as {@link SeamClient.runDecision} does; the reopen signs fresh bytes
+   * (its presentation is new), so the cached ticket is kept. A second one throws typed. */
   async openSession(
     agent: Agent,
     opts: {
@@ -1495,23 +1529,25 @@ export class SeamClient {
     },
   ) {
     const requester = requesterMessage(opts.requester);
-    const init = {
-      sessionId: opts.sessionId,
-      participants: opts.participants,
-      mode: opts.mode ?? "",
-      presentation: await this.presentation(agent, opts),
-      limits: opts.limits,
-      onBehalfOf: opts.onBehalfOf ?? [],
-      requester,
-    };
-    return this.signedOnce(
-      opts.credential,
-      "/seam.api.v1.SeamCoordination/OpenSession",
-      "",
-      opts,
-      (headers) => this.coord.openSession(init, { ...call(opts), headers }),
-      { schema: OpenSessionRequestSchema, init },
-    );
+    return reopenOnceOnDrain(async () => {
+      const init = {
+        sessionId: opts.sessionId,
+        participants: opts.participants,
+        mode: opts.mode ?? "",
+        presentation: await this.presentation(agent, opts),
+        limits: opts.limits,
+        onBehalfOf: opts.onBehalfOf ?? [],
+        requester,
+      };
+      return this.signedOnce(
+        opts.credential,
+        "/seam.api.v1.SeamCoordination/OpenSession",
+        "",
+        opts,
+        (headers) => this.coord.openSession(init, { ...call(opts), headers }),
+        { schema: OpenSessionRequestSchema, init },
+      );
+    });
   }
 
   /**

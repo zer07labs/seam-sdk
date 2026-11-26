@@ -169,13 +169,13 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | Path | Purpose / relevance |
 |---|---|
 | `python/seam_sdk/_collective.py:99` | `collective_outcome_of(resp: Union["pb.DecisionResponse", "pb.SessionStep"])` — fail-closed decode. **Phase 3 DONE**: widened to the union. `:1-30` documents why raw field access is unsafe (optional presence + `UNSPECIFIED` == 0 ⇒ a naive negative test allows on every unknown value). |
-| `ts/src/client.ts:431` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:169-174` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
+| `ts/src/client.ts:452` | `collectiveOutcomeOf(resp: DecisionResponse | SessionStep)` — the TS twin. **Phase 3 DONE.** It needed a real union: protobuf-es brands messages, so passing a `SessionStep` is a *compile error* today (reproduced: `TS2345`, `$typeName` mismatch). `:169-174` `UnknownCollectiveVerdictError(rawValue, decisionId: string)` — **required** `string`, so `:229`'s `resp.decisionId` became `resp.decisionId ?? ""`; a verifier mutation removing that coalesce reddens a test, so it is load-bearing, not decoration. |
 | `ts/gen/seam/api/v1/seam_pb.ts` | Branded `SessionStep = Message<"seam.api.v1.SessionStep"> & {…}` — the reason Phase 3's TS half is a hard block, not a typing nicety. Also carries `collectiveOutcome?` on the same branded type. Cited by symbol, not by line: this is a generated, gitignored file, and a line number into it is correct only until the next `make generate`. |
 | `python/seam_sdk/_gen/seam/api/v1/seam_pb2.pyi` | `SessionStep.collective_outcome` in the Python stubs — generated, never surfaced. Cited by symbol for the same reason as the row above; it carried `:289,297` until round 3, in direct violation of that rule and of `test_no_document_line_anchors_into_a_generated_file`, which it evaded **only** because a comma-list matches `CITATION` not at all. The rule was stated one row up and broken the next. |
-| `python/seam_sdk/client.py:972`, `ts/src/client.ts:1757` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
+| `python/seam_sdk/client.py:1014`, `ts/src/client.ts:1793` | `submit_commit` / `submitCommit` return a `SessionStep` — the caller Phase 3 exists for. |
 | `python/tests/test_collective_outcome.py`, `ts/tests/collective_outcome.test.ts` | `DecisionResponse` cases only. **Phase 3** adds the `SessionStep` cases (absent ⇒ none; `UNSPECIFIED` ⇒ raise; unknown ⇒ raise; non-commit step ⇒ none). Drive red first. |
-| `python/seam_sdk/client.py:872` + `python/seam_sdk/client.py:927` · `python/seam_sdk/aio.py:574` + `python/seam_sdk/aio.py:629` · `ts/src/client.ts:1641` + `ts/src/client.ts:1702` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
-| `python/seam_sdk/client.py:908-909` · `python/seam_sdk/aio.py:612-613` · `ts/src/client.ts:1663` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
+| `python/seam_sdk/client.py:914` + `python/seam_sdk/client.py:969` · `python/seam_sdk/aio.py:596` + `python/seam_sdk/aio.py:651` · `ts/src/client.ts:1677` + `ts/src/client.ts:1738` | `submit_evaluation` / `submit_objection` — **already delivered** by `c49d005`. Do not re-plan. Written as six separate citations rather than three comma-lists, because a comma-list matches `CITATION` **not at all**: `` `…:723,759` `` was wrong twice in a row — once before this phase and once *inside the commit whose message claims it shifted every citation below `:239`* — and nothing ever said so. |
+| `python/seam_sdk/client.py:950-951` · `python/seam_sdk/aio.py:634-635` · `ts/src/client.ts:1699` | `confidence` presence mapping — `None` ⇒ field-absent, never `0.0`. Correct in both languages; pinned by `python/tests/test_evaluation_confidence.py:55,64,87,100` and `ts/tests/evaluation.test.ts:59,70,85,93`. |
 > **Read every row below as *as at plan time*, 2026-08-31, unless the row says otherwise.** Some
 > were updated mid-run and some were not, which is worse than either — an unstamped map invites a
 > reader to treat a stale row as current. The rows known to have moved since are corrected inline.
@@ -397,7 +397,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 
 - **Delivered:** §3 carries a third known-bad band (`COMPATIBILITY.md:167`) with the narrow
   condition, the root cause, 0.7.47 as the fixed release, and **both edges proven**; the crewai row
-  (`COMPATIBILITY.md:329`) names the upstream PR that actually ends it; §2 gains a definition of
+  (`COMPATIBILITY.md:330`) names the upstream PR that actually ends it; §2 gains a definition of
   what a compatibility-matrix cell asserts (`COMPATIBILITY.md:75-110`), which is #76's ask.
 - **The band is 0.7.39-0.7.43, and round 1 of the gate is why.** I first wrote `≥ 0.7.40` with a
   paragraph arguing the lower edge was *unprovable* — "per-tag gencode is not recoverable from this
@@ -744,7 +744,7 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   `ContextBinding` field present — all eleven, `content_hash` / `receipt_hash` / `key_status` /
   `resolved_status` / `retraction` among them.
 - **No wrapper change was needed, exactly as the plan predicted** — verified rather than assumed:
-  `resolve_context` (`python/seam_sdk/client.py:1300`) and `resolveContext` (`ts/src/client.ts:1709`)
+  `resolve_context` (`python/seam_sdk/client.py:1342`) and `resolveContext` (`ts/src/client.ts:1745`)
   return the generated `ContextBinding` straight through, so the five fields reach callers with no
   SDK work. What both *did* carry was a docstring enumerating four of the eleven fields as if that
   were the set; both now say what they actually return, and both carry the vocabulary warning.
@@ -893,7 +893,7 @@ ERROR: a breaking change and must be handled, never silently rewritten away.
   *required* job in their repo red, fixable only from here; (3) a heads-up when the spec changes.
 - **Ask A's third point is evidenced, not hypothetical** — it fired during this run and cost the time
   documented above.
-- **The plan's `COMPATIBILITY.md:305-364` anchor for Ask B was fine; my check of it was not.** I
+- **The plan's `COMPATIBILITY.md:305-365` anchor for Ask B was fine; my check of it was not.** I
   read it off a branch based on `main` *before* #79 merged, saw commitment-digest text at that line,
   and recorded the anchor as stale. At `20786dc` line 203 is exactly
   `### Agent-framework co-installability` (the section runs `:203-264`). The plan was right.
@@ -1116,7 +1116,7 @@ linear sequencing keeps it trivial.
 
 **Ground-truth corrections made while planning.** Recorded rather than smoothed over, because two of
 them change what the phases do:
-- `ts/src/client.ts:372` already carries `collectiveOutcomeOf` over a `DecisionResponse | SessionStep`
+- `ts/src/client.ts:393` already carries `collectiveOutcomeOf` over a `DecisionResponse | SessionStep`
   union. TypeScript is not a judgement call — it gets the twin.
 - The #85 failing set is the shared-8099 set **minus the first test**, not the whole set. Four tests
   use the `server` fixture (in `python/tests/test_integration.py` at `960cf81`, lines 69/93/108/306 —
@@ -1138,8 +1138,8 @@ them change what the phases do:
 | `python/seam_sdk/_collective.py:99` | `collective_outcome_of` — the shape Phase 3 mirrors: `HasField` gate at `:116`, frozen dataclass at `:52`, union signature at `:84-86`. |
 | `python/seam_sdk/_policy.py` | **Phase 3 created it.** `policy_enforcement_of(resp)` returning `None` iff absent. New module, not a `_collective.py` addition — that module's docstring is entirely about a growth policy this field does not have. |
 | `python/seam_sdk/__init__.py:10` | Where `_collective`'s exports are imported; Phase 3 adds `_policy`'s alongside, plus two `__all__` entries. |
-| `ts/src/client.ts:344` | `collectiveOutcomeOf` over the union. **Phase 4 inserted `policyEnforcementOf` immediately after it**, so this citation survived unchanged; the `submitCommit` citation did not, and was repointed by measurement in the same commit. |
-| `ts/src/client.ts:517` | **Phase 4 created it.** `policyEnforcementOf(resp)` returning `undefined` iff absent — 103 lines inserted after `collectiveOutcomeOf` ends at `:239`. |
+| `ts/src/client.ts:365` | `collectiveOutcomeOf` over the union. **Phase 4 inserted `policyEnforcementOf` immediately after it**, so this citation survived unchanged; the `submitCommit` citation did not, and was repointed by measurement in the same commit. |
+| `ts/src/client.ts:538` | **Phase 4 created it.** `policyEnforcementOf(resp)` returning `undefined` iff absent — 103 lines inserted after `collectiveOutcomeOf` ends at `:239`. |
 | `ts/src/index.ts:30` | The dual-declaration comment (called "shadowed-names" until Phase 4 retracted that word — see the record). It opened with "Two" and listed three names; Phase 4 rewrote it to name all **five** names declared on both sides (`CollectiveOutcome` was already missing before this phase) and made the count one-per-name. `python/tests/test_shadowed_names_comment.py` now enforces the list, the count, the namespace prefix, and that none of the five is on an explicit `../gen/` re-export list. |
 | `python/tests/test_collective_outcome.py:208` | The `SessionStep` arm — the model for `test_policy_enforcement.py`. |
 | `python/tests/test_integration.py` | At `960cf81`: `addr = "127.0.0.1:8099"` (line 48), hardcoded, four tests; `_wait` (26-34) proved only that *something* listens; a bare `terminate()` (66). **Phase 2's primary target** — all three are gone, so this row quotes rather than line-anchors. |
@@ -1595,7 +1595,7 @@ caught more widely than before (drop-gate 8 → 9 failures, empty-`policy_id` 1 
 
 ### Phase 4 — `policyEnforcementOf` in TypeScript, and the citations it moved · **DONE**
 
-`ts/src/client.ts:517`, inserted immediately after `collectiveOutcomeOf` ends at `:239`, so `:218`
+`ts/src/client.ts:538`, inserted immediately after `collectiveOutcomeOf` ends at `:239`, so `:218`
 survived unchanged. **K = 103 as finally committed** — 100 lines at first commit, +1 for a blank line
 round 1 caught missing against the file's own convention (the only such gap between **top-level**
 declarations; member-level `}`-then-declaration adjacencies are ordinary and plentiful), +2 for a
@@ -1647,7 +1647,7 @@ Kept in full rather than quietly amended, because "a stale citation makes a hand
 wrong" and "a corrected citation moves a margin" are different failures and only the second happened.
 
 **Round 2 then narrowed it further, deliberately, and that is the more interesting number.** Splitting
-`` `ts/src/client.ts:881,774` `` into two anchored citations put a citation at 762, seventeen lines
+`` `ts/src/client.ts:902,774` `` into two anchored citations put a citation at 762, seventeen lines
 from `submitCommit(` at 779 — and `submitObjection(`'s own margin is **14**. (This record first
 called that "the tightest in that table, displacing `publish.yml`'s 27"; both halves were wrong —
 round 3 measured the displaced entry as `authenticity.rs`'s 16, contradicting a sentence fifteen
@@ -1768,7 +1768,7 @@ split block, a Cyrillic lookalike, names inside the intro line, tab indentation)
 anyway: the fix pass introduced four more.
 
 - **The commit that claimed to have shifted every citation below `:239` missed one.** `:71` still
-  cited `ts/src/client.ts:881,774`; the true lines were 724 and 760, and both cited lines are the
+  cited `ts/src/client.ts:902,774`; the true lines were 724 and 760, and both cited lines are the
   `*/` terminating the preceding doc comment. It was ungated for the reason this phase had already
   documented in the same file — a comma-list matches `CITATION` not at all — so the claim went into
   a commit message unchecked. Fixed by splitting the three comma-lists on that row into six ordinary
@@ -1804,7 +1804,7 @@ Also corrected: "4 failed, 819 passed" was 818; two `CHANGELOG.md` companions in
 by ~87 (round 3 caught the first figure double-counting that push — 115 is the *post*-push drift); a COMPATIBILITY.md citation for `opts.canonical` that pointed at line 265 of
 `ts/src/client.ts` (written without backticks here, since it names a position that was already wrong
 before this phase widened it) and now lands inside the new `PolicyEnforcement` interface — repointed
-to `ts/src/client.ts:731`; and a historical mention of a
+to `ts/src/client.ts:752`; and a historical mention of a
 long-removed citation that was written in backticks and so read as a live one.
 
 **Round-2 verification:** python **833 passed / 17 skipped** (835 at the end of round 3) · TS 136 / 126 pass / 0 fail ·
@@ -4084,7 +4084,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2538`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2557`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4391,10 +4391,10 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
 
 ## plans/verify-anchor-tenant.md — repo map (written by /plan, 2026-10-05)
 
-- `python/seam_sdk/client.py:1281-1287` — sync `verify_party_anchor`, the primary wrapper to
-  change; `python/seam_sdk/client.py:179` has `DEFAULT_TIMEOUT_S = 2.0`, the method's timeout
+- `python/seam_sdk/client.py:1323-1329` — sync `verify_party_anchor`, the primary wrapper to
+  change; `python/seam_sdk/client.py:202` has `DEFAULT_TIMEOUT_S = 2.0`, the method's timeout
   default.
-- `python/seam_sdk/aio.py:992-1000` — the async twin, hand-duplicated (no shared base class) —
+- `python/seam_sdk/aio.py:1014-1022` — the async twin, hand-duplicated (no shared base class) —
   must change in lockstep: `python/tests/test_client_parity.py:64-79`'s
   `test_the_two_clients_agree_on_each_verbs_signature` compares parameter lists in order, so a
   half-done change reddens it, not just a names-only check.
@@ -4408,9 +4408,9 @@ a solo verify gate — no batching, since no two adjacent phases are both tagged
   reused as-is by Phase 1's new live test, not modified.
 - `python/tests/test_authorize.py:400,501` — two positional `verify_party_anchor(...)` calls in
   deadline tables; confirmed unaffected by a keyword-only addition.
-- `ts/src/client.ts:117-169` (`UnaryCallOptions`/`CredentialedCallOptions`/`call()`),
-  `ts/src/client.ts:803-825` (`authorize`'s inline-opts precedent),
-  `ts/src/client.ts:1558-1570` (`verifyPartyAnchor` itself) — the TS surface Phase 2 changes
+- `ts/src/client.ts:135-190` (`UnaryCallOptions`/`CredentialedCallOptions`/`call()`),
+  `ts/src/client.ts:824-846` (`authorize`'s inline-opts precedent),
+  `ts/src/client.ts:1594-1606` (`verifyPartyAnchor` itself) — the TS surface Phase 2 changes
   and the conventions it must match.
 - `ts/src/admin.ts:366-389` — `resumeSession`'s inline `tenant?: string` precedent, the pattern
   Phase 2 mirrors on the data plane.
@@ -4571,12 +4571,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:135` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:2203-2220` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:2205-2222`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:2222-2239` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:2224-2241`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:2105` and `PROGRESS.md:3981` cites `CHANGELOG.md:1990`, both already ~130-250
+  `CHANGELOG.md:2124` and `PROGRESS.md:3981` cites `CHANGELOG.md:2009`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4586,7 +4586,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:2205-2222`) to `CHANGELOG.md:2221-2238` — verified against the exact
+  (`CHANGELOG.md:2224-2241`) to `CHANGELOG.md:2240-2257` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -5373,7 +5373,7 @@ not filed here. OQ-1 is resolved, so no phase is gated.
   - `python/seam_sdk/__init__.py:12,178-181`: exports.
   - `client.py:~1140`, `aio.py:~863`: get_decision docs.
   - `python/tests/test_seal_attestation.py` and `fixtures/seal_attestation_cases.json`: the table precedent, shared with TS.
-  - `ts/src/client.ts:478-602`: sealAttestationOf.
+  - `ts/src/client.ts:499-623`: sealAttestationOf.
   - `ts/src/index.ts:55-81`: dual-declared names comment, pinned by `python/tests/test_shadowed_names_comment.py`.
   - `ts/tests/seal_attestation.test.ts:1-6`: reads the Python fixture.
   - generated TS `Allocation` message (in `ts/gen`): budgetEpoch is a bigint.
@@ -5389,9 +5389,9 @@ not filed here. OQ-1 is resolved, so no phase is gated.
     - an explicit JS non-carrier test;
     - TSDoc now states that a `null` view throws;
     - TSDoc carries the "operator alteration breaks the chain re-verify" sentence;
-    - re-anchored `PROGRESS.md:163` (`confidence`, now `ts/src/client.ts:1663`).
+    - re-anchored `PROGRESS.md:163` (`confidence`, now `ts/src/client.ts:1699`).
   - Files: `ts/src/client.ts` (allocationOf + interfaces after sealAttestationOf), `ts/src/index.ts` (EIGHT dual-declared names), `ts/tests/allocation.test.ts` (new; reads the Python fixture), `ts/tests/integration.test.ts`.
-  - The client.ts insertion shifted citations by 149: `COMPATIBILITY.md:700,820` and `PROGRESS.md:160,162` were re-anchored.
+  - The client.ts insertion shifted citations by 149: `COMPATIBILITY.md:702,820` and `PROGRESS.md:160,162` were re-anchored.
   - Results: TS typecheck/build clean, 567 tests pass; pytest 2601 passed.
   - Plan drift: `test_shadowed_names_comment.py` needed no edit, because it derives the count word.
   - Next: P3 + P4 (batched simple).
@@ -5419,9 +5419,9 @@ Branch `feat/384-clearance-391-flake` off `009728f`. One PR.
 - `python/seam_sdk/admin.py:81-92`, `python/seam_sdk/__init__.py:29-33`: constant + frozenset export precedent (`ENROLMENT_KIND_*`). `python/seam_sdk/admin.py:574-577`: ValueError precedent.
 - `python/seam_sdk/_seal.py:46-49`, `python/seam_sdk/_allocation.py:45-48`: "sends no x-seam-clearance" docstrings.
 - `python/tests/test_credential_wiring.py:60-86`: recorders + default-wire pins. `python/tests/test_credential_refresh.py:114`: retry harness.
-- `ts/src/client.ts`: `CredentialedCallOptions` :139-146; `call()` :175; `credentialedCall` :1375-1406; `getDecision` :1940, `replayDecision` :1949, `getCommitmentProof` :2008, `verifyDecision` :2210-2215; clearance docs :507-508, :678-679. `ts/src/admin.ts:115-131`: union/set + InvalidArgumentError precedent. `ts/tests/unit_plumbing.test.ts:88`.
+- `ts/src/client.ts`: `CredentialedCallOptions` :139-146; `call()` :175; `credentialedCall` :1375-1406; `getDecision` :1940, `replayDecision` :1949, `getCommitmentProof` :2008, `verifyDecision` :2210-2215; clearance docs :507-508, :678-679. `ts/src/admin.ts:115-131`: union/set + InvalidArgumentError precedent. `ts/tests/unit_plumbing.test.ts:89`.
 - `go/routing/routing.go` + `go/routing/routing_test.go:27-75`: metadata helper + raw-invoke test pattern (gen stubs are outside the go module).
-- `java/src/main/java/com/zer07labs/seam/TenantRouting.java:33-90`, `java/src/test/java/com/zer07labs/seam/TenantRoutingTest.java:45-120`; `kotlin/src/main/kotlin/com/zer07labs/seam/TenantRouting.kt:26-60`, `kotlin/src/test/kotlin/com/zer07labs/seam/TenantRoutingTest.kt:62-88`: interceptor + in-process test pattern. `grpc-stub` is test-only.
+- `java/src/main/java/com/zer07labs/seam/TenantRouting.java:33-100`, `java/src/test/java/com/zer07labs/seam/TenantRoutingTest.java:45-120`; `kotlin/src/main/kotlin/com/zer07labs/seam/TenantRouting.kt:26-70`, `kotlin/src/test/kotlin/com/zer07labs/seam/TenantRoutingTest.kt:62-88`: interceptor + in-process test pattern. `grpc-stub` is test-only.
 - `COMPATIBILITY.md` §4 :345, identity table :367-380 (`x-seam-tenant` row :375). the `DEFERRED.md` #273 Q2 line (removed by P6). `CHANGELOG.md:17` Unreleased.
 - `python/tests/test_compatibility_citations_resolve.py`: checks file:line citations in COMPATIBILITY/DECISIONS/PROGRESS (slack 3), incl. this section; use repo-relative paths.
 - Release: `.github/workflows/release-on-runtime.yml` (version must equal the runtime's), `publish.yml` (v* tag).
