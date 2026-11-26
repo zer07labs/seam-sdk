@@ -21,7 +21,14 @@
 //!   `sign_chain_head_for_tenant(1, head1, ATTESTED_AT, 4, "acme")` under `ISSUER_SEED`, written with all
 //!   of its fields in the `anchor_json` shape. Phase 3 splices its fields into the window's first row.
 //!
-//! The capture was a throw-away test appended to those two runtime test files inside the export only.
+//! * `entry_domains.d2.jsonl` (Authorize D2, seam-runtime#2105, 0.128.0): the same `entry_recompute.rs`
+//!   `stream()`, re-captured from a clean `git archive 08503f90e` export of seam-runtime `main`. It is
+//!   S-3-shaped (`leaf_count` on every link), adds the chained `commit.policy_deny` and
+//!   `session_cancelled` entries, and no longer holds `ciphertext_evicted` (the archiver is retired,
+//!   retention E0). It is a SECOND file on purpose: `entry_domains.jsonl` stays byte-for-byte, so the
+//!   retired-but-still-accepted `ciphertext_evicted` domain keeps a runtime vector. Same seed and AID.
+//!
+//! The capture was a throw-away test appended to those runtime test files inside the export only.
 //! It was never committed to either repository. The sha256 pins below make any later edit red.
 
 use std::process::Command;
@@ -36,10 +43,14 @@ const ENTRY_ISSUER: &str = "aid:pubkey:1UIH2hlJd9z0atv-wrwudbUtWopCGE_t_cAAJPDj6
 /// The AID of the `07×32` seed (`anchored.rs` `ISSUER_SEED`) that signs the window, anchor and swap.
 const WINDOW_ISSUER: &str = "aid:pubkey:6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw";
 
-const PINS: [(&str, &str); 4] = [
+const PINS: [(&str, &str); 5] = [
     (
         "entry_domains.jsonl",
         "e2abedcdb95de971d6b3e7030c3a70ba9442b291b29d32dd754ae05cedd32396",
+    ),
+    (
+        "entry_domains.d2.jsonl",
+        "036088b740670ff8f7a214a111f1a60bcde87a29f2bf9abbb07a9eee43e472bf",
     ),
     (
         "entry_domains.window.jsonl",
@@ -248,4 +259,124 @@ fn the_window_authenticates_from_its_anchor() {
     );
     assert_eq!(code, VERIFIED, "{out}");
     assert!(out.contains("WINDOW AUTHENTICATED"), "{out}");
+}
+
+/// The audit actions in `entry_domains.d2.jsonl`: runtime `stream()` @ `08503f90e`.
+const D2_ACTIONS: [&str; 13] = [
+    "admit.compat_reject",
+    "boundary.data_flagged",
+    "commit.policy_deny",
+    "config_snapshot_installed",
+    "context_recalled",
+    "crypto_shred_purge",
+    "execute.scope_deny",
+    "gdpr_erasure",
+    "hold_placed",
+    "hold_released",
+    "party_registered",
+    "session_cancelled",
+    "tenant_kek_shred",
+];
+
+/// Authorize D2: every audit entry in the re-captured stream is chained, S-3-shaped, and the action set is
+/// exactly the runtime's, `commit.policy_deny` included.
+#[test]
+fn the_d2_stream_holds_chained_batch_entries_for_exactly_its_actions() {
+    let events = rows("entry_domains.d2.jsonl");
+    assert!(events.iter().all(|e| e["leaf_count"].is_u64()), "S-3 links");
+    let mut actions: Vec<&str> = events
+        .iter()
+        .filter(|e| e["kind"] == "AUDIT_ENTRY")
+        .inspect(|e| assert!(is_chained(e), "an unchained AUDIT_ENTRY: {e}"))
+        .map(|e| e["audit_entry"]["action"].as_str().expect("an action"))
+        .collect();
+    actions.sort_unstable();
+    actions.dedup();
+    assert_eq!(actions, D2_ACTIONS);
+}
+
+/// The release gate for runtime D3: the runtime's own D2 stream is green under `--issuer` with nothing
+/// uncovered. Without the `commit.policy_deny` row this exact stream is refused as `UNCOVERED ENTRY`.
+#[test]
+fn chain_with_issuer_verifies_the_d2_stream() {
+    let (code, out) = run(
+        "d2-issuer",
+        &golden("entry_domains.d2.jsonl"),
+        &["--issuer", ENTRY_ISSUER],
+    );
+    assert_eq!(code, VERIFIED, "{out}");
+    assert!(
+        out.contains("  entries recomputed: 20 (audit, attestation and erasure entry digests)\n"),
+        "{out}"
+    );
+    assert!(out.contains("  uncovered         : 0\n"), "{out}");
+}
+
+fn d2_with(edit: impl FnOnce(&mut serde_json::Value)) -> String {
+    let mut events = rows("entry_domains.d2.jsonl");
+    let deny = events
+        .iter_mut()
+        .find(|e| e["audit_entry"]["action"] == "commit.policy_deny")
+        .expect("the D2 stream holds a policy denial");
+    edit(deny);
+    events
+        .iter()
+        .map(|e| serde_json::to_string(e).unwrap() + "\n")
+        .collect()
+}
+
+/// Mirrors runtime `a_tampered_or_stripped_policy_denial_fails` (`entry_recompute.rs` @ `08503f90e`): the
+/// reason carries the STAGED policy version and the mode under the denial digest, so rewriting either is an
+/// entry rewrite; stripping the checksum makes it an unchained non-advisory event, refused on every run.
+#[test]
+fn a_tampered_or_stripped_policy_denial_fails() {
+    let events = rows("entry_domains.d2.jsonl");
+    let deny = events
+        .iter()
+        .find(|e| e["audit_entry"]["action"] == "commit.policy_deny")
+        .unwrap();
+    assert_eq!(
+        deny["audit_entry"]["reason"],
+        "policy 'v7-staged' (mode 'council') refused: capability class denied; \
+         (objector ids withheld; see operator logs)",
+        "the pinned reason form"
+    );
+    assert_eq!(deny["classification"], "Confidential");
+
+    // Control: re-serializing with no edit (serde_json reorders keys) still verifies, so each failure
+    // below is the edit's, not the re-serialization's.
+    let (code, out) = run(
+        "d2-deny-control",
+        &d2_with(|_| {}),
+        &["--issuer", ENTRY_ISSUER],
+    );
+    assert_eq!(code, VERIFIED, "{out}");
+
+    for (name, from, to) in [
+        ("d2-deny-version", "'v7-staged'", "'v8-staged'"),
+        ("d2-deny-mode", "'council'", "'oneshot'"),
+    ] {
+        let body = d2_with(|e| {
+            let r = e["audit_entry"]["reason"]
+                .as_str()
+                .unwrap()
+                .replace(from, to);
+            e["audit_entry"]["reason"] = r.into();
+        });
+        let (code, out) = run(name, &body, &["--issuer", ENTRY_ISSUER]);
+        assert_eq!(code, FAILED, "{name}: {out}");
+        assert!(out.contains("ENTRY REWRITE"), "{name}: {out}");
+    }
+
+    let relabelled = d2_with(|e| e["classification"] = "Internal".into());
+    let (code, out) = run("d2-deny-relabel", &relabelled, &["--issuer", ENTRY_ISSUER]);
+    assert_eq!(code, FAILED, "{out}");
+    assert!(out.contains("ENTRY REWRITE"), "{out}");
+
+    let stripped = d2_with(|e| {
+        e.as_object_mut().unwrap().remove("checksum");
+    });
+    let (code, out) = run("d2-deny-strip", &stripped, &[]);
+    assert_eq!(code, FAILED, "{out}");
+    assert!(out.contains("UNCHAINED EVENT"), "{out}");
 }

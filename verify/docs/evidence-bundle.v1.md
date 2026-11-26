@@ -1,4 +1,7 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ e70d1130 on runtime main (refreshed 2026-11-25).
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 08503f90 on runtime main (refreshed 2026-11-26).
+     seam-runtime#2101 (retention E0): an archived record reads as epoch-archived, not tiered to cold storage. Wording only.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ e70d1130 on runtime main (refreshed 2026-11-25).
      seam-runtime 0.124.0 (#2050, S-3 Merkle batches) on main.
      Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ eba2f32f8 tracking dc3/s3-merkle-batch-v2 (refreshed 2026-11-25).
@@ -271,10 +274,10 @@ what the adverse party is told.
 | `participation` | always | `participation[].subject` is the GDPR erasure predicate (stored as the subject's keyed tag `hmac-sha256:<ekid>:<hex>`, never raw). Only `participation_digest` is chained and published. |
 | `context` | without `--disclose context`, or the record is erased | A disclosure decision, made by the exporter per bundle. An erased record's context is withheld even when disclosure is asked for, because the bindings are personal data that survive the shred in plaintext. |
 | `policy` | without `--disclose policy`, no policy bound, or the bound bytes are no longer loadable | As stated in the reason. |
-| `commitment`, `binding` | the record is erased (key destroyed or erasure decided; a legal hold wins), tiered to cold storage, or missing | An erased record's plaintext is withdrawn, though its link still verifies. A cold record must be replayed from its archive bundle first. |
+| `commitment`, `binding` | the record is erased (key destroyed or erasure decided; a legal hold wins), epoch-archived, or missing | An erased record's plaintext is withdrawn, though its link still verifies. An epoch-archived record carries the reason "the record is epoch-archived — read it from the archive and re-export". |
 
 An erased item (`context`, `commitment`, `binding`) carries one shared reason: "the record is erased (its key is
-destroyed or its erasure is decided); the plaintext is withdrawn, the chained link still verifies". An archived
+destroyed or its erasure is decided); the plaintext is withdrawn, the chained link still verifies". An epoch-archived
 record is not erased: it keeps its context.
 
 The record's `trust_basis` is never in a bundle and is not a `withheld` item: it is an erasure-predicate

@@ -271,7 +271,7 @@ Three things a forger cannot fake:
   field rewritten after chaining (an actor, a session, an attested head, an erased id) leaves the link
   hashing but no longer recomputes its digest, and is refused as `ENTRY REWRITE`. **The envelope
   classification is bound** too. It sits outside the digest, so the label is fixed by the action or kind
-  instead (`Pii` for `gdpr_erasure` and the certificate; `Confidential` for `execute.scope_deny` and
+  instead (`Pii` for `gdpr_erasure` and the certificate; `Confidential` for `execute.scope_deny`, `commit.policy_deny` and
   `boundary.data_flagged`; `Internal` for every other action and the attestation; matched as exact,
   case-sensitive bytes), and a relabel is an `ENTRY REWRITE` as well. The recompute runs over the whole
   window before any attestation is checked, so an entry below an attested head is caught too. The

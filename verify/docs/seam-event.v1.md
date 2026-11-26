@@ -1,4 +1,8 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ e70d1130 on runtime main (refreshed 2026-11-25).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 08503f90 on runtime main (refreshed 2026-11-26).
+     seam-runtime#2105 (0.128.0, Authorize D2, #2073): the (b′) denial domain gains commit.policy_deny (Confidential)
+     with its reason form pinned; D1 drops the stale --strict passages; the archive bundle reads as retired (retention E0).
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ e70d1130 on runtime main (refreshed 2026-11-25).
      seam-runtime 0.124.0 (#2050, S-3 Merkle batches) on main.
      Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ eba2f32f8 tracking dc3/s3-merkle-batch-v2 (refreshed 2026-11-25).
@@ -235,7 +239,7 @@ the synthetic chain id (e.g. `admit-reject:<session_id>`, `scope-deny:<session_i
 
 ```
 AuditEntry {                               // payload at SeamEvent tag 16
-  action:  string   // "admit.compat_reject" (enterprise 6.4) | "execute.scope_deny" (6.3)
+  action:  string   // "admit.compat_reject" (enterprise 6.4) | "execute.scope_deny" (6.3) | "commit.policy_deny" (#2073)
   subject: string   // the agent acted on (the offending participant)
   reason:  string   // the rendered typed denial — no secrets, no free-text agent content
 }
@@ -298,7 +302,7 @@ The audit chain's `(len, head)` **signed by the runtime issuer key** — the key
 fabricated-chain gap. An unkeyed SHA-256 chain with a public genesis lets a transport-controlling adversary
 rebuild a self-consistent chain from any fork point; a signed head cannot be minted without the issuer key,
 so a forged chain carries no valid attestation and fails verification. The event is **chained**
-(`prev_checksum` set) so it is itself tamper-evident and `--strict`-clean, and rewriting any entry at or
+(`prev_checksum` set) so it is itself tamper-evident, and rewriting any entry at or
 before an attestation breaks a link on the path to a **signed** value.
 
 ```
@@ -421,7 +425,7 @@ equal its envelope's, per "Reader obligations on `tenant`" above, and (since #83
 MUST verify under the one framing that `tenant` selects**; (b) for every `DECISION_SEALED`, recompute the record
 digest (spec §Record digest) from its payload and compare it to the event's `digest` (tag 19) — a
 mismatch is a **payload rewrite** (a structural column was changed after sealing; the chain link still
-hashes, but the payload no longer matches it); **(b′) every other chained body recomputes too**: a chained `AUDIT_ENTRY` under the domain its `action` selects (management, legal-hold, archive-evict, boundary, denial, purge, erasure, context-recall; the closed tables are [(b′) preimages](#b-preimages-the-closed-entry-tables) below), with its envelope `classification` bound to the one its action's typed reason stamps; a `CHAIN_HEAD_ATTESTATION` under `seam.audit.chain-attest-entry.v1`, and an `ERASURE_CERTIFICATE` under `seam.audit.erasure-cert.v2` — a mismatch is an **entry rewrite** (exit 2). The recompute runs before every attestation check, including attestations at or below an anchored window's base. An attestation's and a certificate's `classification` must be the label the store fixes for its kind (`KIND_CLASSIFICATION_CONTRACT`: `Internal`, `Pii`). Their envelope `namespace` and `occurred_at` are outside the preimage, as the store digests them, and are not bound. `chain --bridge` recomputes both streams' bodies the same way and refuses an uncovered entry outright (`UNCOVERED ENTRY`), and it also requires a pinned attestation on the new stream that covers the move-in itself (`MOVE-IN NOT YET ATTESTED`): on a return trip, the tenant's older signed history would otherwise satisfy `--issuer` before the move-in is attested. v1 certificates predate every deployment (v2 since 2026-07-18; the earliest deployed database is 2026-07-26), so a v2 mismatch is a rewrite, not an older format. A chained body with an action or kind the verifier has no preimage for is **uncovered** and REFUSED under `--issuer` (otherwise a rewrite relabelled to an unknown action would verify). `--allow-uncovered` reports it instead, for diagnosis, in the human report only; it never pairs with `--json`, so an automated caller cannot get a green over an uncovered entry. Under `--issuer` the refusal is unconditional (`--strict` is not needed), and `--allow-uncovered` output is **NOT VERIFIED** with exit 2: it names the uncovered count and never prints a `VERIFIED` banner (#1561). `fact_appended` is uncovered: it chains the fact's own checksum, not an entry digest; (c) **a `DECISION_SEALED` whose `schema_version` is not
+hashes, but the payload no longer matches it); **(b′) every other chained body recomputes too**: a chained `AUDIT_ENTRY` under the domain its `action` selects (management, legal-hold, archive-evict, boundary, denial, purge, erasure, context-recall; the closed tables are [(b′) preimages](#b-preimages-the-closed-entry-tables) below), with its envelope `classification` bound to the one its action's typed reason stamps; a `CHAIN_HEAD_ATTESTATION` under `seam.audit.chain-attest-entry.v1`, and an `ERASURE_CERTIFICATE` under `seam.audit.erasure-cert.v2` — a mismatch is an **entry rewrite** (exit 2). The recompute runs before every attestation check, including attestations at or below an anchored window's base. An attestation's and a certificate's `classification` must be the label the store fixes for its kind (`KIND_CLASSIFICATION_CONTRACT`: `Internal`, `Pii`). Their envelope `namespace` and `occurred_at` are outside the preimage, as the store digests them, and are not bound. `chain --bridge` recomputes both streams' bodies the same way and refuses an uncovered entry outright (`UNCOVERED ENTRY`), and it also requires a pinned attestation on the new stream that covers the move-in itself (`MOVE-IN NOT YET ATTESTED`): on a return trip, the tenant's older signed history would otherwise satisfy `--issuer` before the move-in is attested. v1 certificates predate every deployment (v2 since 2026-07-18; the earliest deployed database is 2026-07-26), so a v2 mismatch is a rewrite, not an older format. A chained body with an action or kind the verifier has no preimage for is **uncovered** and REFUSED under `--issuer` (otherwise a rewrite relabelled to an unknown action would verify). `--allow-uncovered` reports it instead, for diagnosis, in the human report only; it never pairs with `--json`, so an automated caller cannot get a green over an uncovered entry. Under `--issuer` the refusal is unconditional, and `--allow-uncovered` output is **NOT VERIFIED** with exit 2: it names the uncovered count and never prints a `VERIFIED` banner (#1561). `fact_appended` is uncovered: it chains the fact's own checksum, not an entry digest; (c) **a `DECISION_SEALED` whose `schema_version` is not
 `4` ⇒ REFUSE (UNKNOWN SCHEMA VERSION)**, and **a v4 `DECISION_SEALED` that lacks a non-empty
 `ciphertext_digest` (tag 10) ⇒ REFUSE (MISSING COMMITMENT)**, or lacks any of its mandatory sub-digest
 and binding tags 11, 12, 14, 15, 16, 17 ⇒ REFUSE (MISSING SUB-DIGEST). Every record is *required* to carry
@@ -558,10 +562,23 @@ when present** (absent appends nothing; `Some("")` appends a zero length and so 
 | `seam.audit.boundary.v1` | `boundary.data_flagged` | `Confidential` |
 | `seam.audit.denial.v1` | `admit.compat_reject` | `Internal` |
 | `seam.audit.denial.v1` | `execute.scope_deny` | `Confidential` |
+| `seam.audit.denial.v1` | `commit.policy_deny` | `Confidential` |
 | `seam.audit.purge.v1` | `crypto_shred_purge` | `Internal` |
 | `seam.audit.erasure.v1` | `gdpr_erasure` | `Pii` |
 | `seam.audit.erasure.v1` | `tenant_kek_shred` | `Internal` |
 | `seam.audit.context-recall.v1` | `context_recalled` | `Internal` |
+
+`commit.policy_deny` (#2073) is a commit-time policy refusal: one chained entry on the refused session's
+seal chain (its flow chain, or the tenant chain when the session ran in no flow), entry id
+`policy-deny:{session_id}:{refusal_id}` (`refusal_id` a ULID, unique per refusal). `subject` is the verified
+caller of the refused commit; `reason` is exactly
+`policy '{policy_version}' (mode '{mode}') refused: {reason}`, where `policy_version` is the STAGED version
+(#561) and `reason` the already-redacted deny reason (#542), which may itself contain `"; "` and is never
+split. The runtime has no caller yet: commit-time refusals still emit `POLICY_DENIED` until the contract
+train that switches them (plan D3).
+
+`seam.audit.archive-evict.v1` is historical: the verifier still accepts it, and no runtime writes it since retention
+E0 (migration 0064).
 
 Any other `action` (including `fact_appended`, which chains the fact's own checksum) is **uncovered**.
 
@@ -1113,9 +1130,9 @@ The two shapes are told apart by `leaf_count` and are bound by the checksum itse
 digest is not the link over that digest's batch of one), so a chain walk that starts at genesis needs no
 boundary input. A **window** that starts mid-chain cannot see where the boundary is, so every artifact that
 lets a verifier start mid-chain states it, and the verifier checks the window against it: the
-`CHAIN_MANIFEST` (v3, below), the evidence bundle (`inclusion.batch_boundary`, `evidence-bundle.v1.md`) and
-the archive bundle (`ArchiveBundle` V5: each proof's `chain_index` and `batch_boundary`). A stated boundary
-that disagrees with the links (moved up or down, or dropped while the chain has a batch) is refused.
+`CHAIN_MANIFEST` (v3, below), and the evidence bundle (`inclusion.batch_boundary`, `evidence-bundle.v1.md`). (The archive bundle,
+`ArchiveBundle` V5, also stated it until retention E0 retired it; under the epoch archive the boundary row
+stays hot, `plans/retention-epoch-archive.md`.) A stated boundary that disagrees with the links (moved up or down, or dropped while the chain has a batch) is refused.
 
 In the store the boundary is the `audit_batch_boundary` row of the chain (migration 0062), written once by an
 insert trigger on the chain's first `batch_root` row, inside the writer's transaction under its chain lock,
@@ -1720,10 +1737,10 @@ Two semantics that keep a mutable registry value safe to seal:
     `resolved_status`; both treat `context_digest` as opaque bytes.
   * Not implementable by any EXTERNAL verifier, and that is by design rather than by omission.
     `DecisionSealed` carries `bytes context_digest` and nothing else about context — no
-    `resolved_status` appears anywhere in `seam_event.proto`. The **archive bundle is in the same
-    position on purpose**: it carries the rolled-up `context_digest`, never the binding list, because
-    putting provenance into external cold storage would put GDPR-reachable material there
-    (`seam-types/src/archive.rs`, "Rolled up, never the lists"). `ReplayView` carries no provenance
+    `resolved_status` appears anywhere in `seam_event.proto`. The **archive bundle was in the same
+    position on purpose** until retention E0 retired it: it carried the rolled-up `context_digest`, never
+    the binding list, because putting provenance into external cold storage would put GDPR-reachable
+    material there ("Rolled up, never the lists"). `ReplayView` carries no provenance
     either. So every externalized form of a decision has deliberately discarded the field this
     anomaly is about.
     
@@ -2204,8 +2221,8 @@ And `participants_digest([])` = `88693ab24c8d56e6a92f63cf57d094ae463264cf5c74b7b
 >    "advisory"), or
 > 2. **refuse** the stream outright when any non-advisory event lacks them.
 >
-> The reference implementation (`seam-verify`) does both: it reports an `UNVERIFIABLE` count by default,
-> and `--strict` refuses. Note this is *not* a tamper-detection hole — an attacker who strips tags 19/20
+> The reference implementation (`seam-verify`) refuses: a non-advisory event with neither field fails
+> every run (`UNCHAINED EVENT`, exit 2), since there is no pre-cutover history left to tolerate. Note this is *not* a tamper-detection hole — an attacker who strips tags 19/20
 > from a **post**-cutover event is still caught at the next link, because the head it should have produced
 > no longer matches. It is a **coverage** hole, and coverage holes that report green are how an audit trail
 > becomes decorative.
@@ -2278,5 +2295,5 @@ models is held to its own payload and, if advisory, refused when it carries chai
 What an unmodelled `kind` costs is *content* coverage, not linkage: its `digest` cannot be recomputed
 from a payload the consumer cannot parse, so a verifier claiming recompute coverage MUST disclose
 such events as unverified content — the same disclose-or-refuse rule the pre-cutover note carries —
-and MUST NOT fold them into a green claim. A `--strict` verifier MAY refuse the stream outright; that
+and MUST NOT fold them into a green claim. A verifier MAY refuse the stream outright; that
 is a refusal to attest, not a delivery failure, and the tolerant-reader rule does not forbid it.

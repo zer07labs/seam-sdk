@@ -80,7 +80,13 @@ const DOMAINS: &[(&str, &[&str])] = &[
     ("seam.audit.boundary.v1", &["boundary.data_flagged"]),
     (
         "seam.audit.denial.v1",
-        &["admit.compat_reject", "execute.scope_deny"],
+        // `commit.policy_deny` (Authorize D2, runtime #2073, 0.128.0): a commit-time policy refusal.
+        // Mirrors seam-runtime `crates/seam-verify/src/entry.rs`.
+        &[
+            "admit.compat_reject",
+            "execute.scope_deny",
+            "commit.policy_deny",
+        ],
     ),
     ("seam.audit.purge.v1", &["crypto_shred_purge"]),
     (
@@ -111,7 +117,7 @@ pub(crate) fn audit_domain(action: &str) -> Option<&'static str> {
 /// table's envelope `classification` column.
 fn audit_classification(action: &str) -> &'static str {
     match action {
-        "execute.scope_deny" | "boundary.data_flagged" => "Confidential",
+        "execute.scope_deny" | "boundary.data_flagged" | "commit.policy_deny" => "Confidential",
         "gdpr_erasure" => "Pii",
         _ => "Internal",
     }
@@ -327,6 +333,7 @@ mod tests {
             audit_classification("boundary.data_flagged"),
             "Confidential"
         );
+        assert_eq!(audit_classification("commit.policy_deny"), "Confidential");
         assert_eq!(audit_classification("gdpr_erasure"), "Pii");
         assert_eq!(audit_classification("hold_placed"), "Internal");
     }

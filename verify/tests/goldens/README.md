@@ -7,6 +7,7 @@ signed by this repository. This crate holds no issuer seed.
 |---|---|
 | `attested_chain.jsonl`, `fabricated_chain.jsonl`, `payload_rewrite.jsonl`, `two_tenant_chain.jsonl` | copied verbatim from `seam-runtime/crates/seam-verify/tests/goldens/` (see the header of `tests/authenticity.rs`) |
 | `entry_domains.jsonl` | `crates/seam-verify/tests/entry_recompute.rs` `stream()`: one entry from every audit writer, an erasure certificate, and signed heads for `acme`, `beta` and the system partition |
+| `entry_domains.d2.jsonl` | the same `stream()` re-captured at seam-runtime `08503f90e` (Authorize D2, 0.128.0): S-3 links, adds `commit.policy_deny` and `session_cancelled`, no `ciphertext_evicted`; the file above stays as the retired domain's vector |
 | `entry_domains.window.jsonl`, `entry_domains.anchor.json` | `crates/seam-verify/tests/anchored.rs` `two_anchor_stream()` cut by `window_from(&events, 2)`, and the anchor A1 that seeds it |
 | `entry_domains.swapped-attestation.json` | the genuinely signed earlier attestation from `anchored.rs` `a_swapped_attestation_below_the_window_base_fails` |
 | `session_cancelled_chain.jsonl` | copied verbatim from `seam-runtime/crates/seam-verify/tests/goldens/session_cancelled_chain.jsonl` @ `c551425` (seam-runtime#1773, RT3): written by the real `Seam::cancel_session_admin` path, pinned by sha256 in `tests/session_cancelled.rs` |
