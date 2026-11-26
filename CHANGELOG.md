@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.129.0 — 2026-11-26
+
 ## 0.128.0 — 2026-11-26
 
 ### Added — `seam-verify` 0.8.0 recomputes `commit.policy_deny` (Authorize D2, seam-runtime#2105, 0.128.0)
