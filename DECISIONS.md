@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:2508-2530` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:2524-2546` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:2542` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:2558` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3474,3 +3474,18 @@ manifest lines would turn main red at the BSR push and lose the dispatch. This i
 dispatch if it was refused. Locally, against `a196a6c1` (`make generate-local` from an export), the full
 gate set is green and `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exits 0. Decided by: Opus
 (reversible), under the waves flows W5 brief.
+
+## 2026-11-26 — Authorize D2 verifier row (`plans/authorize-d2-verify-policy-deny.md`, seam-sdk#453)
+
+Opus-settled, reversible.
+
+- **The D2 vector is a second golden, not a re-capture of `entry_domains.jsonl`.** Runtime `stream()` @
+  `08503f90e` no longer writes `ciphertext_evicted` (retention E0 retired the archiver), and the verifier still
+  accepts that domain for older chains. Replacing the file would leave that domain without a runtime vector.
+  `entry_domains.d2.jsonl` is pinned beside it and is the first runtime-produced S-3 entry stream here.
+- **seam-verify 0.8.0, not 0.7.2.** Main carries unpublished breaking verifier changes since 0.7.1 (#438,
+  #441, #445, #448), so this is a pre-1.0 minor. It stays internal-only (`promote-to-partner.sh` allowlist).
+- **"All languages" is the Rust verifier only.** No other lane recomputes (b′) audit digests. The D3 kind
+  removal and the R5 `call_sig` v4 / `RefusalUnrecorded` work are later waves of #453.
+- `verify/docs/evidence-bundle.v1.md` is re-vendored in the same PR. Runtime E0 (#2101) made it stale on main,
+  and the currency gate would otherwise fail this PR.

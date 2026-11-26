@@ -16,6 +16,22 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added — `seam-verify` 0.8.0 recomputes `commit.policy_deny` (Authorize D2, seam-runtime#2105, 0.128.0)
+
+- The (b′) denial domain `seam.audit.denial.v1` gains `commit.policy_deny` (`Confidential`), the chained
+  commit-time policy refusal runtime D3 will emit in place of `POLICY_DENIED`. Its reason is
+  `policy '{policy_version}' (mode '{mode}') refused: {reason}`, with the STAGED policy version; a rewritten
+  version or mode is `ENTRY REWRITE`, a stripped checksum is `UNCHAINED EVENT`. Mirrors runtime
+  `crates/seam-verify/src/entry.rs` @ `08503f90e`; pinned by a re-captured runtime vector
+  (`verify/tests/goldens/entry_domains.d2.jsonl`, from `entry_recompute.rs` `stream()` @ `08503f90e`).
+- **Release gate for runtime D3:** a verifier without this row reads the entry as uncovered and, under
+  `--issuer`, refuses the stream. Use `seam-verify` 0.8.0 or later before runtime D3 deploys.
+- 0.8.0 is a minor because it also publishes the breaking verifier changes on main since 0.7.1: the
+  unchained-event refusal with `--strict` removed (#438), the unstamped-event refusal (#441), the S-4
+  seal-key TCT rule (#445) and S-3 Merkle batch links (#448).
+- `verify/docs/seam-event.v1.md` and `verify/docs/evidence-bundle.v1.md` are re-vendored @ `08503f90e`.
+  Nothing in `seam.api.v1` or any client changed.
+
 ## 0.126.0 — 2026-11-26
 
 ## 0.125.0 — 2026-11-26
