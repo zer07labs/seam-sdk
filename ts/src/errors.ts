@@ -141,6 +141,16 @@ export const WRONG_CELL_REASON = "WRONG_CELL";
  * retryable. A move outlasts its live sessions, so give {@link withSessionRetry} a `budgetMs` sized
  * for the drain, not the default. */
 export const TENANT_MOVING_REASON = "TENANT_MOVING";
+/** `ErrorInfo.reason` of a `FAILED_PRECONDITION` (HTTP 409) refusal with no `RetryInfo`: the control plane
+ * drained the agent version this open or one-shot decision was admitted under, and the drain floor passed
+ * the snapshot generation it was admitted at (seam-runtime DC2 S5; runtime 0.126.0). Returned only by
+ * `OpenSession` (the session never opened) and `RunDecision` (nothing sealed).
+ * {@link SeamRpcError.errorMetadata} carries `admitted_generation` and `floor_generation` (decimal
+ * strings). **Not retryable as the same call** (never {@link isRetryable}): the remedy is to REOPEN, which
+ * re-admits against the current snapshot; the runtime resolves the pin server-side and no request names
+ * a version. `SeamClient.runDecision` and `SeamClient.openSession` reopen ONCE by themselves
+ * (D-VERSION-DRAINED); a second refusal throws typed. */
+export const VERSION_DRAINED_REASON = "VERSION_DRAINED";
 
 const STATUS_DETAILS_KEY = "grpc-status-details-bin";
 const ERROR_INFO_TYPE = "google.rpc.ErrorInfo";
@@ -364,10 +374,17 @@ export function isTenantMoving(e: unknown): boolean {
   return e instanceof FailedPreconditionError && e.reason === TENANT_MOVING_REASON;
 }
 
+/** True when `e` is the runtime's `VERSION_DRAINED` refusal: a {@link FailedPreconditionError} whose
+ * `reason` is {@link VERSION_DRAINED_REASON}. Never {@link isRetryable}: reopening is the remedy. */
+export function isVersionDrained(e: unknown): boolean {
+  return e instanceof FailedPreconditionError && e.reason === VERSION_DRAINED_REASON;
+}
+
 /** True when re-invoking the same SDK call, unchanged, is safe and is the remedy. Today that is exactly
  * {@link isSessionUnavailable} or {@link isTenantMoving}. Deliberately narrow: the runtime's other retryable refusals each need a
  * different recovery first (`CHALLENGE_REFUSED` a fresh challenge, a fact conflict a re-read chain
- * head), so a blind re-invoke is not their remedy. Classification only: the SDK still never retries
+ * head), so a blind re-invoke is not their remedy. `VERSION_DRAINED` is excluded on purpose
+ * ({@link isVersionDrained}): its remedy is a reopen. Classification only: the SDK still never retries
  * on its own; {@link withSessionRetry} is the opt-in loop. */
 export function isRetryable(e: unknown): boolean {
   return isSessionUnavailable(e) || isTenantMoving(e);

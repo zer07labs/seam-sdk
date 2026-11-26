@@ -50,6 +50,7 @@ from .errors import (
     UnavailableError,
     is_session_unavailable,
     is_tenant_moving,
+    is_version_drained,
     map_rpc_error,
 )
 from ._outcome import ObservedAt
@@ -61,6 +62,17 @@ from seam_sdk._gen.seam.api.v1 import seam_pb2_grpc as rpc
 from seam_sdk._gen.seam.event.v1 import seam_event_pb2 as ev  # noqa: F401  (re-exported)
 
 _T = TypeVar("_T")
+
+
+async def _reopen_once_on_drain(attempt: Callable[[], Awaitable[_T]]) -> _T:
+    """The twin of :func:`seam_sdk.client._reopen_once_on_drain`: ``attempt()`` is a fresh awaitable
+    per call, run once more on ``VERSION_DRAINED`` only (D-VERSION-DRAINED)."""
+    try:
+        return await attempt()
+    except FailedPreconditionError as e:
+        if not is_version_drained(e):
+            raise
+    return await attempt()
 
 
 class _MappedStream:
@@ -452,17 +464,22 @@ class SeamClient:
     ) -> pb.DecisionResponse:
         """Admit (the PoP handshake) → run a coordinated decision → seal, in one call.
         See :meth:`seam_sdk.SeamClient.run_decision` for ``votes`` (per-vote ``reason``),
-        ``features`` and ``on_behalf_of``."""
-        req = pb.RunDecisionRequest(
-            session_id=session_id,
-            participants=list(participants),
-            votes=_vote_messages(votes),
-            presentation=await self._presentation(agent, timeout),
-            on_behalf_of=list(on_behalf_of),
-        )
-        if features:
-            req.features.update(features)
-        return await self._coord.RunDecision(req, timeout=timeout)
+        ``features`` and ``on_behalf_of``, and for the one automatic reopen on ``VERSION_DRAINED``."""
+        vote_msgs = _vote_messages(votes)
+
+        async def attempt() -> pb.DecisionResponse:
+            req = pb.RunDecisionRequest(
+                session_id=session_id,
+                participants=list(participants),
+                votes=vote_msgs,
+                presentation=await self._presentation(agent, timeout),
+                on_behalf_of=list(on_behalf_of),
+            )
+            if features:
+                req.features.update(features)
+            return await self._coord.RunDecision(req, timeout=timeout)
+
+        return await _reopen_once_on_drain(attempt)
 
     async def open_session(
         self,
@@ -478,25 +495,30 @@ class SeamClient:
         timeout: float = DEFAULT_TIMEOUT_S,
     ) -> pb.SessionStep:
         requester_msg = requester_pb(requester)
-        req = pb.OpenSessionRequest(
-            session_id=session_id,
-            participants=list(participants),
-            mode=mode,
-            presentation=await self._presentation(agent, timeout),
-            on_behalf_of=list(on_behalf_of),
-        )
-        if limits is not None:
-            req.limits.CopyFrom(limits.to_pb())
-        if requester_msg is not None:
-            req.requester.CopyFrom(requester_msg)
-        return await self._signed_once(
-            credential,
-            "/seam.api.v1.SeamCoordination/OpenSession",
-            "",
-            req,
-            lambda md: self._coord.OpenSession(req, timeout=timeout, metadata=md),
-            timeout=timeout,
-        )
+
+        async def attempt() -> pb.SessionStep:
+            req = pb.OpenSessionRequest(
+                session_id=session_id,
+                participants=list(participants),
+                mode=mode,
+                presentation=await self._presentation(agent, timeout),
+                on_behalf_of=list(on_behalf_of),
+            )
+            if limits is not None:
+                req.limits.CopyFrom(limits.to_pb())
+            if requester_msg is not None:
+                req.requester.CopyFrom(requester_msg)
+            return await self._signed_once(
+                credential,
+                "/seam.api.v1.SeamCoordination/OpenSession",
+                "",
+                req,
+                lambda md: self._coord.OpenSession(req, timeout=timeout, metadata=md),
+                timeout=timeout,
+            )
+
+        # One automatic reopen on VERSION_DRAINED (D-VERSION-DRAINED), as the sync client.
+        return await _reopen_once_on_drain(attempt)
 
     @_submit_retry_doc
     async def submit_proposal(

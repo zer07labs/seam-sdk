@@ -43,6 +43,7 @@ from .errors import (  # noqa: F401  (SeamError re-exported)
     _MappedStub,
     is_session_unavailable,
     is_tenant_moving,
+    is_version_drained,
 )
 from ._outcome import ObservedAt, check_outcome_fields
 from ._requester import requester_pb
@@ -157,6 +158,26 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _reopen_once_on_drain(attempt: Callable[[], _T]) -> _T:
+    """Run ``attempt()``; on ``VERSION_DRAINED`` run it exactly once more (D-VERSION-DRAINED).
+
+    Only the two verbs that ADMIT a pin use it — :meth:`SeamClient.run_decision` and
+    :meth:`SeamClient.open_session`. Neither request names a version: the runtime resolves the Active
+    pin from its installed tenant snapshot at admission (seam-kernel ``admit_composition``), so a
+    reopen is the same call re-admitted against the current snapshot. ``attempt`` must therefore build
+    its request afresh — a new challenge and presentation — never resend the refused bytes. Same
+    ``session_id``: the refusal registered and sealed nothing, and on ``RunDecision`` the id is the
+    idempotency key (a resubmit of a sealed decision returns the stored record, seam-runtime #882).
+    No wait: the refusal carries no ``RetryInfo``. A second refusal, and every other error,
+    propagates typed — this is not a loop."""
+    try:
+        return attempt()
+    except FailedPreconditionError as e:
+        if not is_version_drained(e):
+            raise
+    return attempt()
+
+
 # ``timeout`` is PER-RPC, not an overall budget for the call. Decided, not accidental — and it has a
 # consequence callers must size around, so it is stated here rather than discovered.
 #
@@ -171,7 +192,9 @@ def _now_ms() -> int:
 #     have the same SIX-call bound when they carry a credential (``credential=`` or a bound agent):
 #     they refresh a rejected ticket once and resend once, exactly as ``authorize`` does (#275).
 #     So do the seven ``submit_*`` steps (D-SUBMIT-RETRY): the resend re-signs the same request.
-#   * ``run_decision`` and ``open_session`` each begin with the challenge→Admit handshake.
+#   * ``run_decision`` and ``open_session`` each begin with the challenge→Admit handshake, and on a
+#     ``VERSION_DRAINED`` refusal reopen ONCE (D-VERSION-DRAINED): a fresh challenge and the call
+#     again, so their worst case doubles.
 #
 # So a caller that needs a hard overall bound must impose its own outer clock; the adapters'
 # ``Gate`` does exactly that with ``asyncio.wait_for`` around every call, and its ``timeout_s``
@@ -740,17 +763,27 @@ class SeamClient:
         every vote when the governing policy sets ``rules["x-com.zer07labs.seam"].capture_dissent``, refusing the whole
         decision otherwise; neither rule is mirrored here. A malformed entry (not a 2- or 3-element
         non-string sequence) raises ``TypeError`` before any RPC.
+
+        A ``VERSION_DRAINED`` refusal (runtime 0.126.0+: the version this decision was admitted under
+        was drained before it sealed; nothing sealed) is answered by ONE automatic reopen — a fresh
+        challenge and the same request, which the runtime admits on the current version. A second one
+        propagates typed (:func:`seam_sdk.is_version_drained`). See :data:`seam_sdk.VERSION_DRAINED_REASON`.
         """
-        req = pb.RunDecisionRequest(
-            session_id=session_id,
-            participants=list(participants),
-            votes=_vote_messages(votes),
-            presentation=self._presentation(agent, timeout),
-            on_behalf_of=list(on_behalf_of),
-        )
-        if features:
-            req.features.update(features)
-        return self._coord.RunDecision(req, timeout=timeout)
+        vote_msgs = _vote_messages(votes)
+
+        def attempt() -> pb.DecisionResponse:
+            req = pb.RunDecisionRequest(
+                session_id=session_id,
+                participants=list(participants),
+                votes=vote_msgs,
+                presentation=self._presentation(agent, timeout),
+                on_behalf_of=list(on_behalf_of),
+            )
+            if features:
+                req.features.update(features)
+            return self._coord.RunDecision(req, timeout=timeout)
+
+        return _reopen_once_on_drain(attempt)
 
     # ── Incremental session lifecycle (enterprise 6.2 budget surface) ───────────────────────────
     # open → propose/vote → commit, with resume/cancel/expire/status. Budgets are first-class:
@@ -780,27 +813,36 @@ class SeamClient:
         per-request identity (#508), defaulting to the bound agent (#202) — see :meth:`get_decision`. ``requester`` is the
         human principal the session was opened for, as the control plane's pseudonymous ``p_…`` id (RT4,
         runtime 0.95.0); it is optional, sent with kind ``REQUESTER_KIND_HUMAN``, and an id the runtime
-        would refuse raises ``ValueError`` before any RPC, without echoing it."""
+        would refuse raises ``ValueError`` before any RPC, without echoing it.
+
+        A ``VERSION_DRAINED`` refusal (runtime 0.126.0+; nothing was registered) is answered by ONE
+        automatic reopen on the current version, exactly as :meth:`run_decision` does; the reopen signs
+        fresh bytes (its presentation is new), so the cached ticket is kept. A second one propagates
+        typed."""
         requester_msg = requester_pb(requester)
-        req = pb.OpenSessionRequest(
-            session_id=session_id,
-            participants=list(participants),
-            mode=mode,
-            presentation=self._presentation(agent, timeout),
-            on_behalf_of=list(on_behalf_of),
-        )
-        if limits is not None:
-            req.limits.CopyFrom(limits.to_pb())
-        if requester_msg is not None:
-            req.requester.CopyFrom(requester_msg)
-        return self._signed_once(
-            credential,
-            "/seam.api.v1.SeamCoordination/OpenSession",
-            "",
-            req,
-            lambda md: self._coord.OpenSession(req, timeout=timeout, metadata=md),
-            timeout=timeout,
-        )
+
+        def attempt() -> pb.SessionStep:
+            req = pb.OpenSessionRequest(
+                session_id=session_id,
+                participants=list(participants),
+                mode=mode,
+                presentation=self._presentation(agent, timeout),
+                on_behalf_of=list(on_behalf_of),
+            )
+            if limits is not None:
+                req.limits.CopyFrom(limits.to_pb())
+            if requester_msg is not None:
+                req.requester.CopyFrom(requester_msg)
+            return self._signed_once(
+                credential,
+                "/seam.api.v1.SeamCoordination/OpenSession",
+                "",
+                req,
+                lambda md: self._coord.OpenSession(req, timeout=timeout, metadata=md),
+                timeout=timeout,
+            )
+
+        return _reopen_once_on_drain(attempt)
 
     @_submit_retry_doc
     def submit_proposal(

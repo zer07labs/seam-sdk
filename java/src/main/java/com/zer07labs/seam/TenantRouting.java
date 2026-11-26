@@ -55,6 +55,16 @@ public final class TenantRouting {
      */
     public static final String TENANT_MOVING_REASON = "TENANT_MOVING";
 
+    /**
+     * The ErrorInfo reason of a FAILED_PRECONDITION refusal with no RetryInfo: the control plane drained the
+     * agent version an OpenSession or RunDecision was admitted under, and the drain floor passed the snapshot
+     * generation it was admitted at (runtime 0.126.0, DC2 S5). Only those two verbs return it; nothing was
+     * registered or sealed. Its metadata names {@code admitted_generation} and {@code floor_generation}
+     * (decimal strings). Never retryable as the same call: REOPEN once, re-issuing the call with a fresh
+     * challenge and presentation (same session id); the runtime resolves the current version itself.
+     */
+    public static final String VERSION_DRAINED_REASON = "VERSION_DRAINED";
+
     private static final Metadata.Key<String> KEY =
             Metadata.Key.of(TENANT_HEADER, Metadata.ASCII_STRING_MARSHALLER);
 
@@ -115,5 +125,11 @@ public final class TenantRouting {
     public static boolean isTenantMoving(Throwable t) {
         return Status.fromThrowable(t).getCode() == Status.Code.FAILED_PRECONDITION
                 && errorInfo(t).map(i -> TENANT_MOVING_REASON.equals(i.getReason())).orElse(false);
+    }
+
+    /** Whether {@code t} is the runtime's VERSION_DRAINED refusal. Never resend it: reopen once. */
+    public static boolean isVersionDrained(Throwable t) {
+        return Status.fromThrowable(t).getCode() == Status.Code.FAILED_PRECONDITION
+                && errorInfo(t).map(i -> VERSION_DRAINED_REASON.equals(i.getReason())).orElse(false);
     }
 }

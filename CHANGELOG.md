@@ -16,6 +16,25 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Added (0.126.0 train counterpart — lands with seam-runtime DC2 S5)
+- **`VERSION_DRAINED`: classified, never retried as the same call, and reopened once by the two verbs that
+  get it (runtime 0.126.0).** When the control plane drains a pinned agent version and the drain floor
+  passes the snapshot generation an open or a one-shot decision was admitted under, the runtime refuses
+  `OpenSession` (before the session registers) and `RunDecision` (before it seals) with
+  `FAILED_PRECONDITION` / HTTP 409, `ErrorInfo` `admitted_generation` / `floor_generation`, and no
+  `RetryInfo`. Nothing is registered or sealed. No request names a version (the runtime resolves the Active
+  pin at admission), so the remedy is a reopen: the same call re-admitted with a fresh challenge.
+  - Python (sync and aio) and TS: `run_decision` / `runDecision` and `open_session` / `openSession` reopen
+    ONCE by themselves, with a fresh challenge and presentation and the same session id. On `RunDecision`
+    the session id is the idempotency key (seam-runtime #882). A second refusal propagates typed. The
+    reopen signs new bytes, so the cached ticket is kept. Their per-RPC worst case doubles.
+  - `VERSION_DRAINED_REASON` / `is_version_drained` (Python) and `VERSION_DRAINED_REASON` /
+    `isVersionDrained` (TS). Not in `is_retryable` / `isRetryable`, so `with_session_retry` /
+    `withSessionRetry` and `load_shed_retry_classifier` never re-send it.
+  - Go `routing.VersionDrainedReason` / `routing.IsVersionDrained`, Java/Kotlin
+    `TenantRouting.VERSION_DRAINED_REASON` / `isVersionDrained`. These have no client: the caller reopens.
+  - An earlier runtime never sends the reason, so nothing changes against it.
+
 ## 0.124.0 — 2026-11-25
 
 ### Changed (deep-cleanup S-3 — BREAKING, lockstep with seam-runtime #2039, the 0.124.0 train)

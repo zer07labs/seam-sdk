@@ -44,7 +44,7 @@ the SDK against the runtime release that **dispatches** it. It cannot see the im
 runs.
 
 This has already happened. The pinned-key admission proof's timestamp changed from big-endian to
-ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1408`). The release gate held that SDK until runtime 0.33.2,
+ASCII-decimal in **SDK 0.33.2** (`CHANGELOG.md:1427`). The release gate held that SDK until runtime 0.33.2,
 the first runtime whose verifier accepts both forms, dispatched `wire_framing_version: 3`. A deployment that
 kept a runtime image built before 0.33.2, while moving to an SDK at or above it, rejects **every**
 admission with `pinned_key signature invalid`. seam-adapters' partner quickstart failed exactly this way
@@ -210,7 +210,7 @@ gRPC: the runtime ignores a stale `now_millis` tag and uses its own clock.
 and opt-in load-shed retry hooks. The runtime's next release must be 0.83.0 or later because
 0.82.1 is reserved here. `NOT_GOVERNED_REASON` requires seamd >= 0.82.0; status remains
 INVALID_ARGUMENT and the wire message is unchanged. Recognition checks reason first, then the
-COORDINATION cause metadata (`python/seam_sdk/errors.py:528`, `ts/src/errors.ts:336`).
+COORDINATION cause metadata (`python/seam_sdk/errors.py:538`, `ts/src/errors.ts:346`).
 
 **Runtime 0.86.0 adopts MACP semantics rev 5 (MACP 0.14.1) for new sessions** (seam-runtime#1703).
 The sealed `SessionStart` bytes of new sessions differ; records sealed earlier still verify. No API,
@@ -320,6 +320,7 @@ block but not that the action is the winner. The live view on every step of a se
 | Protocol pass 2026-10 (seam-sdk#265) | seam-runtime 0.48.0 (seam-runtime#1365, carries `protocol-pass-2026-10`) | **none** — no compatibility | runtime `main` @ `32f8196` (contract byte-identical to the freeze `1ac5de5`) |
 | AITP 0.17.0: commitment TCT `ver` is `aitp/0.3` only (`seam-verify`, D-040) | seam-runtime 0.49.0 (seam-runtime#1373; release train seam-runtime#1375) | **none** — `seam-verify` refuses an earlier runtime's `aitp/0.2` TCTs | runtime `main` @ `b5e779d` (seam-runtime#1373; signed bytes identical to `a853f89`) |
 | `SESSION_UNAVAILABLE` classification + opt-in `with_session_retry` (D79) | seam-runtime 0.53.0 (seam-runtime#1407, k8s P6: N replicas over a shared session store) | **compatible** — an earlier runtime, and any single-replica runtime, never returns the reason, so the helper never retries and the client never drops a ticket for it | runtime `main` @ `7d22b50b` (seam-runtime#1407) |
+| `VERSION_DRAINED` classification, never retryable; one automatic reopen of `RunDecision` / `OpenSession` (D-VERSION-DRAINED) | seam-runtime 0.126.0 (DC2 S5, drain floor on pinned versions) | **compatible** — an earlier runtime never returns the reason, so nothing is reopened | runtime 0.126.0 train (seam-runtime DC2 S5) |
 | `TENANT_MOVING` classification, retryable; a replay-guarded write's burned ticket dropped (seam-sdk#297) | seam-runtime 0.59.0 (seam-runtime#1513, k8s P16 tenant moves) | **compatible** — an earlier runtime never returns the reason, so nothing is retried and no ticket is dropped for it | runtime `main` @ `4cff3de4` (seam-runtime#1513) |
 | Bound (DPoP) operator tokens: Python `dpop_key=`, TS `dpopKey`, Go `mgmtdpop`, Java/Kotlin `MgmtDpop` (seam-sdk#290) | seam-runtime 0.54.0 (seam-runtime#1428, the management plane accepts a DPoP-bound token). The required posture, which refuses an unbound token on a non-loopback listener with no client CA, is 0.55.0 (seam-runtime#1463) | **compatible, opt-in.** Without a key nothing changes: an unbound token is still sent as Bearer. A runtime below 0.54.0 refuses the `DPoP` scheme, so mint unbound tokens for it | runtime `main` @ `7aa16cae` (seam-runtime#1428) and `47f89f3b` (seam-runtime#1463); spec vendored as `docs/specs/mgmt-dpop.md`, bytes pinned by `conformance/mgmt_dpop_vector.json` |
 | Record explain: `policy_enforcement_of`/`policyEnforcementOf` on `DecisionRecordView`, and `seal_attestation_of`/`sealAttestationOf` (seam-sdk#273) | seam-runtime 0.61.0 (seam-runtime#1535, #1361 train A); `RECORDED` attestations from 0.62.0 (train B, no wire change) | **compatible**: on an earlier runtime both decoders return `None`/`undefined` | runtime `main` @ `7d538c54` (seam-runtime#1535) |
@@ -340,7 +341,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2502-2524`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2521-2543`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -421,7 +422,7 @@ transport and no verb methods — they implement AID derivation, the pinned-key 
 verification, the commitment digest, the `Authorize` call_sig and enrolment proof (`pop`, raw and REST
 form) framings, identity custody (`Agent` generation + the schema-v1 bootstrap file, #201) and the
 `seam-request-call-v1` request credential, plus the `x-seam-tenant` routing interceptor and the
-`WRONG_CELL` / `TENANT_MOVING` readers (D123, P16), plus the per-call `x-seam-clearance` helper on the
+`WRONG_CELL` / `TENANT_MOVING` / `VERSION_DRAINED` readers (D123, P16, DC2 S5), plus the per-call `x-seam-clearance` helper on the
 decision reads (#384), and nothing else. If you need to *call* Seam, that is Python or TypeScript. The routing
 helpers are why the Go module and the Java and Kotlin builds now depend on gRPC: grpc-go 1.83.1 and
 grpc-java 1.66.0, both as floors that a caller's newer gRPC replaces.
@@ -438,6 +439,7 @@ grpc-java 1.66.0, both as floors that a caller's newer gRPC replaces.
 | Send `x-seam-tenant` on every call, IssueChallenge and Admit included (k8s P15, D123) | `SeamClient.connect(tenant=)` (sync + aio); `TenantInterceptor` / `AioTenantInterceptor` | `SeamClient.connect(url, { tenant })`; `tenantHeaderInterceptor` | `routing.WithTenant` (`UnaryInterceptor` / `StreamInterceptor`) | `TenantRouting.interceptor` | `TenantRouting.interceptor` |
 | Send `x-seam-clearance` on the decision reads, opt-in, exactly `Public` / `Internal` / `Confidential` / `Financial` / `Pii` / `Phi` (#384) | `clearance=` on `get_decision` / `replay_decision` / `get_commitment_proof` / `verify_decision` (sync + aio); `CLEARANCES`, `CLEARANCE_*` | `{ clearance }` (`DecisionReadOptions`) on `getDecision` / `replayDecision` / `getCommitmentProof` / `verifyDecision`; `CLEARANCES`, `CLEARANCE_*` | `clearance.NewContext(ctx, clearance.Financial)`, `clearance.Parse` | `Clearance.FINANCIAL.interceptor()`, `Clearance.parse` | `Clearance.FINANCIAL.interceptor()`, `Clearance.parse` |
 | Read ErrorInfo metadata; `WRONG_CELL` (D123, runtime 0.58.0), never retryable | `error_metadata`, `WRONG_CELL_REASON`, `is_wrong_cell` | `errorMetadata`, `WRONG_CELL_REASON`, `isWrongCell` | `routing.SeamErrorInfo`, `routing.WrongCellReason`, `routing.IsWrongCell` | `TenantRouting.errorInfo`, `WRONG_CELL_REASON`, `isWrongCell` | `TenantRouting.errorInfo`, `WRONG_CELL_REASON`, `isWrongCell` |
+| `VERSION_DRAINED` (DC2 S5, runtime 0.126.0), never retryable; `admitted_generation` / `floor_generation` in the metadata; reopened once by `RunDecision` / `OpenSession` | `VERSION_DRAINED_REASON`, `is_version_drained`; `run_decision` and `open_session` reopen once | `VERSION_DRAINED_REASON`, `isVersionDrained`; `runDecision` and `openSession` reopen once | `routing.VersionDrainedReason`, `routing.IsVersionDrained` | `VERSION_DRAINED_REASON`, `isVersionDrained` | `VERSION_DRAINED_REASON`, `isVersionDrained` |
 | `TENANT_MOVING` (k8s P16, runtime 0.59.0), retryable after `RetryInfo`; `move_id` / `target_cell` in the metadata | `TENANT_MOVING_REASON`, `is_tenant_moving`; `is_retryable` and `with_session_retry` include it | `TENANT_MOVING_REASON`, `isTenantMoving`; `isRetryable` and `withSessionRetry` include it | `routing.TenantMovingReason`, `routing.IsTenantMoving` | `TENANT_MOVING_REASON`, `isTenantMoving` | `TENANT_MOVING_REASON`, `isTenantMoving` |
 | `SUBJECT_ERASED` (#1774, runtime 0.96.0): `PERMISSION_DENIED`, a bound subject is erased; never retryable, fixed message | `SUBJECT_ERASED_REASON`, `is_subject_erased`; not in `is_retryable` | `SUBJECT_ERASED_REASON`, `isSubjectErased`; not in `isRetryable` | `crypto.SubjectErasedReason` | `RequestCredentials.SUBJECT_ERASED_REASON` | `RequestCredentials.SUBJECT_ERASED_REASON` |
 | Classify it, and an opt-in retry loop (D79) | `is_retryable` / `is_session_unavailable`, `with_session_retry` (+ `_async`) | `isRetryable` / `isSessionUnavailable`, `withSessionRetry` | N/A, no client | N/A, no client | N/A, no client |
@@ -770,8 +772,8 @@ so it cannot reach the taxonomy. Use `canonicalize_tool_input()`
 
 ### `canonical=` hands you the derivation, and the responsibility with it
 
-`authorize(canonical=…)` (`python/seam_sdk/client.py:460`, `python/seam_sdk/aio.py:236`; `opts.canonical`
-in TypeScript, `ts/src/client.ts:1194`) is additive and keyword-only. The SDK does **not** verify the
+`authorize(canonical=…)` (`python/seam_sdk/client.py:483`, `python/seam_sdk/aio.py:248`; `opts.canonical`
+in TypeScript, `ts/src/client.ts:1215`) is additive and keyword-only. The SDK does **not** verify the
 bytes — re-deriving to check would reinstate the second derivation the parameter exists to remove.
 So two things become possible that were not:
 
@@ -970,7 +972,7 @@ covered `{}` — so it did not mean what you thought. Convert at the boundary:
 `date.toISOString()`, `Object.fromEntries(map)`, `[...set]`. The error names the type and the
 conversion.
 
-**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:985` calls
+**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:1006` calls
 `jcsCanonicalize(toolInput ?? {})` directly, so `authorize({ toolInput: { deadline: new Date() } })`
 now throws where it previously signed a digest over `{"deadline":{}}`. That is the case worth
 checking in your own code, because it is the one where the aliased digest was being *signed*.

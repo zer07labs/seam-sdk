@@ -42,9 +42,10 @@ import {
   UnavailableError,
   isSessionUnavailable,
   isTenantMoving,
+  isVersionDrained,
 } from "../src/errors.js";
 import { loadShedRetryClassifier, withSessionRetry } from "../src/retry.js";
-import { refusal, sessionUnavailable, tenantMoving } from "./session_unavailable.js";
+import { refusal, sessionUnavailable, tenantMoving, versionDrained } from "./session_unavailable.js";
 import {
   ApprovalRequestRequestSchema,
   AuthorizeVerdict,
@@ -1731,4 +1732,130 @@ test("cold SDK call recovers refused challenge before reporting", async () => {
     },
   ), true);
   assert.deepEqual(calls.map(c => c.method), ["IssueChallenge", "IssueChallenge", "Admit", "ReportOutcome"]);
+});
+
+// ── VERSION_DRAINED (DC2 S5, runtime 0.126.0): one reopen of runDecision / openSession, nothing else ──
+// The runtime resolves the pin at admission and no request names a version, so the reopen is the same
+// call re-admitted with a FRESH challenge (D-VERSION-DRAINED). Mirrors python/tests/test_version_drained.py.
+
+/** `refreshWire` whose IssueChallenge mints a new nonce per call (as the runtime's do) and whose
+ * `drain[method]` refuses that verb's next N calls with VERSION_DRAINED. */
+function drainWire() {
+  const inner = refreshWire();
+  const drain: Record<string, number> = {};
+  let challenges = 0;
+  const handle: UnaryHandler = (method, input, headers) => {
+    if (method === "IssueChallenge") {
+      challenges += 1;
+      return { receiverAid: "aid:pubkey:ed25519:recv", nonce: `n${challenges}` };
+    }
+    if ((drain[method] ?? 0) > 0) {
+      drain[method]! -= 1;
+      throw versionDrained();
+    }
+    return inner.handle(method, input, headers);
+  };
+  return { state: inner.state, drain, handle, challenges: () => challenges };
+}
+
+const presentationHex = (c: Recorded) =>
+  Buffer.from((c.input.presentation as { presentationJson: Uint8Array }).presentationJson).toString("hex");
+
+test("VERSION_DRAINED on runDecision reopens once with a fresh presentation and the same session id", async () => {
+  const calls: Recorded[] = [];
+  const wire = drainWire();
+  wire.drain.RunDecision = 1;
+  const client = new SeamClient(fakeTransport(calls, wire.handle));
+  await client.runDecision(new Agent(SEED), "s-drained-0001", ["a", "b"], [["a", "APPROVE"]]);
+  const sent = calls.filter((c) => c.method === "RunDecision");
+  assert.equal(sent.length, 2);
+  assert.equal(wire.challenges(), 2);
+  assert.notEqual(presentationHex(sent[0]!), presentationHex(sent[1]!), "never the refused bytes again");
+  const strip = (c: Recorded) => ({ ...c.input, presentation: undefined });
+  assert.deepEqual(strip(sent[0]!), strip(sent[1]!));
+  assert.equal(sent[1]!.input.sessionId, "s-drained-0001");
+});
+
+test("a second VERSION_DRAINED on runDecision throws typed; one reopen, never a loop", async () => {
+  const calls: Recorded[] = [];
+  const wire = drainWire();
+  wire.drain.RunDecision = 2;
+  const client = new SeamClient(fakeTransport(calls, wire.handle));
+  await assert.rejects(
+    client.runDecision(new Agent(SEED), "s-drained-0001", ["a"], [["a", "APPROVE"]]),
+    (e) => isVersionDrained(e) && e instanceof FailedPreconditionError,
+  );
+  assert.equal(calls.filter((c) => c.method === "RunDecision").length, 2);
+});
+
+test("runDecision reopens on no other FAILED_PRECONDITION", async () => {
+  for (const err of [tenantMoving(), refusal(Code.FailedPrecondition, "WRONG_CELL")]) {
+    const calls: Recorded[] = [];
+    const wire = refreshWire();
+    wire.state.fail.RunDecision = err;
+    const client = new SeamClient(fakeTransport(calls, wire.handle));
+    await assert.rejects(client.runDecision(new Agent(SEED), "s", ["a"], [["a", "APPROVE"]]), (e) => e === err);
+    assert.equal(calls.filter((c) => c.method === "RunDecision").length, 1);
+  }
+});
+
+test("VERSION_DRAINED on openSession reopens once, re-signs fresh bytes and keeps the ticket", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  const calls: Recorded[] = [];
+  const wire = drainWire();
+  wire.drain.OpenSession = 1;
+  const client = new SeamClient(fakeTransport(calls, wire.handle));
+  seedCredentialTicket(client, cred.aid);
+  await CREDENTIAL_CALLS.OpenSession!.invoke(client, cred);
+  const sent = calls.filter((c) => c.method === "OpenSession");
+  assert.equal(sent.length, 2);
+  assert.equal(sent[0]!.input.sessionId, sent[1]!.input.sessionId);
+  assert.notEqual(presentationHex(sent[0]!), presentationHex(sent[1]!));
+  const sig = (c: Recorded) => (c.headers as Record<string, string>)["x-seam-call-sig-bin"];
+  assert.ok(sig(sent[0]!) && sig(sent[1]!));
+  assert.notEqual(sig(sent[0]!), sig(sent[1]!), "re-signed over the new body, never the refused bytes");
+  assert.equal(wire.state.admits, 0);
+  assert.equal(ticketsOf(client).has(cred.aid), true);
+});
+
+test("a second VERSION_DRAINED on openSession throws typed", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  const calls: Recorded[] = [];
+  const wire = drainWire();
+  wire.drain.OpenSession = 2;
+  const client = new SeamClient(fakeTransport(calls, wire.handle));
+  seedCredentialTicket(client, cred.aid);
+  await assert.rejects(CREDENTIAL_CALLS.OpenSession!.invoke(client, cred), (e) => isVersionDrained(e));
+  assert.equal(calls.filter((c) => c.method === "OpenSession").length, 2);
+});
+
+test("VERSION_DRAINED on any other verb is never retried or reopened", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const name of SUBMITS) {
+    const calls: Recorded[] = [];
+    const wire = drainWire();
+    wire.drain[name] = 1;
+    const client = new SeamClient(fakeTransport(calls, wire.handle));
+    seedCredentialTicket(client, cred.aid);
+    await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), (e) => isVersionDrained(e));
+    assert.equal(calls.filter((c) => c.method === name).length, 1, name);
+    assert.equal(wire.challenges(), 0, name);
+    assert.equal(ticketsOf(client).has(cred.aid), true, name);
+  }
+});
+
+test("withSessionRetry and loadShedRetryClassifier never re-send VERSION_DRAINED", async () => {
+  let calls = 0;
+  await assert.rejects(
+    withSessionRetry(
+      async () => {
+        calls += 1;
+        throw versionDrained();
+      },
+      { sleep: async () => assert.fail("slept"), random: () => 0 },
+    ),
+    (e) => isVersionDrained(e),
+  );
+  assert.equal(calls, 1);
+  assert.equal(loadShedRetryClassifier(versionDrained()), undefined);
 });
