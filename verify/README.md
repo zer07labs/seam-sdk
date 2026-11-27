@@ -506,7 +506,8 @@ The six steps run in the spec's order and the first failure refuses with exit 2,
    self-attestation TCT verifies against the pinned AID through its seal-key certificate (S-4, runtime
    0.123.0: the pinned issuer certifies a seal key, the seal key signs the TCT with `iss == sub == aud` = the
    seal AID, its `iat` lies in the certificate window and equals `floor(sealed_at / 1000)` of the chained
-   record; grants exactly `["aitp.attestation"]`) and its `ext` binding carries the recomputed `seam-commitment-digest:v5` (the
+   record, and its `jti` is the TCT `jti` derivation over the chained record's `decision_id` and `sealed_at`
+   (runtime 0.127.0 P4: another record's genuine seal is refused); grants exactly `["aitp.attestation"]`) and its `ext` binding carries the recomputed `seam-commitment-digest:v5` (the
    sealed explanation, voter records included, under `seam-explanation-digest:v2`, so a re-worded reason
    fails; field 9 is framed only from this verifier's own `selection_digest` over the disclosed `selection`
    block (a stated `selection_digest` is refused), and field 10 must be absent; field 11,

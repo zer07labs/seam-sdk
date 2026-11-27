@@ -1,4 +1,9 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 08503f90 on runtime main (refreshed 2026-11-26).
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ acbecf604 tracking rt/boot-attestation-0127 (refreshed 2026-11-26).
+     seam-runtime#2122 (0.127.0 train, P4): §Verifying step 4 now also requires the TCT `jti` to equal the TCT `jti`
+     derivation over the chained payload's `decision_id` and `sealed_at` (a genuine seal replayed onto another record
+     is refused). No manifest, digest or member-format change.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 08503f90 on runtime main (refreshed 2026-11-26).
      seam-runtime#2101 (retention E0): an archived record reads as epoch-archived, not tiered to cold storage. Wording only.
      Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ e70d1130 on runtime main (refreshed 2026-11-25).
@@ -316,11 +321,14 @@ failure:
    AID it names, and its `iat` lies in the certificate window. Its `iat` must also equal
    `floor(sealed_at / 1000)` for the **chained** payload's `sealed_at` (step 6 of
    [commitment-digest v6 §Seal key](seam-commitment-digest.v6.md#seal-key)): `iat` is self-asserted, so
-   this is what stops a token backdated with a leaked seal key. The Commitment's `supersedes` equals the chained payload's.
-   (Informative, not checked by `seam-verify`: an auditor holding the record can recompute the TCT
-   `jti` — `id` = `decision_id`, the record id, not `Commitment.id`; `seal_ms` = `sealed_at` in ms,
-   never the TCT's `iat` — see [authorize.v1, *TCT `jti`*](authorize.v1.md#admission-checks-p8-w3-a1a4-p9-w3-a5).
-   AITP verifiers do not, per RFC-AITP-0005 §2.2.)
+   this is what stops a token backdated with a leaked seal key. Its `jti` must also equal the TCT `jti`
+   derivation over the **chained** payload's `decision_id` (the record id, not `Commitment.id`, and not the
+   manifest's id) and `sealed_at` in ms (never the TCT's `iat`; see
+   [authorize.v1, *TCT `jti`*](authorize.v1.md#admission-checks-p8-w3-a1a4-p9-w3-a5)): this is what stops
+   a genuine token replayed onto another record (0.127.0 P4, step 7 of
+   [commitment-digest v6 §Seal key](seam-commitment-digest.v6.md#seal-key)). Plain AITP verifiers do not
+   read the `jti` this way (RFC-AITP-0005 §2.2); an evidence-grade verifier must. The Commitment's
+   `supersedes` equals the chained payload's.
 5. **Binding.** The signature verifies against the pinned AID. `decision_id`, `tenant` and
    `record_checksum` are the decision link's, and `commitment_digest` is the recomputed digest of
    `commitment.json`.

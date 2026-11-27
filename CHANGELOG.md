@@ -16,6 +16,33 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Breaking (security) — the evidence-grade TCT check binds the `jti` to the chained record (seam-sdk#461, seam-runtime#2122 P4)
+
+- **What it closes.** The S-4 evidence-grade check bound only the TCT's `iat` to the chained seal second. A
+  genuine seal for one record, served for another, or with its seal time shifted inside its second, still
+  verified. Every evidence-grade verifier now also requires `jti == tct_jti(decision_id, sealed_at_ms)`:
+  `derived_uuid("seam-tct-jti-v1", be32(len decision_id) || decision_id || be64(sealed_at_ms))`, where
+  `decision_id` is the **chained** record id (never `Commitment.id`). It is an exact string match against the
+  lowercase hyphenated form the runtime mints, so it fails closed on any other spelling.
+- **`seam-verify` 0.10.0**: `bundle` step 4 refuses `the TCT seals a different record`. In the library,
+  `commitment::verify_tct_sealed_at` and `verify_commitment_tct_sealed_at` take the `decision_id`, and
+  `commitment::tct_jti` is new.
+- **Python**: `verify_tct(..., sealed_at_ms=, decision_id=)`. The two travel together, and either one alone
+  verifies `False`. `tct_jti` and `TCT_JTI_TAG` are exported. `verify_decision(..., sealed_at_ms=)` passes its
+  own `decision_id`, so its signature is unchanged.
+- **TypeScript**: `verifyTct(..., { sealedAtMs, decisionId })`, with the same pairing rule. `tctJti` is
+  exported, and `verifyDecision` passes its own `decisionId`.
+- **Go**: `VerifyTCTSealedAt(issuer, jws, c, nowS, decisionID, sealedAtMs)` (a signature change).
+  `TCTJTI` and `TCTJTITag` are new.
+- **Java / Kotlin**: `verifyTctSealedAt(..., decisionId, sealedAtMs)`, including the Java selection
+  overload (a signature change). `tctJti` and `TCT_JTI_TAG` are new.
+- **Conformance**: `conformance/tct_sealed_at_vector.json` carries a per-case `decision_id`, the token's
+  `jti`, and the runtime's `jti` known answer. New cases are `replayed_onto_another_record`,
+  `commitment_id_is_not_the_record_id` and `empty_decision_id`. `last_ms_of_the_second` is now refused.
+- Plain `verify_tct` / `VerifyTCT` / `verifyTct` without a seal time is unchanged: it proves who sealed, not
+  which record (RFC-AITP-0005 §2.2).
+- `verify/docs/evidence-bundle.v1.md` is re-vendored @ `acbecf604` (seam-runtime#2122).
+
 ### Breaking — `POLICY_DENIED` retired; `REFUSAL_UNRECORDED` in every client (Authorize D3, seam-runtime#2118)
 
 Ships in the runtime's D3 coordinated cutover (Codex A01): runtime, SDK, adapters and connectors move together,

@@ -591,8 +591,8 @@ fn a_served_projection_rebuilds_the_trailers_and_verifies() {
 
 /// S-4 evidence grade, pinned by `conformance/tct_sealed_at_vector.json` (emitted by
 /// `scripts/emit_tct_sealed_at_vector.py` over this file's signed vector), the vector the Python, TS, Go,
-/// Java and Kotlin verifiers answer too: `sealed_at_ms <= i64::MAX` and `iat == floor(sealed_at_ms / 1000)`,
-/// the runtime's `verify_commitment_sealed_at` (seam-runtime #2031).
+/// Java and Kotlin verifiers answer too: `sealed_at_ms <= i64::MAX`, `iat == floor(sealed_at_ms / 1000)`
+/// and `jti == tct_jti(decision_id, sealed_at_ms)`, the runtime's `check_commitment_sealed_for`.
 #[test]
 fn the_sealed_at_vector_binds_iat_to_the_chained_seal_second() {
     let sv = load("tct_sealed_at_vector.json");

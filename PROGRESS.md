@@ -5474,3 +5474,12 @@ Plan: `plans/flows-w5-prevendor-1910.md`. Branch `flows-w5/prevendor-1910`, one 
 TS fail 0; Go, Java, Kotlin green; `verify/` cargo 305 passed, clippy and fmt clean; independence 0;
 `STREAM=1 EVENTS=1 ./scripts/check-contract.sh` exit 0. CI's contract job reads BSR `main` and stays at
 exit 8 until rt#1910 merges and pushes; merge after that (DECISIONS 2026-11-24).
+
+## sec-461-jti-binding (waves scale-retention-authorize, 2026-11-26)
+
+seam-sdk#461: the evidence-grade TCT check binds `jti` to the chained record's `decision_id` + `sealed_at` in the
+Rust verifier (seam-verify 0.10.0), Python, TS, Go, Java and Kotlin. Each language is tested against
+`conformance/tct_sealed_at_vector.json`, including `replayed_onto_another_record`, and against the runtime's `jti`
+known answer. The Rust bundle test re-mints a genuine seal for another record and expects a step-4 refusal. A
+mutation run with the `jti` check disabled fails it. `verify/docs/evidence-bundle.v1.md` is re-vendored @
+`acbecf604` (seam-runtime#2122). Merge after #2122.

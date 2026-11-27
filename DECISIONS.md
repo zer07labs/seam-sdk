@@ -3521,3 +3521,20 @@ so they carry predicate tests only.
   attestation must name why it sealed, not read `UNRECOGNIZED`.
 - `PolicyDenied/*` and `SeamEvent/policy_denied` leave `contract/event-field-manifest.txt`. The tag is
   reserved upstream, and the cutover resets history, so no SDK path decodes it.
+## 2026-11-26 — TCT `jti` bound to the chained record (seam-sdk#461, seam-runtime#2122 P4)
+
+Security fix, reviewed by Fable before merge. The API choices below are Opus-settled and reversible.
+
+- **The `jti` match is an exact string compare** against the lowercase hyphenated `derived_uuid` the
+  runtime mints. The runtime parses both sides as UUIDs; the SDK is stricter, so a token the runtime
+  accepts could only be refused here if the runtime minted a non-canonical spelling, which it never does.
+  Fails closed.
+- **`decision_id` is a required companion of `sealed_at_ms`** in every evidence-grade API. Python and TS
+  verify `false` when exactly one of the two is given, rather than silently degrading to the `iat`-only
+  check. Go, Java and Kotlin take both positionally. `verify_decision` / `verifyDecision` pass the
+  `decision_id` they were called with, so their signatures do not change.
+- **`decision_id` is the chained payload's record id, never `Commitment.id`**, and it is never taken from the
+  manifest. The vector pins this (`commitment_id_is_not_the_record_id`).
+- **`seam-verify` 0.10.0**, a pre-1.0 minor: the library signatures of `verify_tct_sealed_at` /
+  `verify_commitment_tct_sealed_at` change. It follows 0.9.0 (Authorize D3, #460).
+- **Merge order:** after seam-runtime#2122. The vendored `evidence-bundle.v1.md` tracks its branch until then.

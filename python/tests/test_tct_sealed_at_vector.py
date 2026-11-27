@@ -78,7 +78,12 @@ def test_a_sealed_at_that_is_not_a_u63_integer_is_refused(bad):
 def test_a_decision_id_that_is_not_a_string_is_refused(bad):
     kw = {} if bad is None else {"decision_id": bad}
     assert not verify_tct(
-        ISSUER, TOKEN, COMMITMENT, now_s=0, sealed_at_ms=int(CASE_OK["sealed_at_ms"]), **kw
+        ISSUER,
+        TOKEN,
+        COMMITMENT,
+        now_s=0,
+        sealed_at_ms=int(CASE_OK["sealed_at_ms"]),
+        **kw,
     )
 
 
