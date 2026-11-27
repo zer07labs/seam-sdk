@@ -147,10 +147,12 @@ from .errors import (
     UnimplementedError,
     UnknownCollectiveVerdictError,
     UnknownVerdictError,
+    REFUSAL_UNRECORDED_REASON,
     SESSION_UNAVAILABLE_REASON,
     SUBJECT_ERASED_REASON,
     TENANT_MOVING_REASON,
     WRONG_CELL_REASON,
+    is_refusal_unrecorded,
     is_retryable,
     is_session_unavailable,
     is_subject_erased,
@@ -351,6 +353,9 @@ __all__ = [
     # SUBJECT_ERASED (runtime 0.96.0, #1774): PERMISSION_DENIED, never retryable
     "SUBJECT_ERASED_REASON",
     "is_subject_erased",
+    # REFUSAL_UNRECORDED (Authorize D3): FAILED_PRECONDITION + RetryInfo, retryable, never an allow
+    "REFUSAL_UNRECORDED_REASON",
+    "is_refusal_unrecorded",
     "DEFAULT_RETRY_BUDGET_S",
     "with_session_retry",
     "with_session_retry_async",

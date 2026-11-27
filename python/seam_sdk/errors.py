@@ -336,6 +336,17 @@ WRONG_CELL_REASON = "WRONG_CELL"
 #: :data:`WRONG_CELL` instead, which is not retryable. A move outlasts its live sessions, so wrap
 #: it with a ``budget_s`` sized for the drain, not the default.
 TENANT_MOVING_REASON = "TENANT_MOVING"
+#: ``FAILED_PRECONDITION`` with ``RetryInfo`` (HTTP 409 + ``Retry-After``): the runtime reached a
+#: commit-time refusal (a policy or scope denial) but could not write its chained audit entry, so the
+#: refusal is **not delivered as final** (seam-runtime Authorize D3, ``docs/specs/error-model.md``
+#: §REFUSAL_UNRECORDED). The call applied nothing: an interactive session stays open, a one-shot run is
+#: dropped. **Never an allow** — it is a refusal of unknown outcome, so no fail policy may run the action
+#: on it. **Retryable:** re-issue the same call after :attr:`SeamRpcError.retry_after` (1s today); it is
+#: evaluated afresh and usually answers the refusal itself. It is not a session-lease refusal
+#: (:func:`is_session_unavailable` is False). The proof of a replay-guarded write was burned at admission,
+#: so the client drops that ticket exactly as for ``TENANT_MOVING``. Branch on this reason, never the
+#: message.
+REFUSAL_UNRECORDED_REASON = "REFUSAL_UNRECORDED"
 
 _STATUS_DETAILS_KEY = "grpc-status-details-bin"
 _ERROR_INFO_TYPE = "type.googleapis.com/google.rpc.ErrorInfo"
@@ -465,7 +476,9 @@ class FailedPreconditionError(SeamRpcError):
 
     **A policy refusal of a session commit is no longer this error.** Until the protocol pass it was;
     the runtime now answers a ``POLICY_DENIED`` with ``PERMISSION_DENIED``, the MACP error-code
-    registry's status (RFC-MACP-0006 §13) — see :class:`PermissionDeniedError`.
+    registry's status (RFC-MACP-0006 §13) — see :class:`PermissionDeniedError`. A refusal the runtime
+    could not record is this error with reason ``REFUSAL_UNRECORDED`` (:func:`is_refusal_unrecorded`):
+    retryable, and never an allow.
     """
 
 
@@ -575,13 +588,27 @@ def is_tenant_moving(exc: BaseException) -> bool:
     )
 
 
+def is_refusal_unrecorded(exc: BaseException) -> bool:
+    """True when ``exc`` is the runtime's ``REFUSAL_UNRECORDED`` refusal: a
+    :class:`FailedPreconditionError` whose :attr:`~SeamRpcError.reason` is
+    :data:`REFUSAL_UNRECORDED_REASON`. :func:`is_retryable`; never an allow."""
+    return (
+        isinstance(exc, FailedPreconditionError)
+        and exc.reason == REFUSAL_UNRECORDED_REASON
+    )
+
+
 def is_retryable(exc: BaseException) -> bool:
     """True when re-invoking the same SDK call, unchanged, is safe and is the remedy. Today that is
-    exactly :func:`is_session_unavailable` or :func:`is_tenant_moving`. Deliberately narrow: the runtime's other retryable
+    exactly :func:`is_session_unavailable`, :func:`is_tenant_moving` or :func:`is_refusal_unrecorded`. Deliberately narrow: the runtime's other retryable
     refusals each need a different recovery first (``CHALLENGE_REFUSED`` a fresh challenge, a fact
     conflict a re-read chain head), so a blind re-invoke is not their remedy. Classification only:
     the SDK still never retries on its own; :func:`seam_sdk.with_session_retry` is the opt-in loop."""
-    return is_session_unavailable(exc) or is_tenant_moving(exc)
+    return (
+        is_session_unavailable(exc)
+        or is_tenant_moving(exc)
+        or is_refusal_unrecorded(exc)
+    )
 
 
 class DeadlineExceededError(SeamRpcError):

@@ -49,7 +49,6 @@ fn stub_payload(kind: &str) -> Option<(&'static str, &'static str)> {
             r#","chain_head_attestation":{"attested_len":0,"attested_head":"","attested_at":0,"issuer_aid":"","digest_schema":0,"signature":""}"#,
         ),
         "AUTHORIZE_EVALUATED" => ("authorize_evaluated", r#","authorize_evaluated":{}"#),
-        "POLICY_DENIED" => ("policy_denied", r#","policy_denied":{}"#),
         "EVENT_REDRIVEN" => ("event_redriven", r#","event_redriven":{}"#),
         _ => return None,
     })

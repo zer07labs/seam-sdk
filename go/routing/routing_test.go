@@ -169,3 +169,19 @@ func TestTenantMovingIsRecognisedAndIsNotWrongCell(t *testing.T) {
 		t.Fatal("a non-FAILED_PRECONDITION read as TENANT_MOVING")
 	}
 }
+
+func TestRefusalUnrecordedIsRecognisedOnTheReasonOnly(t *testing.T) {
+	err := refusal(t, codes.FailedPrecondition, RefusalUnrecordedReason, SeamErrorDomain, nil)
+	if !IsRefusalUnrecorded(err) || IsTenantMoving(err) || IsWrongCell(err) {
+		t.Fatal("REFUSAL_UNRECORDED misclassified")
+	}
+	if IsRefusalUnrecorded(refusal(t, codes.FailedPrecondition, TenantMovingReason, SeamErrorDomain, nil)) {
+		t.Fatal("TENANT_MOVING read as REFUSAL_UNRECORDED")
+	}
+	if IsRefusalUnrecorded(refusal(t, codes.Unavailable, RefusalUnrecordedReason, SeamErrorDomain, nil)) {
+		t.Fatal("a non-FAILED_PRECONDITION read as REFUSAL_UNRECORDED")
+	}
+	if IsRefusalUnrecorded(refusal(t, codes.FailedPrecondition, RefusalUnrecordedReason, "example.com", nil)) {
+		t.Fatal("a foreign-domain ErrorInfo read as REFUSAL_UNRECORDED")
+	}
+}

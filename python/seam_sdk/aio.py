@@ -48,8 +48,7 @@ from .errors import (
     IssuerMismatchError,
     UnauthenticatedError,
     UnavailableError,
-    is_session_unavailable,
-    is_tenant_moving,
+    is_retryable,
     map_rpc_error,
 )
 from ._outcome import ObservedAt
@@ -377,9 +376,7 @@ class SeamClient:
         self, signer: Agent, ticket: bytes, rpc_full_name: str, exc: BaseException
     ) -> None:
         """The twin of :meth:`seam_sdk.SeamClient._forget_burned_ticket`."""
-        if rpc_full_name in _REPLAY_GUARDED and (
-            is_session_unavailable(exc) or is_tenant_moving(exc)
-        ):
+        if rpc_full_name in _REPLAY_GUARDED and is_retryable(exc):
             await self._invalidate_ticket(signer, ticket)
 
     async def _credentialed_call(

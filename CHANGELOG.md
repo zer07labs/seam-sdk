@@ -16,6 +16,39 @@ than trusting a summary here.
 
 ## Unreleased
 
+### Breaking — `POLICY_DENIED` retired; `REFUSAL_UNRECORDED` in every client (Authorize D3, seam-runtime#2118)
+
+Ships in the runtime's D3 coordinated cutover (Codex A01): runtime, SDK, adapters and connectors move together,
+and each target's history is reset. There is no compatibility path for the old advisory row.
+
+- **`REFUSAL_UNRECORDED`, new in all five languages.** The runtime reached a commit-time refusal (a policy or
+  scope denial) but could not write its chained audit entry, so it answers `FAILED_PRECONDITION` + `RetryInfo`
+  (1s) with `ErrorInfo` reason `REFUSAL_UNRECORDED` (HTTP 409 + `Retry-After`) instead of the refusal. It is
+  **never an allow**: no fail policy may run the action on it. Select on the reason, never the message.
+  - Python: `REFUSAL_UNRECORDED_REASON`, `is_refusal_unrecorded`. TS: `REFUSAL_UNRECORDED_REASON`,
+    `isRefusalUnrecorded`. Go: `routing.RefusalUnrecordedReason`, `routing.IsRefusalUnrecorded`. Java/Kotlin:
+    `TenantRouting.REFUSAL_UNRECORDED_REASON`, `TenantRouting.isRefusalUnrecorded`.
+  - It is `is_retryable` / `isRetryable`, so `with_session_retry` / `withSessionRetry` retries it after its
+    `RetryInfo` delay. It is not a session-lease refusal (`is_session_unavailable` stays false).
+  - The request proof of a replay-guarded write was burned at admission, so the Python and TS clients drop
+    that ticket exactly as for `TENANT_MOVING`, and the retry re-admits and signs fresh bytes instead of
+    meeting `request_replayed` (DECISIONS 2026-11-27). The ticket drop now keys on `is_retryable`.
+  - A pre-D3 SDK reads it as a plain `FailedPreconditionError`: fail closed, just not retried.
+- **`POLICY_DENIED` (`seam.event.v1` tag 24) removed.** The runtime reserves the tag; a commit-time policy
+  refusal is one chained `AUDIT_ENTRY` with action `commit.policy_deny` (verified since `seam-verify` 0.8.0).
+  `KNOWN_KINDS` drops it in Python and TS (9 kinds). `contract/event-field-manifest.txt` drops `PolicyDenied/*`
+  and `SeamEvent/policy_denied`.
+- **`seam-verify` 0.9.0.** `POLICY_DENIED` leaves `ADVISORY_KINDS` and `MODELLED_KINDS`, and the tag-24
+  payload is no longer decoded. A stream still carrying the old advisory row is pre-cutover history: it is refused
+  (`UNCHAINED EVENT`, integrity mode and `--issuer` alike), as the runtime verifier refuses it, rather than skipped. `verify/docs/seam-event.v1.md`
+  and `verify/proto/seam/event/v1/seam_event.proto` are re-vendored from seam-runtime#2118 @ `5a204622c`.
+
+### Added — `SEAL_REASON_EXPIRE_MAX_AGE` (retention E2a, seam-runtime#2112)
+
+- `seal_attestation_of` / `sealAttestationOf` name the new seal reason `"EXPIRE_MAX_AGE"`: the session reached
+  its maximum total age (8 days of database time from open, or the tenant's lower `max_session_age`). Before
+  this, it read `"UNRECOGNIZED"`. `contract/field-manifest.txt` gains the enum value.
+
 ## 0.129.0 — 2026-11-26
 
 ## 0.128.0 — 2026-11-26

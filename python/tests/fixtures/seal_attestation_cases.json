@@ -32,6 +32,8 @@
      "expect": {"availability": "RECORDED", "seal_reason": "EXPIRE_TTL", "collective": null}},
     {"name": "RECORDED + EXPIRE_SUSPEND_CAP", "attestation": {"availability": 1, "seal_reason": 4, "collective": null},
      "expect": {"availability": "RECORDED", "seal_reason": "EXPIRE_SUSPEND_CAP", "collective": null}},
+    {"name": "RECORDED + EXPIRE_MAX_AGE (retention E2a)", "attestation": {"availability": 1, "seal_reason": 5, "collective": null},
+     "expect": {"availability": "RECORDED", "seal_reason": "EXPIRE_MAX_AGE", "collective": null}},
     {"name": "RECORDED + UNSPECIFIED reason reads UNRECOGNIZED, collective ignored", "attestation": {"availability": 1, "seal_reason": 0, "collective": {"verdict": 1, "approve_count": 1, "reject_count": 0, "abstain_count": 0, "declared_participant_count": 1, "stated_value_contradicted_tally": false, "effective_threshold": null}},
      "expect": {"availability": "RECORDED", "seal_reason": "UNRECOGNIZED", "collective": null}},
     {"name": "RECORDED + unknown reason 99 reads UNRECOGNIZED", "attestation": {"availability": 1, "seal_reason": 99, "collective": null},

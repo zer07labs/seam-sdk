@@ -10,7 +10,10 @@
 // default 40s budget outlasts the runtime's 30s lease TTL, so one lapsed lease is always waited out. It
 // bounds the time spent waiting, not the calls: each attempt keeps its own `timeoutMs`. It does NOT
 // outlast a tenant move (`TENANT_MOVING`, also `isRetryable`; 5s `RetryInfo`): the source cell drains
-// until its live sessions finish, so pass a `budgetMs` sized for that drain. When the next
+// until its live sessions finish, so pass a `budgetMs` sized for that drain. An unrecorded refusal
+// (`REFUSAL_UNRECORDED`, also `isRetryable`; 1s `RetryInfo`, Authorize D3) is retried the same way: the
+// runtime could not write the refusal's audit entry and applied nothing, so the retry is evaluated
+// afresh. It is never a lease refusal and never an allow. When the next
 // delay would overrun the budget, the last error is thrown as-is. Wrap unary calls only.
 
 import { isRetryable, SeamRpcError, ResourceExhaustedError, UnavailableError } from "./errors.js";

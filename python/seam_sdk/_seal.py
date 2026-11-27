@@ -83,6 +83,9 @@ _REASON_NAMES = {
     pb.SEAL_REASON_CANCEL: "CANCEL",
     pb.SEAL_REASON_EXPIRE_TTL: "EXPIRE_TTL",
     pb.SEAL_REASON_EXPIRE_SUSPEND_CAP: "EXPIRE_SUSPEND_CAP",
+    # Retention E2a (seam-runtime#2112): the session reached its maximum total age (8 days of database
+    # time from open, or the tenant's lower max_session_age), however often it was suspended.
+    pb.SEAL_REASON_EXPIRE_MAX_AGE: "EXPIRE_MAX_AGE",
 }
 
 _UNRECOGNIZED = "UNRECOGNIZED"
@@ -115,7 +118,8 @@ class SealAttestation:
     #: read it as withheld, and upgrade.
     availability: str
     #: ``None`` unless :attr:`availability` is ``"RECORDED"``; then
-    #: ``"COMMIT" | "CANCEL" | "EXPIRE_TTL" | "EXPIRE_SUSPEND_CAP" | "UNRECOGNIZED"`` — closed set.
+    #: ``"COMMIT" | "CANCEL" | "EXPIRE_TTL" | "EXPIRE_SUSPEND_CAP" | "EXPIRE_MAX_AGE" | "UNRECOGNIZED"``
+    #: — closed set.
     seal_reason: Optional[str]
     #: The runtime's own collective outcome for the commit that sealed this record — so it
     #: describes that round, never a later re-drive. Set **only** when :attr:`availability` is

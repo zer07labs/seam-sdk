@@ -181,4 +181,17 @@ class TenantRoutingTest {
         assertFalse(TenantRouting.isTenantMoving(refusal(fp, "WRONG_CELL", TenantRouting.SEAM_ERROR_DOMAIN, Map.of())));
         assertFalse(TenantRouting.isTenantMoving(refusal(Status.Code.UNAVAILABLE.value(), "TENANT_MOVING", TenantRouting.SEAM_ERROR_DOMAIN, Map.of())));
     }
+
+    @Test
+    void refusalUnrecordedIsRecognisedOnTheReasonOnly() {
+        int fp = Status.Code.FAILED_PRECONDITION.value();
+        String d = TenantRouting.SEAM_ERROR_DOMAIN;
+        StatusRuntimeException e = refusal(fp, TenantRouting.REFUSAL_UNRECORDED_REASON, d, Map.of());
+        assertTrue(TenantRouting.isRefusalUnrecorded(e));
+        assertFalse(TenantRouting.isTenantMoving(e));
+        assertFalse(TenantRouting.isWrongCell(e));
+        assertFalse(TenantRouting.isRefusalUnrecorded(refusal(fp, "TENANT_MOVING", d, Map.of())));
+        assertFalse(TenantRouting.isRefusalUnrecorded(refusal(Status.Code.UNAVAILABLE.value(), "REFUSAL_UNRECORDED", d, Map.of())));
+        assertFalse(TenantRouting.isRefusalUnrecorded(refusal(fp, "REFUSAL_UNRECORDED", "example.com", Map.of())));
+    }
 }

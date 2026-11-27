@@ -270,7 +270,7 @@ fn incomplete(whom: &str, open: &OpenBatch) -> String {
 /// on another kind (or a `CHAIN_MANIFEST` without one) is refused here and not there:
 ///
 /// 1. No payload is present that belongs to a kind other than `e.kind` (`KIND/PAYLOAD MISMATCH`).
-/// 2. A **known** kind — one of the twelve payload owners below — carries its own payload
+/// 2. A **known** kind — one of the eleven payload owners below — carries its own payload
 ///    (`KIND/PAYLOAD MISMATCH`). An unknown, future kind may carry none of the known ones (rule 1), and
 ///    carrying nothing is not a mismatch: it is a link like any other, disclosed as unmodelled.
 /// 3. An [`Event::is_advisory`] event — a known advisory kind, or the `chain_anchor` audit entry —
@@ -285,7 +285,7 @@ fn incomplete(whom: &str, open: &OpenBatch) -> String {
 /// map one side's diagnosis onto the other's.
 pub fn check_kind_payload(e: &Event) -> Result<(), String> {
     let p = &e.presence;
-    let fields: [(&str, bool, &str); 12] = [
+    let fields: [(&str, bool, &str); 11] = [
         ("payload (tag 13)", e.decision.is_some(), "DECISION_SEALED"),
         (
             "learning_decision (tag 14)",
@@ -318,11 +318,6 @@ pub fn check_kind_payload(e: &Event) -> Result<(), String> {
             "authorize_evaluated (tag 23)",
             e.authorize.is_some(),
             "AUTHORIZE_EVALUATED",
-        ),
-        (
-            "policy_denied (tag 24)",
-            e.denial.is_some(),
-            "POLICY_DENIED",
         ),
         (
             "event_redriven (tag 26)",

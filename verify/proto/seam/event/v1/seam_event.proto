@@ -173,9 +173,11 @@ message SeamEvent {
   // The advisory AUTHORIZE_EVALUATED payload (tag 23) — one row per `SeamAuthorization.Authorize`
   // evaluation. Additive: absent on every other kind, so existing events' bytes are unchanged.
   AuthorizeEvaluated authorize_evaluated = 23;
-  // The advisory POLICY_DENIED payload (tag 24) — one row per commitment a bound policy REFUSED.
-  // Additive: absent on every other kind, so existing events' bytes are unchanged.
-  PolicyDenied policy_denied = 24;
+  // Tag 24 was the advisory POLICY_DENIED payload, retired in Authorize D3 (#2073): a commit-time policy
+  // refusal is now ONE chained AUDIT_ENTRY (`commit.policy_deny`, `seam.audit.denial.v1`) carried in
+  // `audit_entry` (16). Reserved so it can never be reassigned.
+  reserved 24;
+  reserved "policy_denied";
   // Per-tenant outbox counter (#973): gap-free per `tenant`, starting at 0, counting EVERY event of that tenant
   // (chained and advisory). `optional` because 0 is a valid value and absence means "this event predates the
   // counter": singular would alias them. Additive: absent on every event written before the producer change, so
@@ -207,6 +209,18 @@ message SeamEvent {
   // of every flow chain this cell holds for the tenant (completeness evidence). NO WRITER YET (the attest
   // worker, W4). Signed and chained.
   ChainManifest chain_manifest = 30;
+  // S-3 (tags 31-33) — Merkle batch sealing. Every chain entry is a batch: the appender's seals of one chain
+  // in one commit share ONE entry; every other chained append is a batch of one. A CHAINED event is a member
+  // of its entry: `leaf_index` (0-based) of `leaf_count` (>= 1) and the RFC 9162 `inclusion_path` (leaf to
+  // root, 32-byte hashes, at most ceil(log2(leaf_count))). `checksum`/`prev_checksum` name the ENTRY's link,
+  // shared by every member: checksum = H(prev_checksum || batch_digest), batch_digest =
+  // H("seam.audit.batch.v1" || root || u64be(leaf_count)), root folded from
+  // leaf = H(0x00 || "seam.audit.leaf.v1" || digest) along `inclusion_path` with node = H(0x01 || l || r).
+  // The entry covers leaf_count chain positions; member i's `chain.seq` is the entry's first + i.
+  // UNSEALED like tags 25/27-29: bound through `checksum`. Absent (leaf_count 0) on advisory kinds.
+  uint32 leaf_index = 31;
+  uint32 leaf_count = 32;
+  repeated bytes inclusion_path = 33;
 }
 
 // Flows W1 — the flow attribution on `SeamEvent.flow_ref` (tag 28). UNSEALED. Mirrors `FlowRefPb`.
@@ -245,6 +259,11 @@ message ChainManifest {
   bytes signature = 9;
   uint64 tenant_len = 10;                   // the tenant chain's length before this manifest's entry
   bytes tenant_head = 11;                   // that chain's head (genesis(K) when tenant_len = 0)
+  // S-3 history boundary (manifest v3, `seam.audit.chain-manifest.v3`): 3 on a v3 manifest, 0 on v1/v2.
+  uint32 manifest_version = 12;
+  // v3: the tenant chain's S-3 history boundary (the position of its first Merkle batch entry), absent when
+  // the tenant chain has no batch entry below `tenant_len`.
+  optional uint64 tenant_batch_boundary = 13;
 }
 
 // One flow chain in a `ChainManifest`. `(flow_id, env, version)` is the chain key's flow part.
@@ -255,6 +274,9 @@ message ChainManifestEntry {
   bytes head = 4;      // genesis(K) when len = 0
   uint32 state = 5;    // 1 active, 2 retired, 3 moved_out, 4 destroyed
   uint32 version = 6;  // the chain key's version part: >= 1 on sandbox, 0 on live
+  // v3: the chain's S-3 history boundary (the position of its first Merkle batch entry), absent when the
+  // chain has no batch entry below `len`.
+  optional uint64 batch_boundary = 7;
 }
 
 // Flows train 1 — one chain's head in an erasure certificate v2: the checksum that chain's own append
@@ -338,40 +360,6 @@ message AuthorizeEvaluated {
   repeated string subject_digests = 11;
 }
 
-// The POLICY_DENIED payload — a bound policy REFUSED a commitment, so nothing was sealed.
-//
-// This event exists because that refusal is otherwise durably INVISIBLE on the one-shot path: a
-// policy-denied `RunDecision` errors before the seal, before the metrics tick and before the outbox
-// wake, so it leaves no trace at all. For a system whose claim is an auditable decision boundary, "a
-// refused action leaves no record" is the wrong failure mode. It follows the AUTHORIZE_EVALUATED
-// precedent exactly: ADVISORY, not chained, sealing nothing — this event is the ONLY trace of the
-// refusal, and it is a durable trace rather than a decision record.
-//
-// The envelope already carries tenant, namespace, session_id, occurred_at and seq, so this payload
-// carries only what the envelope cannot. `decision_id` is absent on the envelope for the same reason
-// it is on AUTHORIZE_EVALUATED: nothing was sealed, so there is no decision to name.
-message PolicyDenied {
-  // The policy that refused, as the binding named it. STAGED, not "ran under" — see the identically
-  // named field on `seam.api.v1.DecisionResponse`, whose comment carries the full #561 reasoning. A
-  // reader must not treat this as proof the named policy's rules are what evaluated the commitment.
-  string policy_version = 1;
-  // The coordination mode the refused session was opened in (`macp.mode.decision.v1` etc.).
-  string mode = 2;
-  // The deny reason, ALREADY REDACTED. D-030: built from the closed-set capability-class strings the
-  // policy evaluator produced, never agent-proposed content — and #542 strips objector ids from them,
-  // so a denial cannot leak WHO objected to a consumer that may not be entitled to know.
-  //
-  // ONE string rather than a repeated field, because a single joined string is what the runtime's
-  // error boundary actually holds: `seam_coord_macp::map_macp_err` joins the evaluator's reasons
-  // with `"; "` long before this producer sees them, and the #542 redaction emits that SAME
-  // delimiter INSIDE one reason (`... (objector ids withheld; see operator logs)`). Splitting the
-  // joined message back apart is therefore lossy - two reasons yield three parts, one of them
-  // dangling mid-parenthetical - so a repeated field here could only ever be filled by shredding
-  // the text. Consumers MUST NOT split this on `"; "`. The seam-coord-macp test
-  // `the_joined_denial_message_is_not_safely_splittable` pins the hazard.
-  string reason = 3;
-}
-
 // The learned-policy routing key (advisory, Plan R). Mirrors `PolicyKeyPb`.
 message PolicyKey {
   string tenant = 1;
@@ -431,7 +419,7 @@ message LearningOutcome {
   // was reported), in milliseconds since the Unix epoch.
   optional uint64 observed_at_millis = 6;
   // BP-2c — the reporter's enrolment class, stamped by the runtime from the authenticated subject,
-  // never client-asserted. Closed set: `agent` | `outcome_connector` | `changeset_worker` | `operator`.
+  // never client-asserted. Closed set: `agent` | `outcome_connector` | `operator`.
   // Absent when subject enforcement is off (there is no authenticated identity to classify).
   optional string reporter_class = 7;
 }
