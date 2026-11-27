@@ -41,7 +41,11 @@ than trusting a summary here.
   `commitment_id_is_not_the_record_id` and `empty_decision_id`. `last_ms_of_the_second` is now refused.
 - Plain `verify_tct` / `VerifyTCT` / `verifyTct` without a seal time is unchanged: it proves who sealed, not
   which record (RFC-AITP-0005 §2.2).
-- `verify/docs/evidence-bundle.v1.md` is re-vendored @ `acbecf604` (seam-runtime#2122).
+- `verify/docs/evidence-bundle.v1.md` is re-vendored @ `1603764cb` (seam-runtime#2122, on runtime main).
+
+## 0.133.0 — 2026-11-27
+
+## 0.132.0 — 2026-11-27
 
 ### Breaking — `POLICY_DENIED` retired; `REFUSAL_UNRECORDED` in every client (Authorize D3, seam-runtime#2118)
 

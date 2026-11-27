@@ -1,5 +1,5 @@
-<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ acbecf604 tracking rt/boot-attestation-0127 (refreshed 2026-11-26).
-     seam-runtime#2122 (0.127.0 train, P4): §Verifying step 4 now also requires the TCT `jti` to equal the TCT `jti`
+<!-- Pinned copy of seam-runtime/docs/specs/evidence-bundle.v1.md @ 1603764cb on runtime main (refreshed 2026-11-27).
+     seam-runtime#2122 (P4) merged; the bytes are unchanged from the branch pin @ acbecf604. §Verifying step 4 now also requires the TCT `jti` to equal the TCT `jti`
      derivation over the chained payload's `decision_id` and `sealed_at` (a genuine seal replayed onto another record
      is refused). No manifest, digest or member-format change.
      Prior pin, kept for history:

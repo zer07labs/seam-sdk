@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:2587-2609` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:2591-2613` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:2621` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:2625` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3521,6 +3521,7 @@ so they carry predicate tests only.
   attestation must name why it sealed, not read `UNRECOGNIZED`.
 - `PolicyDenied/*` and `SeamEvent/policy_denied` leave `contract/event-field-manifest.txt`. The tag is
   reserved upstream, and the cutover resets history, so no SDK path decodes it.
+
 ## 2026-11-26 — TCT `jti` bound to the chained record (seam-sdk#461, seam-runtime#2122 P4)
 
 Security fix, reviewed by Fable before merge. The API choices below are Opus-settled and reversible.
@@ -3537,4 +3538,4 @@ Security fix, reviewed by Fable before merge. The API choices below are Opus-set
   manifest. The vector pins this (`commitment_id_is_not_the_record_id`).
 - **`seam-verify` 0.10.0**, a pre-1.0 minor: the library signatures of `verify_tct_sealed_at` /
   `verify_commitment_tct_sealed_at` change. It follows 0.9.0 (Authorize D3, #460).
-- **Merge order:** after seam-runtime#2122. The vendored `evidence-bundle.v1.md` tracks its branch until then.
+- **Merge order:** after seam-runtime#2122 (merged as `1603764cb`; the vendored `evidence-bundle.v1.md` is pinned there).
