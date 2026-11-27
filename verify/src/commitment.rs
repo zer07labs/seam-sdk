@@ -543,7 +543,7 @@ pub fn verify_tct_sealed_at(
 /// over `be32(len decision_id) ‖ decision_id ‖ be64(sealed_at_ms)`, rendered lowercase and hyphenated as
 /// the token carries it. `decision_id` is the record id (`DecisionRecord.decision_id`), never
 /// `Commitment.id`. An id longer than `u32::MAX` bytes is refused rather than truncated. Pinned by
-/// `conformance/tct_jti_vector.json`.
+/// `jti_kat` in `conformance/tct_sealed_at_vector.json`.
 pub fn tct_jti(decision_id: &str, sealed_at_ms: i64) -> Result<String, String> {
     use sha2::{Digest, Sha256};
     let id = decision_id.as_bytes();
@@ -575,7 +575,7 @@ pub fn tct_jti(decision_id: &str, sealed_at_ms: i64) -> Result<String, String> {
 /// / 1000)` and `jti == tct_jti(decision_id, sealed_at_ms)`. A `sealed_at_ms` beyond i64 is refused before
 /// dividing; dividing first would accept the values in (i64::MAX, i64::MAX rounded up to a whole second].
 /// The `jti` must be exactly the canonical form the seal path mints (lowercase, hyphenated). Pinned
-/// across every SDK verifier by `conformance/tct_sealed_at_vector.json` and `conformance/tct_jti_vector.json`.
+/// across every SDK verifier by `conformance/tct_sealed_at_vector.json` (its cases and `jti_kat`).
 fn check_seals_record(
     claims: &serde_json::Value,
     iat: i64,
