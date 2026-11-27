@@ -165,7 +165,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 > checkpoint trail lives in git history (`git log -p -- PROGRESS.md`); nothing here carries over.
 >
 > **Done in Phase 1 (2026-08-31).** Delivery was verified against this tree — `record_digest_v3` (since the
-> protocol pass, `record_digest_v4`) at `python/seam_sdk/crypto.py:1142`, `ts/src/crypto.ts:1688`, `verify/src/verify.rs:648`; the 6a/6b
+> protocol pass, `record_digest_v4`) at `python/seam_sdk/crypto.py:1178`, `ts/src/crypto.ts:1726`, `verify/src/verify.rs:648`; the 6a/6b
 > streamed arms live at `python/seam_sdk/admin.py:141` and `ts/src/admin.ts:162`; KATs at
 > `conformance/vectors.json:70` — and the plan is now `plans/archive/record-digest-v3.md`.
 > `plans/authorize-single-canonicalization.md` turned out to be delivered too (issue #60, closed
@@ -208,7 +208,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_compatibility_citations_resolve.py` | Every backticked `file:line` in `COMPATIBILITY.md`/`DECISIONS.md` must resolve; `:61-64,:92` ≥10 each; `:76` sibling paths need a `seam-runtime/` prefix; `:141-172` `ANCHORED` needles must hit **exactly once** within `CITATION_SLACK` (`:176`). **Phase 8** adds the vendored-file rule. |
 | `verify/docs/seam-event.v1.md` | Byte-verbatim vendored spec, pinned in its header. **Phase 9** refreshes it whole-file. Source of #73's citation drift. |
 | `scripts/check_vendored_spec.py:22-38` | Integrity (`:24-26`) / reachability (`:28-32`) / **currency** (`:34-38`) — fails on staleness by explicit decision. This is what will announce runtime P1a Phase 6 by reddening `spec-pin` (`.github/workflows/ci.yml:645-646`) on every PR. |
-| `python/seam_sdk/crypto.py:884-888` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:624,668,702`, `python/seam_sdk/admin.py:153`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:609` `_opt_bytes` · `:394` `record_digest_v2`. |
+| `python/seam_sdk/crypto.py:920-924` | `record_digest_v3` takes `context_digest` as an **opaque 32-byte sub-digest**, deliberately not reimplemented. **This is why ACDP P1a costs the digest layer nothing** — verified: `context_digest` appears only as an input (`:624,668,702`, `python/seam_sdk/admin.py:153`), and no context-provenance formula exists in `python/`, `ts/` or `verify/`. `:386` `_frame` · `:390` `_opt` · `:609` `_opt_bytes` · `:394` `record_digest_v2`. |
 | `verify/src/verify.rs:869-875` | `schema_version` dispatch (2 ⇒ v2, 3 ⇒ v3, else refuse); `:837-845` ceiling refusal. P1a keeps `schema_version = 3`, so **no new arm**. |
 | `python/tests/test_errors_is_import_light.py:87-100` | `crypto.py` may import only `cryptography`; `errors.py` only `grpc`. seam-runtime's `sdk-digest-parity` gate loads `crypto.py` standalone. **No phase may add an import to either.** |
 | `scripts/test_ci_gate.py:79,98,141` | `ci-ok`'s `needs:` must equal the full job set both ways; `ALLOWED_ADVISORY` (the literal is at `:52`, asserted by the test at `:98`) may hold only `{integration, spec-pin}`; `workflow-guards` must stay free of `BUF_TOKEN`/`buf-setup-action`/`make generate` (banned triple at `:191-195`). **Any new CI job must be added to `needs:`.** |
@@ -216,7 +216,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
 | `python/tests/test_workflows_generate_through_the_makefile.py:43,72` | No workflow may call `buf generate` directly; the `generate:` target must keep both `buf generate` and `root_gen.py` (without which the wheel is unimportable). |
 | `Makefile:22,29,57-58` | `generate` (BSR) · `generate-local RUNTIME=../seam-runtime` (reads `crates/seam-api/proto` via `buf`) · **`clean` `rm -rf`s all three stub trees — never run it; recovery needs a BSR login.** |
 | `plans/README.md:1-6` | Archive convention: delivered plans move to `plans/archive/` with a dated verification note, verified **against code, never a status table**. `:13` **carried** the stale `record-digest-v3` Active row (*"Phases 1–5 delivered … Phase 6 remains BLOCKED"*) and the index was **missing a row entirely** for `plans/authorize-single-canonicalization.md` — both corrected in Phase 1, which archived each plan against code. `:13` now holds this plan's own Active row. The cross-repo *table* lives in `plans/cross-repo/README.md`, not here — **Phase 2** edits that file. |
-| `CHANGELOG.md:3-7` | The SDK does not choose its own version; entries accumulate under `## Unreleased`. `:751-754` is the hedging style Phase 7 *was* to mirror — it did not, the band being provable, and the citation was removed as it sat within `CITATION_SLACK` of the `"No yank"` needle; `:756-760` the no-yank decision of record. **Both re-measured 2026-09-07** and they had NOT merely drifted by that day's +29: they were already pointing at unrelated prose (a `gh`-stub paragraph and the `recommendation` parameter note), so shifting them by the delta would have moved a broken pointer to a differently-broken place while looking like maintenance. They were re-found by their described content instead. Both re-measured in Phase 4, which pushed them 28 lines down and found them already stale by ~115 before that; **re-measured again in Phase 1 of this workstream**, which had shifted them a further 3 and repointed the two sibling copies in `COMPATIBILITY.md`/`DECISIONS.md` while leaving this one — the same omission `PROGRESS.md:2092-2097` records, one file over. Neither citation is anchored, so nothing went red; that is the point. **This advisory still names only 0.7.13-0.7.19** — see the Phase 7 checkpoint. |
+| `CHANGELOG.md:3-7` | The SDK does not choose its own version; entries accumulate under `## Unreleased`. `:778-781` is the hedging style Phase 7 *was* to mirror — it did not, the band being provable, and the citation was removed as it sat within `CITATION_SLACK` of the `"No yank"` needle; `:783-787` the no-yank decision of record. **Both re-measured 2026-09-07** and they had NOT merely drifted by that day's +29: they were already pointing at unrelated prose (a `gh`-stub paragraph and the `recommendation` parameter note), so shifting them by the delta would have moved a broken pointer to a differently-broken place while looking like maintenance. They were re-found by their described content instead. Both re-measured in Phase 4, which pushed them 28 lines down and found them already stale by ~115 before that; **re-measured again in Phase 1 of this workstream**, which had shifted them a further 3 and repointed the two sibling copies in `COMPATIBILITY.md`/`DECISIONS.md` while leaving this one — the same omission `PROGRESS.md:2092-2097` records, one file over. Neither citation is anchored, so nothing went red; that is the point. **This advisory still names only 0.7.13-0.7.19** — see the Phase 7 checkpoint. |
 
 ### Sibling repos (read-only — referenced, never written)
 
@@ -282,7 +282,7 @@ sibling reads: the protos via `buf`, `../seam-runtime/docs/**`, `../seam-runtime
   `python/pyproject.toml` and `ts/package.json` (version stamps) — no line number cited anywhere in
   the plan moved. Merge commit `68e92c2`; branch `feat/publish-integrity-and-tracking-state`.
 - **Delivery verified against code, not status tables** (the whole point of the phase):
-  `record_digest_v3` at `python/seam_sdk/crypto.py:888`, `ts/src/crypto.ts:1688`,
+  `record_digest_v3` at `python/seam_sdk/crypto.py:924`, `ts/src/crypto.ts:1726`,
   `verify/src/verify.rs:648`; streamed v3 arms at `python/seam_sdk/admin.py:141` (with `:107`
   refusing `schema_version > 3`) and `ts/src/admin.ts:162` (with `:109` the matching ceiling
   refusal); KATs at `conformance/vectors.json:70`;
@@ -4093,7 +4093,7 @@ from the list API the canary queries. Ordering is free and load-bearing: the loo
 first healthy candidate. The constant's comment also lost a false rationale — it justified the age
 spread as a hedge against a **retention** sweep, and no retention sweep has ever run here. The real
 yank predicate is "named in an advisory as unconditionally broken": 27 runs deleted only 0.7.7 and
-0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2594`).
+0.7.13–0.7.19, and the *older* 0.7.39–0.7.43 band was deliberately spared (`CHANGELOG.md:2621`).
 
 **Two claims of my own were overturned, and are corrected in place rather than dropped.** I had
 recorded that the `yank.yml` runs could not settle whether the `version:` qualifier is actually
@@ -4580,12 +4580,12 @@ green before any code changed.
   this — "rather than refusing outright" was wrong, fixed before merge). (2) the release's
   `retitle_changelog.sh` run shifted `CHANGELOG.md`'s "No yank" paragraph from line 1054 to 1056
   (a +2 insert right after `## Unreleased`), pushing `COMPATIBILITY.md:135` and
-  `DECISIONS.md:1222`'s `CHANGELOG.md:2227-2244` citations past the citation test's slack
-  tolerance; repointed both to `CHANGELOG.md:2229-2246`. Tested: `check_vendored_spec.py` OK via both
+  `DECISIONS.md:1222`'s `CHANGELOG.md:2254-2271` citations past the citation test's slack
+  tolerance; repointed both to `CHANGELOG.md:2256-2273`. Tested: `check_vendored_spec.py` OK via both
   `--from local` and `--from gh`; `test_compatibility_citations_resolve.py` 489 passed/0 failed
   standalone (was 4 failed). Verifier also flagged two pre-existing, gate-invisible citations
   elsewhere that the same +2 shift widened further — `DECISIONS.md:2035` cites
-  `CHANGELOG.md:2129` and `PROGRESS.md:3981` cites `CHANGELOG.md:2014`, both already ~130-250
+  `CHANGELOG.md:2156` and `PROGRESS.md:3981` cites `CHANGELOG.md:2041`, both already ~130-250
   lines stale before this release — out of scope for this release-unblock hotfix; filed as a
   follow-up issue rather than folded in here.
   **Rebased `feat/verify-anchor-tenant` onto this commit during `/sweep`'s ship pass.** Four
@@ -4595,7 +4595,7 @@ green before any code changed.
   `CHANGELOG.md`/`COMPATIBILITY.md`/`DECISIONS.md`: the feature branch's own new
   `## Unreleased` entry (16 lines) was kept above this hotfix's `## 0.33.3` header, which
   shifted "No yank" from this entry's `1056` to `1072` and recomputed the two citations above
-  (`CHANGELOG.md:2229-2246`) to `CHANGELOG.md:2245-2262` — verified against the exact
+  (`CHANGELOG.md:2256-2273`) to `CHANGELOG.md:2272-2289` — verified against the exact
   paragraph-boundary text at both the old and new line numbers before trusting the new range,
   not just the arithmetic. A dedicated ship-gate verifier independently re-derived this same
   shift from the diff and confirmed it exact.
@@ -4608,7 +4608,7 @@ green before any code changed.
      unknown-event-tag audit (relayed to seam-runtime, closed): no SDK verifier re-serializes a
      whole decoded `seam.event.v1` message to compute a digest/chain hash — Rust
      (`verify/src/wire.rs:16-80,161-211`, `verify/src/verify.rs:559-585`), Python
-     (`python/seam_sdk/crypto.py:668-705,695`), and TypeScript (`ts/src/crypto.ts:1688`) all
+     (`python/seam_sdk/crypto.py:704-741,731`), and TypeScript (`ts/src/crypto.ts:1726`) all
      hand-build their preimage from an explicit, spec-transcribed field list. An unsealed,
      non-preimage field just flows through harmlessly, same conclusion as that audit reached for
      the sealed-vs-unsealed question in general.
@@ -5379,7 +5379,7 @@ not filed here. OQ-1 is resolved, so no phase is gated.
 - Main is red: the contract gate exits 6 on the 0.76.0 stubs. This PR fixes it.
 - Repo map:
   - `python/seam_sdk/_seal.py:73-163`: the decoder precedent (WITHHELD).
-  - `python/seam_sdk/__init__.py:12,178-181`: exports.
+  - `python/seam_sdk/__init__.py:12,180-183`: exports.
   - `client.py:~1140`, `aio.py:~863`: get_decision docs.
   - `python/tests/test_seal_attestation.py` and `fixtures/seal_attestation_cases.json`: the table precedent, shared with TS.
   - `ts/src/client.ts:478-602`: sealAttestationOf.
