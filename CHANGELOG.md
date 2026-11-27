@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.132.0 — 2026-11-27
+
 ### Breaking — `POLICY_DENIED` retired; `REFUSAL_UNRECORDED` in every client (Authorize D3, seam-runtime#2118)
 
 Ships in the runtime's D3 coordinated cutover (Codex A01): runtime, SDK, adapters and connectors move together,
