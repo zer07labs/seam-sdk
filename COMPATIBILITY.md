@@ -295,7 +295,7 @@ that reads chain_bundle v2 (#421).
 
 **Authorize D3 is a coordinated cutover (seam-runtime#2118).** Pin the SDK release that carries it beside
 the D3 runtime, and `seam-verify` 0.9.0. 0.9.0 no longer treats `POLICY_DENIED` (tag 24, retired) as advisory:
-a stream that still carries one is pre-cutover history and is refused under `--issuer`, so run it only over a
+a stream that still carries one is pre-cutover history and is refused (`UNCHAINED EVENT`, in every mode), so run it only over a
 target whose history the cutover reset. 0.8.0 still verifies a post-cutover stream. An older SDK meeting the new
 `REFUSAL_UNRECORDED` refusal fails closed (a plain `FailedPreconditionError`) but does not retry it.
 

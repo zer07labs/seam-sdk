@@ -302,6 +302,10 @@ fn a_retired_policy_denied_row_is_no_longer_tolerated_under_issuer() {
         !out.contains("advisory (skipped): 1"),
         "a retired kind must not be classified advisory:\n{out}"
     );
+    assert!(
+        out.contains("UNCHAINED EVENT") && out.contains("POLICY_DENIED"),
+        "the refusal must name the retired row as unchained, not fail for an unrelated reason:\n{out}"
+    );
 }
 
 // ── AUTHORIZE_EVALUATED is advisory (P1 regression) ───────────────────────────────────────────────────

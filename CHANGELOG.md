@@ -39,8 +39,8 @@ and each target's history is reset. There is no compatibility path for the old a
   `KNOWN_KINDS` drops it in Python and TS (9 kinds). `contract/event-field-manifest.txt` drops `PolicyDenied/*`
   and `SeamEvent/policy_denied`.
 - **`seam-verify` 0.9.0.** `POLICY_DENIED` leaves `ADVISORY_KINDS` and `MODELLED_KINDS`, and the tag-24
-  payload is no longer decoded. A stream still carrying the old advisory row is pre-cutover history: under
-  `--issuer` it is refused, as the runtime verifier refuses it, rather than skipped. `verify/docs/seam-event.v1.md`
+  payload is no longer decoded. A stream still carrying the old advisory row is pre-cutover history: it is refused
+  (`UNCHAINED EVENT`, integrity mode and `--issuer` alike), as the runtime verifier refuses it, rather than skipped. `verify/docs/seam-event.v1.md`
   and `verify/proto/seam/event/v1/seam_event.proto` are re-vendored from seam-runtime#2118 @ `5a204622c`.
 
 ### Added — `SEAL_REASON_EXPIRE_MAX_AGE` (retention E2a, seam-runtime#2112)
