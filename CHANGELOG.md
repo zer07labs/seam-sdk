@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.135.0 — 2026-11-27
+
 ## 0.134.0 — 2026-11-27
 
 ### Breaking (security) — the evidence-grade TCT check binds the `jti` to the chained record (seam-sdk#461, seam-runtime#2122 P4)
