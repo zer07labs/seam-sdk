@@ -1282,8 +1282,9 @@ QUOTED = [
         # (seam-adapters#303, tag v0.36.0). Then 0.107.0,<0.108 -> 0.117.0,<0.118 on 2026-11-24 by
         # seam-agent-core 0.37.0 (seam-adapters#304, 1d9e087, tag v0.37.0, Flows W5). Then
         # 0.117.0,<0.118 -> 0.118.0,<0.119 on 2026-11-24 by seam-agent-core 0.38.0
-        # (seam-adapters#309, 8907128, Flows W9).
-        "seam-sdk>=0.118.0,<0.119",
+        # (seam-adapters#309, 8907128, Flows W9). Then 0.118.0,<0.119 -> 0.132.0,<0.133 on 2026-11-27 by
+        # seam-agent-core 0.39.0 (seam-adapters#311, 4187134, Authorize D3).
+        "seam-sdk>=0.132.0,<0.133",
     ),
     (
         "COMPATIBILITY.md",
