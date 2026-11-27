@@ -16,6 +16,8 @@ than trusting a summary here.
 
 ## Unreleased
 
+## 0.133.0 — 2026-11-27
+
 ## 0.132.0 — 2026-11-27
 
 ### Breaking — `POLICY_DENIED` retired; `REFUSAL_UNRECORDED` in every client (Authorize D3, seam-runtime#2118)
