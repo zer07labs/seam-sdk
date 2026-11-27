@@ -1564,7 +1564,7 @@ not as written.
   `schema_version` other than 4 is cannot-verify. A genuine v1 record is now refused as retired, not
   link-verified (`verify/tests/authenticity.rs:252`, `a_v1_record_is_refused_as_retired_not_link_verified`).
   A relabel-to-v1-v3 lands on the same refusal with its columns present or absent; that case is
-  `verify/tests/authenticity.rs:806`, `every_retired_schema_version_is_refused_never_skipped`.
+  `verify/tests/authenticity.rs:810`, `every_retired_schema_version_is_refused_never_skipped`.
   With one formula there is nothing to
   downgrade into, which is the structural close this entry argued for, taken to its end. The record
   below is kept as history; the tests it named were deleted with v1-v3, so its references are no
