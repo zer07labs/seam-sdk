@@ -630,10 +630,10 @@ fn the_sealed_at_vector_binds_iat_to_the_chained_seal_second() {
         assert_eq!(
             got.is_ok(),
             r["expect"] == "verified",
-            "{name}: decision_id {id:?}, sealed_at_ms {ms}: {got:?}"
+            "{name}: decision_id {id:?}, sealed_at_ms {ms}"
         );
         if let Err(e) = got {
-            assert!(e.contains("seals a different record"), "{name}: {e}");
+            assert!(e.contains("seals a different record"), "{name}");
         }
     }
     let id = sv["decision_id"].as_str().unwrap();

@@ -463,14 +463,14 @@ fn a_genuine_seal_replayed_onto_another_record_is_refused() {
         let e = verify_tct_sealed_at(&pin, &t, &d, NOW, id, at).unwrap_err();
         assert!(
             e.contains("seals a different record") && e.contains("jti"),
-            "{why}: {e}"
+            "{why}"
         );
     }
     // A token whose `jti` is not the derivation at all (an AITP-valid random v4) is refused too.
     let mut other = base();
     other.jti = "00000000-0000-4000-8000-000000000000".into();
     let e = verify_tct_sealed_at(&pin, &other.token(), &d, NOW, RECORD, ms).unwrap_err();
-    assert!(e.contains("seals a different record"), "{e}");
+    assert!(e.contains("seals a different record"), "a random v4 jti");
     // The plain (non-evidence-grade) check does not read the jti, per RFC-AITP-0005 §2.2.
     assert!(other.verify().is_ok());
 }
