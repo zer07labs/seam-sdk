@@ -7,8 +7,8 @@
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
 use seam_verify::commitment::{
-    commitment_digest, jwk_thumbprint, parse_seal_key_cert, verify_seal_key_cert, verify_tct,
-    verify_tct_sealed_at, Commitment, SEAL_KEY_MAX_WINDOW_MS,
+    commitment_digest, jwk_thumbprint, parse_seal_key_cert, tct_jti, verify_seal_key_cert,
+    verify_tct, verify_tct_sealed_at, Commitment, SEAL_KEY_MAX_WINDOW_MS,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -86,6 +86,8 @@ struct Mint {
     extra_ext: Option<(String, Value)>,
     /// `iss == sub == aud`, overriding the seal AID.
     self_aid: Option<String>,
+    /// The `jti` claim: the seal path's `tct_jti(RECORD, iat * 1000)` unless a test says otherwise.
+    jti: String,
 }
 
 fn commitment() -> Commitment {
@@ -106,6 +108,8 @@ fn commitment() -> Commitment {
 }
 
 const IAT: u64 = 1_700_000_000;
+/// The record the minted tokens seal into (the `jti` derivation input).
+const RECORD: &str = "dec:acme:s-seal-key-vector-0000";
 
 fn base() -> Mint {
     Mint {
@@ -120,6 +124,7 @@ fn base() -> Mint {
         member: None,
         extra_ext: None,
         self_aid: None,
+        jti: tct_jti(RECORD, (IAT * 1000) as i64).unwrap(),
     }
 }
 
@@ -152,7 +157,7 @@ impl Mint {
         let claims = json!({
             "aud": seal_aid, "iss": seal_aid, "sub": seal_aid,
             "cnf": {"jkt": jwk_thumbprint(self.seal.verifying_key().as_bytes())},
-            "exp": 4_853_600_000u64, "iat": self.iat, "jti": "j", "ver": "aitp/0.3",
+            "exp": 4_853_600_000u64, "iat": self.iat, "jti": self.jti, "ver": "aitp/0.3",
             "grants": ["aitp.attestation"], "ext": ext,
         });
         let input = format!(
@@ -433,8 +438,39 @@ fn the_evidence_grade_check_binds_iat_to_the_chained_seal_time() {
     let d = commitment_digest(&commitment()).unwrap();
     let t = m.token();
     let pin = m.issuer_aid();
-    verify_tct_sealed_at(&pin, &t, &d, NOW, IAT * 1000).unwrap();
-    verify_tct_sealed_at(&pin, &t, &d, NOW, IAT * 1000 + 999).unwrap();
-    assert!(verify_tct_sealed_at(&pin, &t, &d, NOW, IAT * 1000 + 1000).is_err());
-    assert!(verify_tct_sealed_at(&pin, &t, &d, NOW, IAT * 1000 - 1).is_err());
+    let ms = IAT * 1000;
+    verify_tct_sealed_at(&pin, &t, &d, NOW, RECORD, ms).unwrap();
+    assert!(verify_tct_sealed_at(&pin, &t, &d, NOW, RECORD, ms + 1000).is_err());
+    assert!(verify_tct_sealed_at(&pin, &t, &d, NOW, RECORD, ms - 1).is_err());
+}
+
+/// Evidence grade, P4: the `jti` must be `tct_jti` over the CHAINED record's `decision_id` and exact
+/// `sealed_at`. A genuine seal replayed onto another record, or with its seal time shifted inside its
+/// second (same `iat`), is refused.
+#[test]
+fn a_genuine_seal_replayed_onto_another_record_is_refused() {
+    let m = base();
+    let d = commitment_digest(&commitment()).unwrap();
+    let t = m.token();
+    let pin = m.issuer_aid();
+    let ms = IAT * 1000;
+    verify_tct_sealed_at(&pin, &t, &d, NOW, RECORD, ms).unwrap();
+    for (id, at, why) in [
+        ("dec:acme:s-other-record", ms, "another decision_id"),
+        (RECORD, ms + 999, "the seal time shifted inside its second"),
+        ("", ms, "no decision_id"),
+    ] {
+        let e = verify_tct_sealed_at(&pin, &t, &d, NOW, id, at).unwrap_err();
+        assert!(
+            e.contains("seals a different record") && e.contains("jti"),
+            "{why}"
+        );
+    }
+    // A token whose `jti` is not the derivation at all (an AITP-valid random v4) is refused too.
+    let mut other = base();
+    other.jti = "00000000-0000-4000-8000-000000000000".into();
+    let e = verify_tct_sealed_at(&pin, &other.token(), &d, NOW, RECORD, ms).unwrap_err();
+    assert!(e.contains("seals a different record"), "a random v4 jti");
+    // The plain (non-evidence-grade) check does not read the jti, per RFC-AITP-0005 §2.2.
+    assert!(other.verify().is_ok());
 }

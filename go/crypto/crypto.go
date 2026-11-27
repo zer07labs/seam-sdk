@@ -42,6 +42,25 @@ func aidToPubkey(aid string) ([]byte, error) {
 	return nil, fmt.Errorf("unsupported AID form: %q", aid)
 }
 
+// TCTJTITag is the domain tag of the commitment TCT `jti` derivation (AITP registry `seam-tct-jti-v1`).
+const TCTJTITag = "seam-tct-jti-v1"
+
+// TCTJTI is the TCT `jti` the seal path mints (seam-runtime `deterministic_jti`):
+// DerivedUUID("seam-tct-jti-v1", be32(len decisionID) || decisionID || be64(sealedAtMs)). decisionID is
+// the sealed record's id (DecisionRecord.decision_id, UTF-8), never Commitment.ID; sealedAtMs its
+// `sealed_at` in ms. ok is false for an id longer than math.MaxUint32 bytes. Pinned by
+// conformance/tct_sealed_at_vector.json (`jti_kat`).
+func TCTJTI(decisionID string, sealedAtMs int64) (jti string, ok bool) {
+	if uint64(len(decisionID)) > math.MaxUint32 {
+		return "", false
+	}
+	in := make([]byte, 0, 4+len(decisionID)+8)
+	in = binary.BigEndian.AppendUint32(in, uint32(len(decisionID)))
+	in = append(in, decisionID...)
+	in = binary.BigEndian.AppendUint64(in, uint64(sealedAtMs))
+	return DerivedUUID(TCTJTITag, in), true
+}
+
 // DerivedUUID is the runtime's derived-UUID rule (seam-runtime docs/specs/authorize.v1.md, P9):
 //
 //	h  = SHA-256(tag || 0x00 || input)
@@ -559,21 +578,30 @@ func VerifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64) bool {
 	return verifyTCT(issuerAID, tctJWS, c, nowS, nil)
 }
 
-// VerifyTCTSealedAt is VerifyTCT bound to the record's chained seal time — the evidence-grade check
-// (seam-commitment-digest.v6 §Seal key step 6, evidence-bundle.v1 §Verifying step 4). Additionally
-// sealedAtMs must be at most math.MaxInt64 and the TCT's `iat` must equal floor(sealedAtMs / 1000).
+// VerifyTCTSealedAt is VerifyTCT bound to the chained record it seals — the evidence-grade check
+// (seam-commitment-digest.v6 §Seal key steps 6 and 7, evidence-bundle.v1 §Verifying step 4).
+// Additionally sealedAtMs must be at most math.MaxInt64, the TCT's `iat` must equal
+// floor(sealedAtMs / 1000), and its `jti` must equal TCTJTI(decisionID, sealedAtMs) exactly.
 //
 // `iat` is self-asserted, so VerifyTCT alone proves a certified seal key signed the statement, not when:
 // a leaked seal key can backdate a token anywhere in its certificate window. sealedAtMs must be the
 // `sealed_at` of the record's CHAINED DECISION_SEALED link (record-digest bound), never a value from the
-// token and never a served DecisionRecordView.SealedAt. Same rule as seam-verify `verify_tct_sealed_at`
-// and the runtime's `verify_commitment_sealed_at` (seam-runtime #2031); pinned by
+// token and never a served DecisionRecordView.SealedAt. decisionID is the `decision_id` of that same
+// chained link, never Commitment.ID: the `jti` rule (seam-runtime 0.127.0 P4) refuses a genuine seal
+// replayed onto another record, or with its seal time shifted inside its second (same `iat`). Same rule
+// as seam-verify `verify_tct_sealed_at` and the runtime's `check_commitment_sealed_for`; pinned by
 // conformance/tct_sealed_at_vector.json.
-func VerifyTCTSealedAt(issuerAID, tctJWS string, c Commitment, nowS int64, sealedAtMs uint64) bool {
-	return verifyTCT(issuerAID, tctJWS, c, nowS, &sealedAtMs)
+func VerifyTCTSealedAt(issuerAID, tctJWS string, c Commitment, nowS int64, decisionID string, sealedAtMs uint64) bool {
+	return verifyTCT(issuerAID, tctJWS, c, nowS, &sealedFor{decisionID, sealedAtMs})
 }
 
-func verifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64, sealedAtMs *uint64) bool {
+// sealedFor is the chained record a sealed-at verification binds the token to.
+type sealedFor struct {
+	decisionID string
+	sealedAtMs uint64
+}
+
+func verifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64, sealed *sealedFor) bool {
 	parts := strings.Split(tctJWS, ".")
 	if len(parts) != 3 {
 		return false
@@ -640,9 +668,16 @@ func verifyTCT(issuerAID, tctJWS string, c Commitment, nowS int64, sealedAtMs *u
 	if !ok || !cert.Covers(iat) {
 		return false
 	}
-	// Evidence grade (S-4): iat is the chained seal second.
-	if sealedAtMs != nil && (*sealedAtMs > math.MaxInt64 || iat != int64(*sealedAtMs/1000)) {
-		return false
+	// Evidence grade (S-4 + P4): iat is the chained seal second and jti names the chained record.
+	if sealed != nil {
+		if sealed.sealedAtMs > math.MaxInt64 || iat != int64(sealed.sealedAtMs/1000) {
+			return false
+		}
+		want, ok := TCTJTI(sealed.decisionID, int64(sealed.sealedAtMs))
+		var jti string
+		if !ok || json.Unmarshal(rawClaims["jti"], &jti) != nil || jti != want {
+			return false
+		}
 	}
 	if header["alg"] != "EdDSA" || header["typ"] != "aitp-tct+jwt" {
 		return false

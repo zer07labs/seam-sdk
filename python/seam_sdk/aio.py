@@ -1188,4 +1188,6 @@ class SeamClient:
             commitment_view(c),
             decision=decision,
             sealed_at_ms=sealed_at_ms,
+            # P4: the evidence grade binds the jti to the record this proof was asked for.
+            decision_id=decision_id if sealed_at_ms is not None else None,
         )

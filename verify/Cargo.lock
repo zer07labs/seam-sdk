@@ -268,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "seam-verify"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "base64",
  "ed25519-dalek",

@@ -284,6 +284,22 @@ object SeamCrypto {
         return sb.toString()
     }
 
+    /** Domain tag of the commitment TCT `jti` derivation (AITP registry `seam-tct-jti-v1`). */
+    const val TCT_JTI_TAG = "seam-tct-jti-v1"
+
+    /**
+     * The TCT `jti` the seal path mints (seam-runtime `deterministic_jti`):
+     * `derivedUuid("seam-tct-jti-v1", be32(len decisionId) ‖ decisionId ‖ be64(sealedAtMs))`. [decisionId] is
+     * the sealed record's id (`DecisionRecord.decision_id`, UTF-8), never `Commitment.id`; [sealedAtMs] its
+     * `sealed_at` in ms. Pinned by `conformance/tct_sealed_at_vector.json` (`jti_kat`).
+     */
+    fun tctJti(decisionId: String, sealedAtMs: Long): String {
+        val id = decisionId.toByteArray(Charsets.UTF_8)
+        val b = java.nio.ByteBuffer.allocate(4 + id.size + 8)
+        b.putInt(id.size).put(id).putLong(sealedAtMs)
+        return derivedUuid(TCT_JTI_TAG, b.array())
+    }
+
     /** The admission `message_id`: `derivedUuid("seam-pop-mid-v1", nonce_ascii)`. */
     fun popMessageId(popNonce: String): String =
         derivedUuid(POP_MESSAGE_ID_TAG, popNonce.toByteArray(Charsets.US_ASCII))
@@ -949,32 +965,39 @@ object SeamCrypto {
         verifyTctAt(issuerAid, tctJws, commitment, nowS, null)
 
     /**
-     * [verifyTct] **bound to the record's chained seal time** — the evidence-grade check
-     * (seam-commitment-digest.v6 §Seal key step 6, evidence-bundle.v1 §Verifying step 4): additionally
-     * `sealedAtMs >= 0` and the TCT's `iat == floor(sealedAtMs / 1000)`.
+     * [verifyTct] **bound to the chained record it seals** — the evidence-grade check
+     * (seam-commitment-digest.v6 §Seal key steps 6 and 7, evidence-bundle.v1 §Verifying step 4):
+     * additionally `sealedAtMs >= 0`, the TCT's `iat == floor(sealedAtMs / 1000)` and its
+     * `jti == tctJti(decisionId, sealedAtMs)` exactly.
      *
      * `iat` is self-asserted, so [verifyTct] alone proves a certified seal key signed the statement, not
      * when: a leaked seal key can backdate a token anywhere in its certificate window. [sealedAtMs] must be
      * the `sealed_at` of the record's **chained** `DECISION_SEALED` link (record-digest bound), never a
      * value from the token and never a served `DecisionRecordView.sealed_at`. A `Long` is the runtime's
-     * i64 bound exactly, so a negative value (an unsigned `uint64` beyond it) is refused. Same rule as
-     * seam-verify `verify_tct_sealed_at` and the runtime's `verify_commitment_sealed_at` (seam-runtime
-     * #2031); pinned by `conformance/tct_sealed_at_vector.json`.
+     * i64 bound exactly, so a negative value (an unsigned `uint64` beyond it) is refused. [decisionId] is
+     * the `decision_id` of that same chained link, never `Commitment.id`: the `jti` rule (seam-runtime
+     * 0.127.0 P4) refuses a genuine seal replayed onto another record, or with its seal time shifted
+     * inside its second (same `iat`). Same rule as seam-verify `verify_tct_sealed_at` and the runtime's
+     * `check_commitment_sealed_for`; pinned by `conformance/tct_sealed_at_vector.json`.
      */
     fun verifyTctSealedAt(
         issuerAid: String,
         tctJws: String,
         commitment: Commitment,
         nowS: Long,
+        decisionId: String,
         sealedAtMs: Long,
-    ): Boolean = verifyTctAt(issuerAid, tctJws, commitment, nowS, sealedAtMs)
+    ): Boolean = verifyTctAt(issuerAid, tctJws, commitment, nowS, SealedFor(decisionId, sealedAtMs))
+
+    /** The chained record a sealed-at verification binds the token to. */
+    private data class SealedFor(val decisionId: String, val sealedAtMs: Long)
 
     private fun verifyTctAt(
         issuerAid: String,
         tctJws: String,
         commitment: Commitment,
         nowS: Long,
-        sealedAtMs: Long?,
+        sealed: SealedFor?,
     ): Boolean {
         return try {
             val parts = tctJws.split(".")
@@ -1010,8 +1033,12 @@ object SeamCrypto {
             // (4) iat is a JSON integer inside the certificate window, no grace.
             val iat = topLevelInteger(payloadJson, "iat") ?: return false
             if (!cert.covers(iat)) return false
-            // Evidence grade (S-4): iat is the chained seal second.
-            if (sealedAtMs != null && (sealedAtMs < 0 || iat != sealedAtMs / 1000)) return false
+            // Evidence grade (S-4 + P4): iat is the chained seal second and jti names the chained record.
+            if (sealed != null) {
+                if (sealed.sealedAtMs < 0 || iat != sealed.sealedAtMs / 1000) return false
+                val jti = payload["jti"] as? String ?: return false
+                if (jti != tctJti(sealed.decisionId, sealed.sealedAtMs)) return false
+            }
             val exp = payload["exp"] as? Number ?: return false
             if (nowS >= exp.toLong()) return false // RFC 7519: reject at/after expiry
             val grants = payload["grants"] as? List<*> ?: return false

@@ -15,7 +15,7 @@
 use seam_verify::commitment::{
     commitment_digest_under, decode_commitment_trailers, encode_slot, explanation_digest,
     select_commitment_version, select_commitment_version_in_ext, served_commitment_trailers,
-    verify_commitment_tct, verify_commitment_tct_sealed_at, Commitment,
+    tct_jti, verify_commitment_tct, verify_commitment_tct_sealed_at, Commitment,
     CommitmentDigestVersion as V, ExplanationEntry,
 };
 use seam_verify::gate::{decode_gate_body, gate_digest, GateResult};
@@ -591,8 +591,8 @@ fn a_served_projection_rebuilds_the_trailers_and_verifies() {
 
 /// S-4 evidence grade, pinned by `conformance/tct_sealed_at_vector.json` (emitted by
 /// `scripts/emit_tct_sealed_at_vector.py` over this file's signed vector), the vector the Python, TS, Go,
-/// Java and Kotlin verifiers answer too: `sealed_at_ms <= i64::MAX` and `iat == floor(sealed_at_ms / 1000)`,
-/// the runtime's `verify_commitment_sealed_at` (seam-runtime #2031).
+/// Java and Kotlin verifiers answer too: `sealed_at_ms <= i64::MAX`, `iat == floor(sealed_at_ms / 1000)`
+/// and `jti == tct_jti(decision_id, sealed_at_ms)`, the runtime's `check_commitment_sealed_for`.
 #[test]
 fn the_sealed_at_vector_binds_iat_to_the_chained_seal_second() {
     let sv = load("tct_sealed_at_vector.json");
@@ -614,20 +614,46 @@ fn the_sealed_at_vector_binds_iat_to_the_chained_seal_second() {
     let cases = rows(&sv, "cases");
     for n in [
         "exact_second_boundary",
+        "last_ms_of_the_second",
         "iat_plus_1s_at_boundary",
         "iat_minus_1s_at_boundary",
+        "replayed_onto_another_record",
+        "commitment_id_is_not_the_record_id",
     ] {
         assert!(cases.iter().any(|r| r["name"] == n), "vector lacks {n}");
     }
     for r in cases {
         let name = r["name"].as_str().unwrap();
+        let id = r["decision_id"].as_str().unwrap();
         let ms: u64 = r["sealed_at_ms"].as_str().unwrap().parse().unwrap();
-        let got = verify_commitment_tct_sealed_at(issuer, &c, &trailers, NOW, ms);
+        let got = verify_commitment_tct_sealed_at(issuer, &c, &trailers, NOW, id, ms);
         assert_eq!(
             got.is_ok(),
             r["expect"] == "verified",
-            "{name}: sealed_at_ms {ms}: {got:?}"
+            "{name}: decision_id {id:?}, sealed_at_ms {ms}"
         );
+        if let Err(e) = got {
+            assert!(e.contains("seals a different record"), "{name}");
+        }
     }
-    assert!(verify_commitment_tct_sealed_at(issuer, &c, &trailers, NOW, u64::MAX).is_err());
+    let id = sv["decision_id"].as_str().unwrap();
+    assert!(verify_commitment_tct_sealed_at(issuer, &c, &trailers, NOW, id, u64::MAX).is_err());
+}
+
+/// The `seam-tct-jti-v1` derivation answers the runtime's own known answer and the token's `jti`.
+#[test]
+fn the_tct_jti_derivation_matches_the_runtime_known_answer() {
+    let sv = load("tct_sealed_at_vector.json");
+    let kat = &sv["jti_kat"];
+    let ms: i64 = kat["sealed_at_ms"].as_str().unwrap().parse().unwrap();
+    assert_eq!(
+        tct_jti(kat["decision_id"].as_str().unwrap(), ms).unwrap(),
+        kat["jti"].as_str().unwrap()
+    );
+    let v = load("commitment_digest_v6_signed_vector.json");
+    let seal_ms = v["seal_ms"].as_i64().unwrap();
+    assert_eq!(
+        tct_jti(sv["decision_id"].as_str().unwrap(), seal_ms).unwrap(),
+        sv["jti"].as_str().unwrap()
+    );
 }

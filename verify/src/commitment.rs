@@ -518,36 +518,86 @@ pub fn verify_tct(
     verify_tct_iat(pinned_aid, token, digest, now_secs).map(|_| ())
 }
 
-/// [`verify_tct`] **bound to the record's chained seal time** — the evidence-grade check
-/// (`seam-commitment-digest.v6.md` §Seal key step 6, evidence-bundle.v1 step 4): additionally the TCT's
-/// `iat` must equal `floor(sealed_at_ms / 1000)` (and `sealed_at_ms <= i64::MAX`), where `sealed_at_ms` is the `sealed_at` of the record's
-/// chained `DECISION_SEALED` link, never a value from the token. `iat` is self-asserted, so this is what
-/// stops a token backdated into its window with a leaked seal key.
+/// [`verify_tct`] **bound to the chained record it seals** — the evidence-grade check
+/// (`seam-commitment-digest.v6.md` §Seal key steps 6 and 7, evidence-bundle.v1 step 4): additionally
+/// the TCT's `iat` must equal `floor(sealed_at_ms / 1000)` and its `jti` must equal
+/// [`tct_jti`]`(decision_id, sealed_at_ms)`. `decision_id` and `sealed_at_ms` are the `decision_id` and
+/// `sealed_at` of the record's chained `DECISION_SEALED` link, never values from the token. The `iat`
+/// rule stops a token backdated with a leaked seal key; the `jti` rule stops a genuine seal replayed onto
+/// another record (a new `decision_id`, or `sealed_at` shifted inside its second). Mirrors the runtime's
+/// `check_commitment_sealed_for` (seam-runtime 0.127.0 P4).
 pub fn verify_tct_sealed_at(
     pinned_aid: &str,
     token: &str,
     digest: &[u8; 32],
     now_secs: u64,
+    decision_id: &str,
     sealed_at_ms: u64,
 ) -> Result<(), String> {
-    let iat = verify_tct_iat(pinned_aid, token, digest, now_secs)?;
-    check_iat_is_seal_second(iat, sealed_at_ms)
+    let (claims, iat) = verify_tct_claims(pinned_aid, token, digest, now_secs)?;
+    check_seals_record(&claims, iat, decision_id, sealed_at_ms)
 }
 
-/// The S-4 evidence-grade rule shared by [`verify_tct_sealed_at`] and
-/// [`verify_commitment_tct_sealed_at`]: `sealed_at_ms <= i64::MAX` and `iat == floor(sealed_at_ms / 1000)`.
-/// The runtime's `verify_commitment_sealed_at` refuses a `sealed_at_ms` beyond i64 before dividing;
-/// dividing first would accept the values in (i64::MAX, i64::MAX rounded up to a whole second].
-/// Pinned across every SDK verifier by `conformance/tct_sealed_at_vector.json`.
-fn check_iat_is_seal_second(iat: i64, sealed_at_ms: u64) -> Result<(), String> {
-    let want = i64::try_from(sealed_at_ms)
-        .map_err(|_| "the chained sealed_at is beyond i64".to_string())?
-        / 1000;
+/// The TCT `jti` derivation (AITP registry `seam-tct-jti-v1`, seam-runtime `deterministic_jti`): the
+/// derived-UUID rule `SHA-256(tag ‖ 0x00 ‖ input)[0..16]` with the RFC 9562 v4 version and variant bits,
+/// over `be32(len decision_id) ‖ decision_id ‖ be64(sealed_at_ms)`, rendered lowercase and hyphenated as
+/// the token carries it. `decision_id` is the record id (`DecisionRecord.decision_id`), never
+/// `Commitment.id`. An id longer than `u32::MAX` bytes is refused rather than truncated. Pinned by
+/// `jti_kat` in `conformance/tct_sealed_at_vector.json`.
+pub fn tct_jti(decision_id: &str, sealed_at_ms: i64) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let id = decision_id.as_bytes();
+    let len =
+        u32::try_from(id.len()).map_err(|_| "the decision id is too long to derive a TCT jti")?;
+    let mut h = Sha256::new();
+    h.update(b"seam-tct-jti-v1");
+    h.update([0u8]);
+    h.update(len.to_be_bytes());
+    h.update(id);
+    h.update(sealed_at_ms.to_be_bytes());
+    let mut u = [0u8; 16];
+    u.copy_from_slice(&h.finalize()[..16]);
+    u[6] = (u[6] & 0x0f) | 0x40;
+    u[8] = (u[8] & 0x3f) | 0x80;
+    let x = crate::verify::hex(&u);
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &x[0..8],
+        &x[8..12],
+        &x[12..16],
+        &x[16..20],
+        &x[20..32]
+    ))
+}
+
+/// The evidence-grade rule shared by [`verify_tct_sealed_at`] and [`verify_commitment_tct_sealed_at`]
+/// (the runtime's `check_commitment_sealed_for`): `sealed_at_ms <= i64::MAX`, `iat == floor(sealed_at_ms
+/// / 1000)` and `jti == tct_jti(decision_id, sealed_at_ms)`. A `sealed_at_ms` beyond i64 is refused before
+/// dividing; dividing first would accept the values in (i64::MAX, i64::MAX rounded up to a whole second].
+/// The `jti` must be exactly the canonical form the seal path mints (lowercase, hyphenated). Pinned
+/// across every SDK verifier by `conformance/tct_sealed_at_vector.json` (its cases and `jti_kat`).
+fn check_seals_record(
+    claims: &serde_json::Value,
+    iat: i64,
+    decision_id: &str,
+    sealed_at_ms: u64,
+) -> Result<(), String> {
+    let other = |why: String| {
+        format!("the TCT seals a different record: {why} (a backdated or replayed token)")
+    };
+    let sealed_at = i64::try_from(sealed_at_ms)
+        .map_err(|_| other("the chained sealed_at is beyond i64".to_string()))?;
+    let want = sealed_at / 1000;
     if iat != want {
-        return Err(format!(
-            "the TCT's iat {iat} is not the chained seal time floor({sealed_at_ms} / 1000) = {want} \
-             (a backdated token, or one from another record)"
-        ));
+        return Err(other(format!(
+            "its iat {iat} is not the chained seal time floor({sealed_at_ms} / 1000) = {want}"
+        )));
+    }
+    let want_jti = tct_jti(decision_id, sealed_at).map_err(other)?;
+    if claims.get("jti").and_then(|j| j.as_str()) != Some(want_jti.as_str()) {
+        return Err(other(format!(
+            "its jti is not the chained record's (decision_id {decision_id:?}, sealed_at {sealed_at_ms})"
+        )));
     }
     Ok(())
 }
@@ -558,6 +608,15 @@ fn verify_tct_iat(
     digest: &[u8; 32],
     now_secs: u64,
 ) -> Result<i64, String> {
+    verify_tct_claims(pinned_aid, token, digest, now_secs).map(|(_, iat)| iat)
+}
+
+fn verify_tct_claims(
+    pinned_aid: &str,
+    token: &str,
+    digest: &[u8; 32],
+    now_secs: u64,
+) -> Result<(serde_json::Value, i64), String> {
     let (claims, iat) = verify_tct_envelope(pinned_aid, token, now_secs)?;
     let binding = sole_seam_statement(&claims)?;
     if binding.len() != 2 || binding.get("type").and_then(|t| t.as_str()) != Some(EXT_TYPE) {
@@ -574,7 +633,7 @@ fn verify_tct_iat(
                 .into(),
         );
     }
-    Ok(iat)
+    Ok((claims, iat))
 }
 
 /// Everything [`verify_tct`] checks except the `ext` statement, in the S-4 order (spec §Seal key, steps
@@ -1339,20 +1398,21 @@ pub fn verify_commitment_tct(
     verify_commitment_tct_iat(pinned_aid, c, trailers, now_secs).map(|(v, _)| v)
 }
 
-/// [`verify_commitment_tct`] **bound to the record's chained seal time**: additionally
-/// `sealed_at_ms <= i64::MAX` and the TCT's `iat == floor(sealed_at_ms / 1000)`, exactly as
-/// [`verify_tct_sealed_at`]. `sealed_at_ms` is the `sealed_at` of the record's chained `DECISION_SEALED`
-/// link (record-digest bound), never a value from the token: the evidence-grade form for a v5 or v6
-/// commitment.
+/// [`verify_commitment_tct`] **bound to the chained record it seals**: additionally `sealed_at_ms <=
+/// i64::MAX`, the TCT's `iat == floor(sealed_at_ms / 1000)` and its `jti == tct_jti(decision_id,
+/// sealed_at_ms)`, exactly as [`verify_tct_sealed_at`]. Both inputs are the record's chained
+/// `DECISION_SEALED` link's (record-digest bound), never values from the token: the evidence-grade form
+/// for a v5 or v6 commitment.
 pub fn verify_commitment_tct_sealed_at(
     pinned_aid: &str,
     c: &Commitment,
     trailers: &[u8],
     now_secs: u64,
+    decision_id: &str,
     sealed_at_ms: u64,
 ) -> Result<CommitmentDigestVersion, String> {
-    let (version, iat) = verify_commitment_tct_iat(pinned_aid, c, trailers, now_secs)?;
-    check_iat_is_seal_second(iat, sealed_at_ms)?;
+    let (version, claims, iat) = verify_commitment_tct_claims(pinned_aid, c, trailers, now_secs)?;
+    check_seals_record(&claims, iat, decision_id, sealed_at_ms)?;
     Ok(version)
 }
 
@@ -1362,6 +1422,15 @@ fn verify_commitment_tct_iat(
     trailers: &[u8],
     now_secs: u64,
 ) -> Result<(CommitmentDigestVersion, i64), String> {
+    verify_commitment_tct_claims(pinned_aid, c, trailers, now_secs).map(|(v, _, iat)| (v, iat))
+}
+
+fn verify_commitment_tct_claims(
+    pinned_aid: &str,
+    c: &Commitment,
+    trailers: &[u8],
+    now_secs: u64,
+) -> Result<(CommitmentDigestVersion, serde_json::Value, i64), String> {
     let (claims, iat) = verify_tct_envelope(pinned_aid, &c.signed_artifact, now_secs)?;
     sole_seam_statement(&claims)?;
     let sel = select_from_ext(&claims["ext"])
@@ -1425,7 +1494,8 @@ fn verify_commitment_tct_iat(
              token, an edited field, or a statement naming the wrong version)"
         ));
     }
-    Ok((sel.version, iat))
+    let version = sel.version;
+    Ok((version, claims, iat))
 }
 
 #[cfg(test)]

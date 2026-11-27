@@ -53,6 +53,28 @@ def derived_uuid(tag: str, data: bytes) -> uuid.UUID:
     return uuid.UUID(bytes=bytes(h))
 
 
+#: Domain tag of the commitment TCT ``jti`` derivation (AITP registry ``seam-tct-jti-v1``).
+TCT_JTI_TAG = "seam-tct-jti-v1"
+
+
+def tct_jti(decision_id: str, sealed_at_ms: int) -> str:
+    """The TCT ``jti`` the seal path mints (seam-runtime ``deterministic_jti``): ``derived_uuid(
+    "seam-tct-jti-v1", be32(len decision_id) || decision_id || be64(sealed_at_ms))``, lowercase hyphenated.
+
+    ``decision_id`` is the sealed record's id (``DecisionRecord.decision_id``, UTF-8), never
+    ``Commitment.id``; ``sealed_at_ms`` its ``sealed_at`` in ms as a two's-complement ``i64``. Raises
+    ``ValueError`` for an id longer than ``2**32 - 1`` bytes or a time outside ``i64``. Pinned by
+    ``conformance/tct_sealed_at_vector.json`` (``jti_kat``).
+    """
+    raw = decision_id.encode("utf-8")
+    if len(raw) > 0xFFFFFFFF:
+        raise ValueError("the decision id is too long to derive a TCT jti")
+    if not -(2**63) <= sealed_at_ms <= _I64_MAX:
+        raise ValueError("sealed_at_ms is outside i64")
+    data = struct.pack(">I", len(raw)) + raw + struct.pack(">q", sealed_at_ms)
+    return str(derived_uuid(TCT_JTI_TAG, data))
+
+
 #: Domain tag of the PoP ``message_id`` derivation (P9).
 POP_MESSAGE_ID_TAG = "seam-pop-mid-v1"
 
@@ -507,6 +529,7 @@ def verify_tct(
     *,
     decision: tuple[str, str] | None = None,
     sealed_at_ms: int | None = None,
+    decision_id: str | None = None,
 ) -> bool:
     """Independently verify a sealed commitment's rooted TCT — zero server trust, stock crypto only.
 
@@ -546,8 +569,15 @@ def verify_tct(
     :func:`seam_sdk.admin.verify_streamed_record_digest` accepted, for this decision), never a value
     from the token and never the served ``DecisionRecordView.sealed_at`` — the token additionally must
     have ``iat == sealed_at_ms // 1000``, and a ``sealed_at_ms`` outside ``[0, 2**63 - 1]`` verifies
-    ``False``. Same rule as seam-verify ``verify_tct_sealed_at`` and the runtime's
-    ``verify_commitment_sealed_at`` (seam-runtime #2031); pinned by
+    ``False``.
+
+    **Evidence grade also needs ``decision_id``** (seam-runtime 0.127.0 P4, ``seam-commitment-digest.v6.md``
+    §Seal key step 7): the ``decision_id`` of that same chained link, never ``Commitment.id``. The token's
+    ``jti`` must then equal :func:`tct_jti` ``(decision_id, sealed_at_ms)`` exactly, which refuses a genuine
+    seal replayed onto another record, or with its seal time shifted inside its second (same ``iat``). The
+    two travel together: ``sealed_at_ms`` without ``decision_id``, or ``decision_id`` without
+    ``sealed_at_ms``, verifies ``False`` rather than silently checking half the rule. Same rule as
+    seam-verify ``verify_tct_sealed_at`` and the runtime's ``check_commitment_sealed_for``; pinned by
     ``conformance/tct_sealed_at_vector.json``.
     """
     # Any malformed/forged input must fail closed (return False), never raise.
@@ -597,12 +627,18 @@ def verify_tct(
             return False
         if not (cert.not_before_ms <= t <= cert.not_after_ms):
             return False
-        # Evidence grade (S-4): iat is the chained seal second. `bool` subclasses `int`: refuse it.
+        # Evidence grade (S-4 + P4): iat is the chained seal second and jti names the chained record.
+        # The two inputs travel together; one without the other is a caller error, refused closed.
+        # `bool` subclasses `int`: refuse it.
+        if (sealed_at_ms is None) != (decision_id is None):
+            return False
         if sealed_at_ms is not None and (
             isinstance(sealed_at_ms, bool)
             or not isinstance(sealed_at_ms, int)
             or not 0 <= sealed_at_ms <= _I64_MAX
             or iat != sealed_at_ms // 1000
+            or not isinstance(decision_id, str)
+            or payload.get("jti") != tct_jti(decision_id, sealed_at_ms)
         ):
             return False
         now = now_s if now_s is not None else int(time.time())

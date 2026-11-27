@@ -200,10 +200,21 @@ test("verifyDecision: opts.sealedAtMs binds the TCT's iat to the chained seal se
   const at = async (sealedAtMs: bigint | number) =>
     clientWithProof(issuer).verifyDecision(DECISION_ID, issuer, { sealedAtMs });
   assert.equal(await at(iat * 1000n), true, "exact second boundary");
-  assert.equal(await at(iat * 1000n + 999n), true, "floor, not round");
+  // P4: same iat, but the jti is over the exact ms — a seal time shifted inside its second.
+  assert.equal(await at(iat * 1000n + 999n), false, "the jti binds the exact seal ms");
   assert.equal(await at(Number(iat * 1000n)), true, "a safe-integer number is accepted");
   assert.equal(await at(iat * 1000n + 1000n), false, "iat 1 s before the seal second (backdated)");
   assert.equal(await at(iat * 1000n - 1n), false, "iat 1 s after the seal second");
   assert.equal(await at(-1n), false, "negative");
   assert.equal(await at(1.5), false, "not an integer");
+});
+
+test("verifyDecision: another record's genuine seal served for this one is refused (P4 jti binding)", async () => {
+  const issuer = vectors.tct.issuer_aid as string;
+  const jws = vectors.tct.signed_artifact_jws as string;
+  const iat = BigInt(JSON.parse(Buffer.from(jws.split(".")[1], "base64url").toString()).iat);
+  // The token is DECISION_ID's seal; a server answers it for a different decision id.
+  const other = "dec:acme:s-conformance-0000001";
+  assert.equal(await clientWithProof(issuer).verifyDecision(DECISION_ID, issuer, { sealedAtMs: iat * 1000n }), true);
+  assert.equal(await clientWithProof(issuer).verifyDecision(other, issuer, { sealedAtMs: iat * 1000n }), false);
 });

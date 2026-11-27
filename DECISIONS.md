@@ -370,8 +370,8 @@ architecture as the accidental arbiter — a normative rule that is not one. All
 outside `[-2^63, 2^63)` explicitly. Python and TypeScript need no such bound alone; they carry Go's
 constraint so the five agree, which is the same trade this whole decision is made of.
 3. **It is the only one with a written rationale.** The type assertion that *is* the rule
-   (`exp, ok := payload["exp"].(float64)`, `go/crypto/crypto.go:656`) and the truncation semantics
-   below it (`go/crypto/crypto.go:614-621`) are both argued in comments at the code; the other two
+   (`exp, ok := payload["exp"].(float64)`, `go/crypto/crypto.go:691`) and the truncation semantics
+   below it (`go/crypto/crypto.go:642-649`) are both argued in comments at the code; the other two
    rules were the shortest expression that worked in that language.
 
 The alternative considered and rejected was **union semantics** — accept anything any SDK accepts,
@@ -717,7 +717,7 @@ wrong answers rather than misses:
 - **In a table row the subject wins.** `PROGRESS.md`'s repo-map row for `python/seam_sdk/crypto.py`
   names `python/seam_sdk/admin.py:153` mid-sentence and then continues with four more bare
   references, all of which are crypto.py. Binding them to the nearer citation reports
-  `python/seam_sdk/crypto.py:1095` as past-EOF — it is `_opt_bytes`, and the claim is true.
+  `python/seam_sdk/crypto.py:1131` as past-EOF — it is `_opt_bytes`, and the claim is true.
 - **Inheritance must not cross a line.** `PROGRESS.md` writes `p1a:103-107` followed by bare
   companions, where `p1a` is a shorthand alias for a sibling-repo spec and not a path at all. A
   paragraph-scoped resolver walks past it and binds those references to whatever file the previous
@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:2564-2586` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:2591-2613` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -1440,8 +1440,8 @@ which is strictly worse than the bug.
 
 **It does not generalise, and saying so is the point of this entry.** JCS reads every value through
 overridable methods, and the other arms are still spoofable by a subclass that *lies* rather than
-raises: a `float` subclass overriding `__abs__` (`python/seam_sdk/crypto.py:421` renders
-`repr(abs(v))`), a `str` subclass overriding `__iter__` (`python/seam_sdk/crypto.py:393`), a `dict`
+raises: a `float` subclass overriding `__abs__` (`python/seam_sdk/crypto.py:443` renders
+`repr(abs(v))`), a `str` subclass overriding `__iter__` (`python/seam_sdk/crypto.py:415`), a `dict`
 subclass overriding `__iter__` to drop keys. `CanonicalizationError` covers subclasses that raise;
 nothing covers ones that lie.
 
@@ -1543,11 +1543,11 @@ not as written.
   over-generalized. Python's validation still earns its place by a different route: v2 accepts a
   `memoryview(array("I", [0]*32))` and produces a digest whose length prefix claims 32 while 128
   bytes are hashed — the exact injectivity break framing exists to prevent — and v3 refuses it
-  (`python/seam_sdk/crypto.py:631-657`).
+  (`python/seam_sdk/crypto.py:667-693`).
 - **Correction to the entry's blast-radius claim:** "every such digest was wrong, so no correct
   caller breaks" is too strong. A proto3-JSON int64-as-string (`sealedAt: "123"`) coerced
   *correctly* through `BigInt` under the old TS behavior and is now refused. The refusal is loud, at
-  the first record, and names the fix (`ts/src/crypto.ts:1551-1555`) — and accepting strings reopens
+  the first record, and names the fix (`ts/src/crypto.ts:1589-1593`) — and accepting strings reopens
   `BigInt("")→0n` and `BigInt([5])→5n`. The choice stands; the justification does not extend to
   "nothing that used to work stops working."
   *(Citation corrected 2026-09-03. It named lines 509-522, which then held `v3Text` — the string slot
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:2598` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:2625` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3521,3 +3521,21 @@ so they carry predicate tests only.
   attestation must name why it sealed, not read `UNRECOGNIZED`.
 - `PolicyDenied/*` and `SeamEvent/policy_denied` leave `contract/event-field-manifest.txt`. The tag is
   reserved upstream, and the cutover resets history, so no SDK path decodes it.
+
+## 2026-11-26 — TCT `jti` bound to the chained record (seam-sdk#461, seam-runtime#2122 P4)
+
+Security fix, reviewed by Fable before merge. The API choices below are Opus-settled and reversible.
+
+- **The `jti` match is an exact string compare** against the lowercase hyphenated `derived_uuid` the
+  runtime mints. The runtime parses both sides as UUIDs; the SDK is stricter, so a token the runtime
+  accepts could only be refused here if the runtime minted a non-canonical spelling, which it never does.
+  Fails closed.
+- **`decision_id` is a required companion of `sealed_at_ms`** in every evidence-grade API. Python and TS
+  verify `false` when exactly one of the two is given, rather than silently degrading to the `iat`-only
+  check. Go, Java and Kotlin take both positionally. `verify_decision` / `verifyDecision` pass the
+  `decision_id` they were called with, so their signatures do not change.
+- **`decision_id` is the chained payload's record id, never `Commitment.id`**, and it is never taken from the
+  manifest. The vector pins this (`commitment_id_is_not_the_record_id`).
+- **`seam-verify` 0.10.0**, a pre-1.0 minor: the library signatures of `verify_tct_sealed_at` /
+  `verify_commitment_tct_sealed_at` change. It follows 0.9.0 (Authorize D3, #460).
+- **Merge order:** after seam-runtime#2122 (merged as `1603764cb`; the vendored `evidence-bundle.v1.md` is pinned there).

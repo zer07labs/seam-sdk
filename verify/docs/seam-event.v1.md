@@ -1,5 +1,5 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 5a204622c tracking lanes/lane-1-d3 (refreshed 2026-11-27).
-     seam-runtime#2118 (Authorize D3, #2073): POLICY_DENIED (tag 24) retired and reserved; a commit-time policy
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 26f4832c2 on runtime main (refreshed 2026-11-27).
+     seam-runtime#2118 (Authorize D3, #2073) merged; bytes unchanged from the branch pin @ 5a204622c. POLICY_DENIED (tag 24) retired and reserved; a commit-time policy
      refusal is one chained AUDIT_ENTRY commit.policy_deny; REFUSAL_UNRECORDED when its audit write fails.
      Prior pin, kept for history:
      Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 08503f90 on runtime main (refreshed 2026-11-26).

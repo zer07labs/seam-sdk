@@ -107,4 +107,41 @@ def test_sealed_at_ms_reaches_verify_tct(monkeypatch, sealed_at_ms):
     kw = {} if sealed_at_ms is None else {"sealed_at_ms": sealed_at_ms}
     assert client.verify_decision("dec:acme:s1", issuer, **kw) is True
     assert seen["sealed_at_ms"] == sealed_at_ms
+    # P4: the jti is bound to the record the proof was asked for, exactly when the grade is evidence.
+    assert seen["decision_id"] == (None if sealed_at_ms is None else "dec:acme:s1")
     assert seen["decision"] == ("acme", "s1")
+
+
+@pytest.mark.parametrize("sealed_at_ms", [None, 1_700_000_000_123])
+def test_the_async_client_binds_the_same_record(monkeypatch, sealed_at_ms):
+    """The aio `verify_decision` hands `verify_tct` the same `decision_id` as the sync one (P4)."""
+    import asyncio
+
+    import seam_sdk.aio as aio_mod
+
+    seen = {}
+
+    def fake_verify_tct(*_args, **kwargs):
+        seen.update(kwargs)
+        return True
+
+    monkeypatch.setattr(aio_mod, "verify_tct", fake_verify_tct)
+    issuer = VECTORS["tct"]["issuer_aid"]
+    proof = _proof_from_vectors(issuer)
+
+    async def run():
+        client = aio_mod.SeamClient.connect("127.0.0.1:1")
+
+        async def get_proof(_decision_id, **_kw):
+            return proof
+
+        client.get_commitment_proof = get_proof  # type: ignore[method-assign]
+        try:
+            kw = {} if sealed_at_ms is None else {"sealed_at_ms": sealed_at_ms}
+            return await client.verify_decision("dec:acme:s1", issuer, **kw)
+        finally:
+            await client.close()
+
+    assert asyncio.run(run()) is True
+    assert seen["sealed_at_ms"] == sealed_at_ms
+    assert seen["decision_id"] == (None if sealed_at_ms is None else "dec:acme:s1")
