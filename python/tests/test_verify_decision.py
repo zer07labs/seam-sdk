@@ -107,4 +107,6 @@ def test_sealed_at_ms_reaches_verify_tct(monkeypatch, sealed_at_ms):
     kw = {} if sealed_at_ms is None else {"sealed_at_ms": sealed_at_ms}
     assert client.verify_decision("dec:acme:s1", issuer, **kw) is True
     assert seen["sealed_at_ms"] == sealed_at_ms
+    # P4: the jti is bound to the record the proof was asked for, exactly when the grade is evidence.
+    assert seen["decision_id"] == (None if sealed_at_ms is None else "dec:acme:s1")
     assert seen["decision"] == ("acme", "s1")

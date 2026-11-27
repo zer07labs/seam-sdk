@@ -2218,8 +2218,10 @@ export class SeamClient {
    * **Evidence grade needs `opts.sealedAtMs`** (S-4, runtime 0.123.0): the `sealed_at` of this decision's
    * **chained** `DECISION_SEALED` link (e.g. a streamed event `verifyStreamedRecordDigest` accepted), never the
    * served `DecisionRecordView.sealedAt`. Given, the TCT's self-asserted `iat` must equal
-   * `floor(sealedAtMs / 1000)` ({@link verifyTct}), which refuses a token backdated with a leaked seal key.
-   * Without it, this proves a certified seal key signed the statement, not when.
+   * `floor(sealedAtMs / 1000)` ({@link verifyTct}), which refuses a token backdated with a leaked seal key,
+   * and its `jti` must be {@link tctJti} over `decisionId` and `sealedAtMs` (seam-runtime 0.127.0 P4), which
+   * refuses another record's genuine seal served for this one. Without it, this proves a certified seal key
+   * signed the statement, not when or for which record.
    */
   async verifyDecision(
     decisionId: string,
@@ -2241,7 +2243,8 @@ export class SeamClient {
       tct,
       commitmentView(c),
       undefined,
-      { decision, sealedAtMs },
+      // P4: the evidence grade binds the jti to the record this proof was asked for.
+      { decision, sealedAtMs, decisionId: sealedAtMs === undefined ? undefined : decisionId },
     );
   }
 }

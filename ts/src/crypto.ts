@@ -60,6 +60,28 @@ export const POP_MESSAGE_ID_TAG = "seam-pop-mid-v1";
 /** Domain tag of the commitment TCT `jti` derivation (P9). */
 export const TCT_JTI_TAG = "seam-tct-jti-v1";
 
+/** The TCT `jti` the seal path mints (seam-runtime `deterministic_jti`): `derivedUuid("seam-tct-jti-v1",
+ * be32(len decisionId) || decisionId || be64(sealedAtMs))`. `decisionId` is the sealed record's id
+ * (`DecisionRecord.decision_id`, UTF-8), never `Commitment.id`; `sealedAtMs` its `sealed_at` in ms, a
+ * two's-complement i64 (a `number` must be a safe integer). Throws `RangeError` outside those bounds.
+ * Pinned by `conformance/tct_sealed_at_vector.json` (`jti_kat`). */
+export function tctJti(decisionId: string, sealedAtMs: bigint | number): string {
+  if (typeof decisionId !== "string") throw new TypeError("decisionId must be a string");
+  let ms: bigint;
+  if (typeof sealedAtMs === "bigint") ms = sealedAtMs;
+  else if (typeof sealedAtMs === "number" && Number.isSafeInteger(sealedAtMs)) ms = BigInt(sealedAtMs);
+  else throw new RangeError("sealedAtMs must be an integer");
+  if (ms < -I64_MAX - 1n || ms > I64_MAX) throw new RangeError("sealedAtMs is outside i64");
+  const id = enc.encode(decisionId);
+  if (id.length > 0xffffffff) throw new RangeError("the decision id is too long to derive a TCT jti");
+  const data = new Uint8Array(4 + id.length + 8);
+  const dv = new DataView(data.buffer);
+  dv.setUint32(0, id.length);
+  data.set(id, 4);
+  dv.setBigInt64(4 + id.length, ms);
+  return derivedUuid(TCT_JTI_TAG, data);
+}
+
 /** The admission `message_id`: `derivedUuid("seam-pop-mid-v1", pop_nonce_ascii)`.
  *
  * The input is the nonce's base64url ASCII text exactly as sent, not its decoded bytes. */
@@ -920,14 +942,24 @@ function iatIsSealSecond(iat: bigint, sealedAtMs: bigint | number): boolean {
  * for this decision), never a value from the token and never the served `DecisionRecordView.sealedAt` — the
  * token additionally must have `iat == floor(sealedAtMs / 1000)`, and a `sealedAtMs` that is not an integer
  * in `[0, 2^63 - 1]` verifies `false` (a `number` must also be a safe integer; pass the generated `bigint`).
- * Same rule as seam-verify `verify_tct_sealed_at` and the runtime's `verify_commitment_sealed_at`
- * (seam-runtime #2031); pinned by `conformance/tct_sealed_at_vector.json`. */
+ *
+ * **Evidence grade also needs `opts.decisionId`** (seam-runtime 0.127.0 P4, `seam-commitment-digest.v6.md`
+ * §Seal key step 7): the `decision_id` of that same chained link, never `Commitment.id`. The token's `jti`
+ * must then equal {@link tctJti}`(decisionId, sealedAtMs)` exactly, which refuses a genuine seal replayed
+ * onto another record, or with its seal time shifted inside its second (same `iat`). The two travel
+ * together: one without the other verifies `false` rather than silently checking half the rule. Same rule
+ * as seam-verify `verify_tct_sealed_at` and the runtime's `check_commitment_sealed_for`; pinned by
+ * `conformance/tct_sealed_at_vector.json`. */
 export function verifyTct(
   issuerAid: string,
   tctJws: string,
   commitment: Commitment,
   nowS?: number,
-  opts?: { decision?: readonly [tenant: string, sessionId: string]; sealedAtMs?: bigint | number },
+  opts?: {
+    decision?: readonly [tenant: string, sessionId: string];
+    sealedAtMs?: bigint | number;
+    decisionId?: string;
+  },
 ): boolean {
   // Any malformed/forged input must fail closed (return false), never throw.
   try {
@@ -966,8 +998,14 @@ export function verifyTct(
     const t = BigInt(iat) * 1000n;
     if (t > I64_MAX || t < -I64_MAX - 1n) return false;
     if (!(cert.notBeforeMs <= t && t <= cert.notAfterMs)) return false;
-    // Evidence grade (S-4): iat is the chained seal second.
-    if (opts?.sealedAtMs !== undefined && !iatIsSealSecond(BigInt(iat), opts.sealedAtMs)) return false;
+    // Evidence grade (S-4 + P4): iat is the chained seal second and jti names the chained record. The
+    // two inputs travel together; one without the other is a caller error, refused closed.
+    if ((opts?.sealedAtMs === undefined) !== (opts?.decisionId === undefined)) return false;
+    if (opts?.sealedAtMs !== undefined) {
+      if (!iatIsSealSecond(BigInt(iat), opts.sealedAtMs)) return false;
+      if (typeof opts.decisionId !== "string") return false;
+      if (payload.jti !== tctJti(opts.decisionId, opts.sealedAtMs)) return false;
+    }
     const now = nowS ?? Math.floor(Date.now() / 1000);
     // `exp` must be a JSON NUMBER, and is truncated to whole seconds before the comparison. Both
     // halves are load-bearing, and neither was true here before:

@@ -1551,7 +1551,10 @@ class SeamClient:
         :func:`~seam_sdk.admin.verify_streamed_record_digest` accepted — never the served
         ``DecisionRecordView.sealed_at``. Given, the TCT's self-asserted ``iat`` must equal
         ``sealed_at_ms // 1000`` (:func:`~seam_sdk.crypto.verify_tct`), which refuses a token backdated
-        with a leaked seal key. Without it, this proves a certified seal key signed the statement, not when.
+        with a leaked seal key, and its ``jti`` must be :func:`~seam_sdk.crypto.tct_jti` over ``decision_id``
+        and ``sealed_at_ms`` (seam-runtime 0.127.0 P4), which refuses another record's genuine seal served
+        for this one. Without it, this proves a certified seal key signed the statement, not when or for
+        which record.
         """
         proof = self.get_commitment_proof(
             decision_id, credential=credential, clearance=clearance, timeout=timeout
@@ -1569,6 +1572,8 @@ class SeamClient:
             commitment_view(c),
             decision=decision,
             sealed_at_ms=sealed_at_ms,
+            # P4: the evidence grade binds the jti to the record this proof was asked for.
+            decision_id=decision_id if sealed_at_ms is not None else None,
         )
 
 

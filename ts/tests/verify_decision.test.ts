@@ -200,7 +200,8 @@ test("verifyDecision: opts.sealedAtMs binds the TCT's iat to the chained seal se
   const at = async (sealedAtMs: bigint | number) =>
     clientWithProof(issuer).verifyDecision(DECISION_ID, issuer, { sealedAtMs });
   assert.equal(await at(iat * 1000n), true, "exact second boundary");
-  assert.equal(await at(iat * 1000n + 999n), true, "floor, not round");
+  // P4: same iat, but the jti is over the exact ms — a seal time shifted inside its second.
+  assert.equal(await at(iat * 1000n + 999n), false, "the jti binds the exact seal ms");
   assert.equal(await at(Number(iat * 1000n)), true, "a safe-integer number is accepted");
   assert.equal(await at(iat * 1000n + 1000n), false, "iat 1 s before the seal second (backdated)");
   assert.equal(await at(iat * 1000n - 1n), false, "iat 1 s after the seal second");
