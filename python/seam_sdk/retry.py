@@ -12,6 +12,9 @@ U(0, min(max_delay_s, base_delay_s * 2**n))``. The default 40s budget outlasts t
 lease TTL (``seamd/src/live_fence.rs`` ``LEASE_TTL``), so one lapsed lease is always waited out.
 It does NOT outlast a tenant move (``TENANT_MOVING``, also :func:`is_retryable`; 5s ``RetryInfo``):
 the source cell drains until its live sessions finish, so pass a ``budget_s`` sized for that drain.
+An unrecorded refusal (``REFUSAL_UNRECORDED``, also :func:`is_retryable`; 1s ``RetryInfo``, Authorize
+D3) is retried the same way: the runtime could not write the refusal's audit entry and applied nothing,
+so the retry is evaluated afresh. It is never a lease refusal and never an allow.
 The budget bounds the time spent waiting, not the calls themselves: each attempt keeps its own
 per-RPC ``timeout``. When the next delay would overrun the budget, the last error is raised as-is.
 

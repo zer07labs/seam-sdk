@@ -103,7 +103,8 @@ export const KNOWN_KINDS: ReadonlySet<string> = new Set([
   "SESSION_LIFECYCLE",
   "CHAIN_HEAD_ATTESTATION",
   "AUTHORIZE_EVALUATED",
-  "POLICY_DENIED",
+  // `POLICY_DENIED` (tag 24) is retired (Authorize D3, seam-runtime#2073): a commit-time policy refusal is
+  // one chained `AUDIT_ENTRY` with action `commit.policy_deny`.
 ]);
 
 /** What an AID is enrolled FOR (runtime 0.71.0, OI-R2a): the CLOSED set the runtime parses strictly on

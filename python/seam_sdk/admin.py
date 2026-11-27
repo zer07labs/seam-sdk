@@ -102,7 +102,8 @@ KNOWN_KINDS = frozenset(
         "SESSION_LIFECYCLE",
         "CHAIN_HEAD_ATTESTATION",
         "AUTHORIZE_EVALUATED",
-        "POLICY_DENIED",
+        # `POLICY_DENIED` (tag 24) is retired (Authorize D3, seam-runtime#2073): a commit-time policy
+        # refusal is one chained `AUDIT_ENTRY` with action `commit.policy_deny`.
     }
 )
 

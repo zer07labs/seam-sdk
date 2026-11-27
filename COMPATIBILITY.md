@@ -293,6 +293,12 @@ push refuses because the tag already exists, and nothing else is written. Pin `s
 seamd 0.115.0. `seam-verify` 0.6.0, published separately (its version is its own), is the first build
 that reads chain_bundle v2 (#421).
 
+**Authorize D3 is a coordinated cutover (seam-runtime#2118).** Pin the SDK release that carries it beside
+the D3 runtime, and `seam-verify` 0.9.0. 0.9.0 no longer treats `POLICY_DENIED` (tag 24, retired) as advisory:
+a stream that still carries one is pre-cutover history and is refused under `--issuer`, so run it only over a
+target whose history the cutover reset. 0.8.0 still verifies a post-cutover stream. An older SDK meeting the new
+`REFUSAL_UNRECORDED` refusal fails closed (a plain `FailedPreconditionError`) but does not retry it.
+
 **`seam-verify` 0.8.0 is the floor before runtime Authorize D3 deploys** (seam-runtime#2073). D3 records a
 commit-time policy refusal as a chained `AUDIT_ENTRY` with action `commit.policy_deny`; 0.8.0 recomputes it
 under `seam.audit.denial.v1` (seam-runtime#2105, 0.128.0). 0.7.x reads it as uncovered and refuses the stream
@@ -346,7 +352,7 @@ the proto are vendored byte-identical from the commit above.
 ## 3. Known-bad versions — permanent, and this document is the only barrier
 
 **The first two bands were yanked on 2026-09-05; the third was not.** The original no-yank
-decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2526-2548`) was re-litigated and reversed by
+decision covering 0.7.13–0.7.19 (`CHANGELOG.md:2558-2580`) was re-litigated and reversed by
 [#43](https://github.com/zer07labs/seam-sdk/issues/43). The reversal turned on a
 distinction the original call did not draw: those two bands are *unconditionally* broken — an
 unimportable wheel, or a clear auth error on every `authorize()` — so the blast-radius argument was
@@ -976,7 +982,7 @@ covered `{}` — so it did not mean what you thought. Convert at the boundary:
 `date.toISOString()`, `Object.fromEntries(map)`, `[...set]`. The error names the type and the
 conversion.
 
-**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:985` calls
+**This reaches you through `authorize()`, not only through the helper.** `ts/src/client.ts:990` calls
 `jcsCanonicalize(toolInput ?? {})` directly, so `authorize({ toolInput: { deadline: new Date() } })`
 now throws where it previously signed a digest over `{"deadline":{}}`. That is the case worth
 checking in your own code, because it is the one where the aliased digest was being *signed*.

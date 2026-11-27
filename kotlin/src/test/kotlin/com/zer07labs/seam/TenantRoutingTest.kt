@@ -157,4 +157,17 @@ class TenantRoutingTest {
         assertFalse(TenantRouting.isTenantMoving(refusal(fp, "WRONG_CELL", d, emptyMap())))
         assertFalse(TenantRouting.isTenantMoving(refusal(Status.Code.UNAVAILABLE, "TENANT_MOVING", d, emptyMap())))
     }
+
+    @Test
+    fun `REFUSAL_UNRECORDED is recognised on the reason only`() {
+        val fp = Status.Code.FAILED_PRECONDITION
+        val d = TenantRouting.SEAM_ERROR_DOMAIN
+        val e = refusal(fp, TenantRouting.REFUSAL_UNRECORDED_REASON, d, emptyMap())
+        assertTrue(TenantRouting.isRefusalUnrecorded(e))
+        assertFalse(TenantRouting.isTenantMoving(e))
+        assertFalse(TenantRouting.isWrongCell(e))
+        assertFalse(TenantRouting.isRefusalUnrecorded(refusal(fp, "TENANT_MOVING", d, emptyMap())))
+        assertFalse(TenantRouting.isRefusalUnrecorded(refusal(Status.Code.UNAVAILABLE, "REFUSAL_UNRECORDED", d, emptyMap())))
+        assertFalse(TenantRouting.isRefusalUnrecorded(refusal(fp, "REFUSAL_UNRECORDED", "example.com", emptyMap())))
+    }
 }

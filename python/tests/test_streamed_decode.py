@@ -69,10 +69,9 @@ def test_known_kinds_includes_the_a14_kinds():
     assert (
         "AUTHORIZE_EVALUATED" in KNOWN_KINDS
     )  # tag 23: one row per advisory Authorize evaluation
-    assert (
-        "POLICY_DENIED" in KNOWN_KINDS
-    )  # tag 24: one row per commitment a bound policy refused
-    assert len(KNOWN_KINDS) == 10
+    # tag 24 POLICY_DENIED is retired (Authorize D3): the refusal is a chained AUDIT_ENTRY.
+    assert "POLICY_DENIED" not in KNOWN_KINDS
+    assert len(KNOWN_KINDS) == 9
 
 
 def test_streamed_record_digest_matches_for_a_genuine_event():

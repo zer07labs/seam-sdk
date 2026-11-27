@@ -55,6 +55,16 @@ public final class TenantRouting {
      */
     public static final String TENANT_MOVING_REASON = "TENANT_MOVING";
 
+    /**
+     * The ErrorInfo reason of a FAILED_PRECONDITION refusal with RetryInfo (Authorize D3): the runtime
+     * reached a commit-time refusal (a policy or scope denial) but could not write its chained audit
+     * entry, so the refusal is not delivered as final. The call applied nothing. Never an allow: no fail
+     * policy may run the action on it. Retryable after the RetryInfo delay (1s); the retry is evaluated
+     * afresh. A replay-guarded write's request proof was burned at admission, so a retry must sign under
+     * a fresh admission ticket. Select on this reason, never the message.
+     */
+    public static final String REFUSAL_UNRECORDED_REASON = "REFUSAL_UNRECORDED";
+
     private static final Metadata.Key<String> KEY =
             Metadata.Key.of(TENANT_HEADER, Metadata.ASCII_STRING_MARSHALLER);
 
@@ -115,5 +125,14 @@ public final class TenantRouting {
     public static boolean isTenantMoving(Throwable t) {
         return Status.fromThrowable(t).getCode() == Status.Code.FAILED_PRECONDITION
                 && errorInfo(t).map(i -> TENANT_MOVING_REASON.equals(i.getReason())).orElse(false);
+    }
+
+    /**
+     * Whether {@code t} is the runtime's REFUSAL_UNRECORDED refusal. Retry it after the RetryInfo delay,
+     * under a fresh admission ticket; never treat it as an allow.
+     */
+    public static boolean isRefusalUnrecorded(Throwable t) {
+        return Status.fromThrowable(t).getCode() == Status.Code.FAILED_PRECONDITION
+                && errorInfo(t).map(i -> REFUSAL_UNRECORDED_REASON.equals(i.getReason())).orElse(false);
     }
 }

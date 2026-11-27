@@ -1221,7 +1221,7 @@ destroy the bad artifacts, which is the narrower question answered above.
   hedge was deleted rather than softened because the evidence made it false.
 - **The precedent that covered worse has since been reversed.** This bullet is amended rather than
   deleted, because the reversal removes its *support* without touching its *conclusion*. As
-  originally written it argued: `CHANGELOG.md:2528-2550` records no-yank for 0.7.13-0.7.19, which
+  originally written it argued: `CHANGELOG.md:2560-2582` records no-yank for 0.7.13-0.7.19, which
   failed *harder* — 0.7.13-0.7.15 were unimportable for everyone, and 0.7.16-0.7.19 failed every
   `authorize()` with an actively misleading "admission ticket is not valid" when the ticket was
   fine — so deleting the milder defect while documenting the worse ones would invert the precedent
@@ -1564,7 +1564,7 @@ not as written.
   `schema_version` other than 4 is cannot-verify. A genuine v1 record is now refused as retired, not
   link-verified (`verify/tests/authenticity.rs:252`, `a_v1_record_is_refused_as_retired_not_link_verified`).
   A relabel-to-v1-v3 lands on the same refusal with its columns present or absent; that case is
-  `verify/tests/authenticity.rs:811`, `every_retired_schema_version_is_refused_never_skipped`.
+  `verify/tests/authenticity.rs:806`, `every_retired_schema_version_is_refused_never_skipped`.
   With one formula there is nothing to
   downgrade into, which is the structural close this entry argued for, taken to its end. The record
   below is kept as history; the tests it named were deleted with v1-v3, so its references are no
@@ -2051,7 +2051,7 @@ any of them, and two of the analyses corrected me rather than the other way roun
 - **Correction to the code's own rationale:** the comment justified the age spread as a hedge against
   a **retention** sweep. No retention sweep has ever run here. The real yank predicate is "named in an
   advisory as unconditionally broken" — `yank.yml`'s 27 runs deleted only 0.7.7 and 0.7.13–0.7.19, the
-  exact scope of issue #43, and `CHANGELOG.md:2562` records that the *older* 0.7.39–0.7.43 band was
+  exact scope of issue #43, and `CHANGELOG.md:2594` records that the *older* 0.7.39–0.7.43 band was
   deliberately not deleted. A wrong reason in that comment is how the next editor re-points the roster
   badly; it now states the real predicate.
 - **Status:** CONFIRMED from recorded evidence. Present-tense presence remains inferred, not observed.
@@ -3489,3 +3489,35 @@ Opus-settled, reversible.
   removal and the R5 `call_sig` v4 / `RefusalUnrecorded` work are later waves of #453.
 - `verify/docs/evidence-bundle.v1.md` is re-vendored in the same PR. Runtime E0 (#2101) made it stale on main,
   and the currency gate would otherwise fail this PR.
+
+## 2026-11-27 — Authorize D3 (seam-runtime#2118): `REFUSAL_UNRECORDED` drops the burned ticket and is retryable
+
+**The question.** The cross-repo spec's first draft said the SDK should not route `REFUSAL_UNRECORDED`
+through `with_session_retry` and should not drop the ticket. The runtime disagrees with that by construction:
+`authorize.rs` `replay_guarded` burns the request proof at admission, and the only un-burn (`forget`) covers a
+failed durable burn. So a replay-guarded write refused `REFUSAL_UNRECORDED` has already spent its signature.
+A retry under the same ticket re-signs the same bytes and is refused `request_replayed`, which is not
+retryable. The refusal would then be permanent in practice, and the caller would never get an answer.
+
+**The call (approved by the waves leader, seam-runtime-31; the runtime spec was corrected to match at
+`5a204622c`: the runtime's error-model spec and its cross-repo SDK plan for Authorize D3, line 18).**
+- It is matched on `FAILED_PRECONDITION` + `ErrorInfo` reason `REFUSAL_UNRECORDED` only, never on the message.
+- It is `is_retryable` / `isRetryable` on its `RetryInfo`, with no session-lease semantics
+  (`is_session_unavailable` stays false).
+- The Python and TS clients drop the burned ticket on replay-guarded writes exactly as for `TENANT_MOVING`.
+  The drop now keys on `is_retryable`, so a fourth retryable reason cannot be added without it.
+- It is never an allow. No fail policy runs the action on it, and the runtime never sends it as
+  `UNAVAILABLE`/`INTERNAL`, which a FAIL_OPEN client would treat as an allow.
+
+**The leader's acceptance.** A test per language shows the retry carrying a new ticket and never meeting
+`request_replayed`: `python/tests/test_refusal_unrecorded.py` (sync and aio, every guarded verb) and
+`ts/tests/unit_plumbing.test.ts`. Go, Java and Kotlin ship no ticketed client, only the routing predicates,
+so they carry predicate tests only.
+
+**Two more calls in the same change.**
+- `SEAL_REASON_EXPIRE_MAX_AGE` (retention E2a, seam-runtime#2112) is wired into the seal-attestation names
+  and `contract/field-manifest.txt`. BSR main already carries it and SDK main was red on the enum gate
+  against it, so it is a blocker for this PR, not scope creep. The SDK carries it because a sealed session's
+  attestation must name why it sealed, not read `UNRECOGNIZED`.
+- `PolicyDenied/*` and `SeamEvent/policy_denied` leave `contract/event-field-manifest.txt`. The tag is
+  reserved upstream, and the cutover resets history, so no SDK path decodes it.

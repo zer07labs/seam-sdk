@@ -41,8 +41,7 @@ from .errors import (  # noqa: F401  (SeamError re-exported)
     UnauthenticatedError,
     UnavailableError,
     _MappedStub,
-    is_session_unavailable,
-    is_tenant_moving,
+    is_retryable,
 )
 from ._outcome import ObservedAt, check_outcome_fields
 from ._requester import requester_pb
@@ -65,9 +64,10 @@ _T = TypeVar("_T")
 # 0.72.0 ``SeamContext/RegisterContext`` too — ``ResolveContext`` writes nothing, so it is exempt like a
 # read and a resend may carry the same signature). It burns
 # BEFORE the session lease is taken and before the tenant-move check (seamd ``session.rs``
-# ``refuse_moving``), so a ``SESSION_UNAVAILABLE`` or ``TENANT_MOVING`` refusal has already spent the
-# signature: re-signing the same body under the same ticket yields the same bytes, refused
-# ``request_replayed``. :meth:`SeamClient._forget_burned_ticket` drops that ticket so a retry
+# ``refuse_moving``), and before a commit-time refusal's audit write (Authorize D3), so a
+# ``SESSION_UNAVAILABLE``, ``TENANT_MOVING`` or ``REFUSAL_UNRECORDED`` refusal — exactly the
+# :func:`~seam_sdk.errors.is_retryable` set — has already spent the signature: re-signing the same
+# body under the same ticket yields the same bytes, refused ``request_replayed``. :meth:`SeamClient._forget_burned_ticket` drops that ticket so a retry
 # re-admits and signs fresh bytes.
 _REPLAY_GUARDED = frozenset(
     "/seam.api.v1.SeamCoordination/" + verb
@@ -621,12 +621,11 @@ class SeamClient:
     def _forget_burned_ticket(
         self, signer: Agent, ticket: bytes, rpc_full_name: str, exc: BaseException
     ) -> None:
-        """On ``SESSION_UNAVAILABLE`` or ``TENANT_MOVING`` for a :data:`_REPLAY_GUARDED` write, drop
+        """On a retryable refusal (:func:`~seam_sdk.errors.is_retryable`: ``SESSION_UNAVAILABLE``,
+        ``TENANT_MOVING``, ``REFUSAL_UNRECORDED``) for a :data:`_REPLAY_GUARDED` write, drop
         ``ticket`` (see there): the runtime burned this call's proof, so the next attempt must
         re-admit to sign new bytes. Every other error, and every read, leaves the cache alone."""
-        if rpc_full_name in _REPLAY_GUARDED and (
-            is_session_unavailable(exc) or is_tenant_moving(exc)
-        ):
+        if rpc_full_name in _REPLAY_GUARDED and is_retryable(exc):
             self._invalidate_ticket(signer, ticket)
 
     def _credentialed_call(

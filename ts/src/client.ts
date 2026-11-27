@@ -69,16 +69,17 @@ import {
   InvalidArgumentError,
   ProtocolViolationError,
   UnauthenticatedError,
-  isSessionUnavailable,
-  isTenantMoving,
+  isRetryable,
 } from "./errors.js";
 
 // The credentialed writes the runtime's seen-proof cache burns at admission (seam-runtime
 // `authorize.rs` `replay_guarded`: every credentialed write but `ReportOutcome`, and from runtime 0.72.0
 // `SeamContext/RegisterContext` too — `ResolveContext` writes nothing, so it is exempt like a read and a
 // resend may carry the same signature). It burns BEFORE the
-// session lease is taken and before the tenant-move check (seamd `session.rs` `refuse_moving`), so a
-// `SESSION_UNAVAILABLE` or `TENANT_MOVING` refusal has already spent the signature:
+// session lease is taken and before the tenant-move check (seamd `session.rs` `refuse_moving`),
+// and before a commit-time refusal's audit write (Authorize D3), so a `SESSION_UNAVAILABLE`,
+// `TENANT_MOVING` or `REFUSAL_UNRECORDED` refusal — exactly the `isRetryable` set — has already spent
+// the signature:
 // re-signing the same body under the same ticket yields the same bytes, refused `request_replayed`.
 // `forgetBurnedTicket` drops that ticket so a retry re-admits and signs fresh bytes.
 const REPLAY_GUARDED: ReadonlySet<string> = new Set(
@@ -487,6 +488,9 @@ const SEAL_REASON_NAMES: Record<
   [SealReason.CANCEL]: "CANCEL",
   [SealReason.EXPIRE_TTL]: "EXPIRE_TTL",
   [SealReason.EXPIRE_SUSPEND_CAP]: "EXPIRE_SUSPEND_CAP",
+  // Retention E2a (seam-runtime#2112): the session reached its maximum total age (8 days of database
+  // time from open, or the tenant's lower max_session_age), however often it was suspended.
+  [SealReason.EXPIRE_MAX_AGE]: "EXPIRE_MAX_AGE",
 };
 
 /** The runtime's sealed statement of why a decision record was sealed — read from a `GetDecision`
@@ -532,6 +536,7 @@ export interface SealAttestation {
     | "CANCEL"
     | "EXPIRE_TTL"
     | "EXPIRE_SUSPEND_CAP"
+    | "EXPIRE_MAX_AGE"
     | "UNRECOGNIZED"
     | undefined;
   /** The runtime's own collective outcome for the commit that sealed this record — so it describes
@@ -1327,11 +1332,12 @@ export class SeamClient {
     }
   }
 
-  /** On `SESSION_UNAVAILABLE` or `TENANT_MOVING` for a {@link REPLAY_GUARDED} write, drop `ticket` (see
+  /** On a retryable refusal (`isRetryable`: `SESSION_UNAVAILABLE`, `TENANT_MOVING`, `REFUSAL_UNRECORDED`)
+   * for a {@link REPLAY_GUARDED} write, drop `ticket` (see
    * there): the runtime burned this call's proof, so the next attempt must re-admit to sign new bytes. Every other
    * error, and every read, leaves the cache alone. */
   private forgetBurnedTicket(agent: Agent, ticket: Uint8Array, rpcFullName: string, e: unknown): void {
-    if (REPLAY_GUARDED.has(rpcFullName) && (isSessionUnavailable(e) || isTenantMoving(e))) {
+    if (REPLAY_GUARDED.has(rpcFullName) && isRetryable(e)) {
       this.invalidateTicket(agent, ticket);
     }
   }

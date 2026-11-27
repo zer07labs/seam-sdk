@@ -1,4 +1,8 @@
-<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 08503f90 on runtime main (refreshed 2026-11-26).
+<!-- Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 5a204622c tracking lanes/lane-1-d3 (refreshed 2026-11-27).
+     seam-runtime#2118 (Authorize D3, #2073): POLICY_DENIED (tag 24) retired and reserved; a commit-time policy
+     refusal is one chained AUDIT_ENTRY commit.policy_deny; REFUSAL_UNRECORDED when its audit write fails.
+     Prior pin, kept for history:
+     Pinned copy of seam-runtime/docs/specs/seam-event.v1.md @ 08503f90 on runtime main (refreshed 2026-11-26).
      seam-runtime#2105 (0.128.0, Authorize D2, #2073): the (b′) denial domain gains commit.policy_deny (Confidential)
      with its reason form pinned; D1 drops the stale --strict passages; the archive bundle reads as retired (retention E0).
      Prior pin, kept for history:
@@ -207,7 +211,7 @@ enum EventKind {
   CHAIN_HEAD_ATTESTATION // the issuer-signed audit chain head (A14; CHAINED; tag 22)
   SESSION_LIFECYCLE // ADVISORY — a session lifecycle transition, "opened" only today (not chained; tag 21)
   AUTHORIZE_EVALUATED // ADVISORY — one advisory authorization was evaluated (not chained; tag 23)
-  POLICY_DENIED     // ADVISORY — a bound policy REFUSED a commitment (not chained; tag 24)
+  // tag 24 RESERVED — POLICY_DENIED retired in Authorize D3; a refusal is a chained `commit.policy_deny` AUDIT_ENTRY
   EVENT_REDRIVEN    // ADVISORY — an operator re-drove an existing outbox event by reference; wraps its bytes (not chained; tag 26)
   CHAIN_MANIFEST    // the issuer-signed list of a tenant's flow chains (Flows train 1; CHAINED on the tenant chain; tag 30)
 }
@@ -574,8 +578,18 @@ seal chain (its flow chain, or the tenant chain when the session ran in no flow)
 caller of the refused commit; `reason` is exactly
 `policy '{policy_version}' (mode '{mode}') refused: {reason}`, where `policy_version` is the STAGED version
 (#561) and `reason` the already-redacted deny reason (#542), which may itself contain `"; "` and is never
-split. The runtime has no caller yet: commit-time refusals still emit `POLICY_DENIED` until the contract
-train that switches them (plan D3).
+split. Since Authorize D3 every commit-time refusal (one-shot `RunDecision` and the interactive Session API)
+writes this entry **synchronously, before the refusal is returned**: a refusal whose entry cannot be written is
+answered `REFUSAL_UNRECORDED` (retryable; FAILED_PRECONDITION + `RetryInfo` / HTTP 409 + `Retry-After`), never
+delivered as a final denial. An interactive refusal is recoverable, so on one seal chain a `commit.policy_deny`
+may be followed by another `commit.policy_deny` (a retried, again-refused commit) or by the session's seal.
+
+**Open-time selection refusals are not commit-time refusals and write no entry.** `seam_selection_unsupported_path`
+(a `RunDecision` on a selection policy with the flag on) and `seam_selection_flag_unreadable` (the
+`option_selection` flag cannot be read at open) are answered `PolicyDenied` with **no** `commit.policy_deny`
+entry: they refuse before any coordination exists (no vote dispatched, no proposal, no session state, nothing
+sealed), so there is no decision to account for and no chain position that a denial entry could attest. A
+retry re-evaluates at open. Every refusal after open, at the commit gate, takes the chained path above.
 
 `seam.audit.archive-evict.v1` is historical: the verifier still accepts it, and no runtime writes it since retention
 E0 (migration 0064).
@@ -632,7 +646,7 @@ The stream carries the companion one event later — `DecisionSealed.policy_rule
 joinable by `session_id`. Read that, not this, for what actually bound.
 
 Envelope: `event_id = "{tenant}:{session_id}#lc:{phase}@{opened_at_millis}"` (tenant-prefixed since
-P12b, like the `POLICY_DENIED` id: session ids are client-chosen, so two tenants opening the same
+P12b: session ids are client-chosen, so two tenants opening the same
 session id in the same millisecond would otherwise collide under a global `event_id` dedup) — salted with the open timestamp
 because a session id can be RE-opened after sweep eviction, and delivery dedups by `event_id` (an
 unsalted id would pin a deduping consumer to the first open's stale payload). `classification` is
@@ -789,56 +803,15 @@ subject commitment at all. The stored row is also retention-bounded and is delet
 outbox row's lifetime is the relay-GC window; neither is a mirror of the other.
 
 
-### `POLICY_DENIED` (additive, tag 24 — advisory, not chained)
+### `POLICY_DENIED` — retired (tag 24 reserved, Authorize D3)
 
-The audit row for a commitment a **bound policy refused**. Like `AUTHORIZE_EVALUATED`, that path
-**seals nothing** — no decision record, no DEK, no chain append — so this event is the *only* trace the
-refusal ever happened.
-
-It exists because that refusal was otherwise durably **invisible** on the one-shot path: a
-policy-denied `RunDecision` errors before the seal, before the metrics tick and before the outbox wake,
-leaving no trace at all. For a system whose claim is an auditable decision boundary, "a refused action
-leaves no record" is the wrong failure mode. This is a durable **trace**, deliberately not a decision
-record — nothing was decided.
-
-```proto
-message PolicyDenied {                 // envelope tag 24
-  string policy_version = 1;           // the policy the binding named — STAGED, not "ran under"
-  string mode = 2;                     // the coordination mode the refused session was opened in
-  string reason = 3;                   // ALREADY-REDACTED deny reason, PRE-JOINED (D-030, #542)
-}
-```
-
-Envelope: `event_id = "{tenant}:{session_id}#pd#{seq}"` (tenant-prefixed since P5, because two
-tenants may use the same session id); `session_id` is **present** (unlike
-`AUTHORIZE_EVALUATED`, a refused commitment always has one, and it is the only handle a consumer has to
-correlate the refusal with the attempt); `decision_id` is **absent** (nothing sealed, so there is no
-decision to join to); `classification` is **fixed `Internal`** — gate redaction on `when_kind`.
-
-**Advisory**: no `digest`/`checksum`, empty `prev_checksum`. A consumer must not attempt to link this
-event into the audit chain; it was never appended to one.
-
-**`policy_version` is STAGED, not proof of enforcement.** It names what the binding staged, exactly as
-the identically named field on `seam.api.v1.DecisionResponse` does. A populated value is not on its own
-evidence that the named policy's rules evaluated anything.
-
-**Reason rule (D-030).** `reason` is built from the closed-set, operator-authored capability classes
-the evaluator produced — never agent-proposed content, and with objector ids stripped, so a denial
-cannot leak *who* objected to a consumer that may not be entitled to know.
-
-**`reason` is ONE string and consumers MUST NOT split it.** The runtime's error boundary
-(`seam_coord_macp::map_macp_err`) joins the evaluator's reasons with `"; "` before this producer ever
-sees them, and the #542 redaction emits that *same* delimiter **inside** a single reason
-(`... (objector ids withheld; see operator logs)`). Splitting the joined message back apart is
-therefore lossy: two reasons yield **three** parts, one dangling mid-parenthetical. A repeated field
-here could only ever be filled by shredding the text, so the wire carries what the runtime actually
-holds. The `seam-coord-macp` test `the_joined_denial_message_is_not_safely_splittable` pins the
-hazard, so a future rewording of the redaction cannot quietly make this advice stale.
-
-**Volume.** Unlike the periodic `CHAIN_HEAD_ATTESTATION`, this is emitted per refused commitment; under
-a strict bound policy that can be a material rate. Emission is fail-open — the refusal is already being
-returned to the caller as a typed error, so a failed append must not convert a clean denial into a
-different error.
+The advisory, unchained `POLICY_DENIED` row (tag 24, `message PolicyDenied`) is **gone**: tag 24 and the
+field name `policy_denied` are `reserved` in `seam_event.proto` and are never reused. A commit-time policy
+refusal is now the chained `commit.policy_deny` `AUDIT_ENTRY` described under the denial domain
+(`seam.audit.denial.v1`) above — on the chain, verifiable, written before the caller is told. The reason
+rule (D-030, #542 redaction) and the "never split `reason`" rule carry over unchanged to that entry's
+`reason` text. A consumer that filtered on `POLICY_DENIED` must filter on
+`AUDIT_ENTRY` with action `commit.policy_deny` instead.
 
 ### `EVENT_REDRIVEN` (additive, tag 26 — advisory, not chained) — #1176
 

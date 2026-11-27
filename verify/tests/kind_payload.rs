@@ -4,7 +4,7 @@
 //!
 //! Two layers:
 //!
-//! 1. **The eleven-row table, at the library.** For every payload slot: the slot grafted onto another kind
+//! 1. **The ten-row table, at the library.** For every payload slot: the slot grafted onto another kind
 //!    is refused, and its own kind without it is refused — each on BOTH transports. The protobuf rows
 //!    hand-encode the payload field, so the presence decode of the five slots this crate does not model
 //!    (tags 14, 15, 17, 21, 26) is itself under test rather than assumed.
@@ -51,7 +51,7 @@ struct Slot {
     json: &'static str,
 }
 
-const SLOTS: [Slot; 11] = [
+const SLOTS: [Slot; 10] = [
     Slot {
         kind: "DECISION_SEALED",
         key: "payload",
@@ -114,13 +114,6 @@ const SLOTS: [Slot; 11] = [
         tag: 23,
         label: "authorize_evaluated (tag 23)",
         json: r#"{"authorize_id":"a"}"#,
-    },
-    Slot {
-        kind: "POLICY_DENIED",
-        key: "policy_denied",
-        tag: 24,
-        label: "policy_denied (tag 24)",
-        json: r#"{"reason":"r"}"#,
     },
     Slot {
         kind: "EVENT_REDRIVEN",
@@ -203,10 +196,10 @@ fn host_for(slot: &Slot) -> &'static Slot {
     SLOTS
         .iter()
         .find(|s| s.kind != slot.kind && !matches!(s.tag, 18 | 22))
-        .expect("eleven slots")
+        .expect("ten slots")
 }
 
-/// Rule 1, all eleven rows: a payload grafted onto another (well-formed) kind is refused, naming the
+/// Rule 1, all ten rows: a payload grafted onto another (well-formed) kind is refused, naming the
 /// slot and its owner — on both transports.
 #[test]
 fn every_payload_grafted_onto_another_kind_is_refused() {
@@ -233,7 +226,7 @@ fn every_payload_grafted_onto_another_kind_is_refused() {
     }
 }
 
-/// Rule 2, all eleven rows: a known kind without its own payload is refused — on both transports.
+/// Rule 2, all ten rows: a known kind without its own payload is refused — on both transports.
 #[test]
 fn every_known_kind_without_its_own_payload_is_refused() {
     for slot in &SLOTS {

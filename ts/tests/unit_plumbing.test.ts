@@ -40,11 +40,13 @@ import {
   SeamRpcError,
   UnauthenticatedError,
   UnavailableError,
+  isRefusalUnrecorded,
+  isRetryable,
   isSessionUnavailable,
   isTenantMoving,
 } from "../src/errors.js";
 import { loadShedRetryClassifier, withSessionRetry } from "../src/retry.js";
-import { refusal, sessionUnavailable, tenantMoving } from "./session_unavailable.js";
+import { refusal, refusalUnrecorded, sessionUnavailable, tenantMoving } from "./session_unavailable.js";
 import {
   ApprovalRequestRequestSchema,
   AuthorizeVerdict,
@@ -1599,6 +1601,86 @@ test("WRONG_CELL on a guarded write leaves the ticket as before", async () => {
     seedCredentialTicket(client, cred.aid);
     await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), (e) => e === err);
     assert.equal(ticketsOf(client).has(cred.aid), true, name);
+  }
+});
+
+// ── REFUSAL_UNRECORDED (Authorize D3): the refusal's audit write failed after admission burned ───
+// the proof. Retryable on RetryInfo, never a lease refusal, and the burned ticket is dropped.
+
+test("REFUSAL_UNRECORDED is typed FAILED_PRECONDITION, retryable on its RetryInfo, and not a lease refusal", () => {
+  const err = refusalUnrecorded();
+  assert.ok(err instanceof FailedPreconditionError);
+  assert.equal((err as SeamRpcError).reason, "REFUSAL_UNRECORDED");
+  assert.equal((err as SeamRpcError).retryAfter, 1);
+  assert.ok(isRefusalUnrecorded(err) && isRetryable(err));
+  assert.equal(isSessionUnavailable(err), false);
+  assert.equal(isTenantMoving(err), false);
+  // Selected on the reason, never the status or the message.
+  assert.equal(isRefusalUnrecorded(refusal(Code.FailedPrecondition, "WRONG_CELL")), false);
+  assert.equal(isRefusalUnrecorded(refusal(Code.Unavailable, "REFUSAL_UNRECORDED", 1)), false);
+  assert.equal(isRefusalUnrecorded(refusal(Code.FailedPrecondition, undefined, 1)), false);
+});
+
+test("REFUSAL_UNRECORDED on a replay-guarded write drops the burned ticket, with no retry and no admit", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const name of [...GUARDED_REFRESHING, ...EXCLUDED]) {
+    const calls: Recorded[] = [];
+    const wire = refreshWire();
+    wire.state.fail[name] = refusalUnrecorded();
+    const client = new SeamClient(fakeTransport(calls, wire.handle));
+    seedCredentialTicket(client, cred.aid);
+    await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), (e) => isRefusalUnrecorded(e));
+    assert.equal(calls.filter((c) => c.method === name).length, 1, `${name}: the SDK never retries it`);
+    assert.equal(wire.state.admits, 0, name);
+    assert.equal(ticketsOf(client).has(cred.aid), false, `${name}: the burned ticket was dropped`);
+  }
+});
+
+test("REFUSAL_UNRECORDED on a read or reportOutcome keeps the ticket", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const name of UNGUARDED_REFRESHING) {
+    const wire = refreshWire();
+    wire.state.fail[name] = refusalUnrecorded();
+    const client = new SeamClient(fakeTransport([], wire.handle));
+    seedCredentialTicket(client, cred.aid);
+    await assert.rejects(CREDENTIAL_CALLS[name]!.invoke(client, cred), FailedPreconditionError);
+    assert.equal(ticketsOf(client).has(cred.aid), true, name);
+  }
+});
+
+test("REFUSAL_UNRECORDED on a replay-guarded write: withSessionRetry retries under a new ticket and never meets request_replayed", async () => {
+  const cred = new Agent(new Uint8Array(32).fill(3));
+  for (const name of [...GUARDED_REFRESHING, ...EXCLUDED]) {
+    const calls: Recorded[] = [];
+    const wire = refreshWire();
+    // The runtime's seen-proof cache: a signature it has seen is refused `request_replayed`, whatever
+    // the verb then answered. The first attempt's proof is burned before its refusal is reached.
+    const burned = new Set<string>();
+    let unrecorded = 1;
+    const handle: UnaryHandler = (method, input, headers) => {
+      if (method === name) {
+        const sig = (headers as Record<string, string>)["x-seam-call-sig-bin"]!;
+        if (burned.has(sig)) throw new InvalidArgumentError("request_replayed", Code.InvalidArgument);
+        burned.add(sig);
+        if (unrecorded > 0) {
+          unrecorded -= 1;
+          throw refusalUnrecorded(1);
+        }
+      }
+      return wire.handle(method, input, headers);
+    };
+    const client = new SeamClient(fakeTransport(calls, handle));
+    seedCredentialTicket(client, cred.aid);
+    const slept: number[] = [];
+    await withSessionRetry(() => CREDENTIAL_CALLS[name]!.invoke(client, cred), {
+      sleep: async (ms: number) => void slept.push(ms),
+      random: () => 0,
+    });
+    const sent = calls.filter((c) => c.method === name);
+    assert.equal(sent.length, 2, `${name}: one retry`);
+    assert.deepEqual(slept, [1000], `${name}: waited the RetryInfo delay`);
+    assert.equal(wire.state.admits, 1, `${name}: the retry re-admitted`);
+    assert.deepEqual(sent.map(ticketHex), [Buffer.from(CREDENTIAL_TICKET).toString("hex"), "65"], name);
   }
 });
 

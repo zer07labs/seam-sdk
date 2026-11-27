@@ -276,19 +276,15 @@ fn a_v1_record_is_refused_as_retired_not_link_verified() {
     );
 }
 
-// ── POLICY_DENIED is advisory (the same regression, one kind later) ──────────────────────────────────
+// ── POLICY_DENIED is retired (Authorize D3): a leftover advisory row is pre-cutover history ──────────
 
 #[test]
-fn a_policy_denied_event_does_not_break_strict_issuer_verification() {
-    // POLICY_DENIED (spec §POLICY_DENIED, tag 24) is ADVISORY for the same reason its neighbour below
-    // is: a refused commitment errors before the seal, so nothing is sealed, nothing is appended, and
-    // the row carries no digest/checksum BY DESIGN. This is the end-to-end shape of the regression
-    // the unit test pins — a healthy attested stream carrying one must still authenticate.
-    //
-    // Worth having BOTH: the unit test proves the kind classifies advisory, this proves the whole
-    // pipeline agrees, and it was the pipeline that reported UNVERIFIABLE and exited 2 last time. The
-    // blast radius is also wider here than it was for tag 23 — a bound policy emits one of these per
-    // REFUSED COMMITMENT, so a stream under a strict policy carries many, not one.
+fn a_retired_policy_denied_row_is_no_longer_tolerated_under_issuer() {
+    // POLICY_DENIED (tag 24) is RETIRED (Authorize D3, seam-runtime#2073): a commit-time refusal is now
+    // ONE chained AUDIT_ENTRY (`commit.policy_deny`), verified like every other entry. The old advisory
+    // row is no longer an advisory kind, so a stream still carrying one is pre-cutover history — which
+    // the coordinated cutover RESETS rather than tolerates (no legacy path, Codex A01). This pins that
+    // the verifier refuses it, as the runtime verifier does, instead of silently skipping it.
     let mut stream = golden("attested_chain.jsonl");
     stream.push_str(
         "\n{\"schema_version\":\"seam-event.v1\",\"stream_id\":\"dev\",\"event_id\":\"dev/sess01#pd#9\",\"seq\":9,\
@@ -299,13 +295,12 @@ fn a_policy_denied_event_does_not_break_strict_issuer_verification() {
     );
     let (code, out) = run("pd", &stream, &["--issuer", ISSUER]);
     assert_eq!(
-        code, VERIFIED,
-        "a healthy attested stream + one POLICY_DENIED must PASS under --issuer:\n{out}"
+        code, FAILED,
+        "a retired POLICY_DENIED row must not PASS under --issuer:\n{out}"
     );
-    assert!(out.contains("CHAIN AUTHENTICATED"), "{out}");
     assert!(
-        out.contains("advisory (skipped): 1"),
-        "the event must be classified advisory, not unchained:\n{out}"
+        !out.contains("advisory (skipped): 1"),
+        "a retired kind must not be classified advisory:\n{out}"
     );
 }
 

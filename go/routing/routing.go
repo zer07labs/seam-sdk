@@ -45,6 +45,14 @@ const WrongCellReason = "WRONG_CELL"
 // Once the tenant flips, the source cell answers WRONG_CELL instead.
 const TenantMovingReason = "TENANT_MOVING"
 
+// RefusalUnrecordedReason is the ErrorInfo reason of a FAILED_PRECONDITION refusal with RetryInfo
+// (Authorize D3): the runtime reached a commit-time refusal (a policy or scope denial) but could not
+// write its chained audit entry, so the refusal is not delivered as final. The call applied nothing.
+// Never an allow: no fail policy may run the action on it. Retryable after the RetryInfo delay (1s);
+// the retry is evaluated afresh. A replay-guarded write's request proof was burned at admission, so a
+// retry must sign under a fresh admission ticket. Select on this reason, never the message.
+const RefusalUnrecordedReason = "REFUSAL_UNRECORDED"
+
 // ErrEmptyTenant is returned for an empty tenant, which is refused rather than sent: the router
 // refuses a missing or malformed value uniformly.
 var ErrEmptyTenant = errors.New("routing: tenant must be this caller's enrolled tenant id (non-empty); omit the interceptor to send no x-seam-tenant header")
@@ -119,4 +127,14 @@ func IsTenantMoving(err error) bool {
 	}
 	info := SeamErrorInfo(err)
 	return info != nil && info.GetReason() == TenantMovingReason
+}
+
+// IsRefusalUnrecorded reports whether err is the runtime's REFUSAL_UNRECORDED refusal. Retry it after
+// the RetryInfo delay, under a fresh admission ticket; never treat it as an allow.
+func IsRefusalUnrecorded(err error) bool {
+	if status.Code(err) != codes.FailedPrecondition {
+		return false
+	}
+	info := SeamErrorInfo(err)
+	return info != nil && info.GetReason() == RefusalUnrecordedReason
 }

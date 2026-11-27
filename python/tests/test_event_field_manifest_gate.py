@@ -431,8 +431,10 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
     # 173 since runtime 0.124.0 (seam-runtime#2039, S-3): SeamEvent.leaf_index/leaf_count/inclusion_path
     # (tags 31-33), the Merkle batch proof the verifier folds. 176 with its history boundary: the v3
     # ChainManifest.manifest_version/tenant_batch_boundary and ChainManifestEntry.batch_boundary.
-    assert len(fields) == 176, (
-        f"expected 176 declared event fields, found {len(fields)}"
+    # 172 since Authorize D3 (seam-runtime#2073): POLICY_DENIED retired, SeamEvent.policy_denied (tag 24)
+    # reserved and the PolicyDenied message (3 fields) deleted.
+    assert len(fields) == 172, (
+        f"expected 172 declared event fields, found {len(fields)}"
     )
     messages = {line.split("/")[0] for line in fields}
     assert messages == {
@@ -454,7 +456,6 @@ def test_the_committed_manifest_is_not_empty_and_names_every_message() -> None:
         "GoverningConfig",
         "LearningDecision",
         "LearningOutcome",
-        "PolicyDenied",
         "PolicyKey",
         "SeamEvent",
         "SessionLifecycle",

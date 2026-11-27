@@ -46,6 +46,16 @@ object TenantRouting {
      */
     const val TENANT_MOVING_REASON = "TENANT_MOVING"
 
+    /**
+     * The ErrorInfo reason of a FAILED_PRECONDITION refusal with RetryInfo (Authorize D3): the runtime
+     * reached a commit-time refusal (a policy or scope denial) but could not write its chained audit
+     * entry, so the refusal is not delivered as final. The call applied nothing. Never an allow: no fail
+     * policy may run the action on it. Retryable after the RetryInfo delay (1s); the retry is evaluated
+     * afresh. A replay-guarded write's request proof was burned at admission, so a retry must sign under
+     * a fresh admission ticket. Select on this reason, never the message.
+     */
+    const val REFUSAL_UNRECORDED_REASON = "REFUSAL_UNRECORDED"
+
     private val KEY: Metadata.Key<String> = Metadata.Key.of(TENANT_HEADER, Metadata.ASCII_STRING_MARSHALLER)
 
     /**
@@ -102,4 +112,12 @@ object TenantRouting {
     fun isTenantMoving(t: Throwable): Boolean =
         Status.fromThrowable(t).code == Status.Code.FAILED_PRECONDITION &&
             errorInfo(t)?.reason == TENANT_MOVING_REASON
+
+    /**
+     * Whether [t] is the runtime's REFUSAL_UNRECORDED refusal. Retry it after the RetryInfo delay, under
+     * a fresh admission ticket; never treat it as an allow.
+     */
+    fun isRefusalUnrecorded(t: Throwable): Boolean =
+        Status.fromThrowable(t).code == Status.Code.FAILED_PRECONDITION &&
+            errorInfo(t)?.reason == REFUSAL_UNRECORDED_REASON
 }

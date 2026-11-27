@@ -70,8 +70,9 @@ test("KNOWN_KINDS includes the A14 kinds and the authorize outbox kind", () => {
   assert.ok(KNOWN_KINDS.has("SESSION_LIFECYCLE"));
   assert.ok(KNOWN_KINDS.has("CHAIN_HEAD_ATTESTATION"));
   assert.ok(KNOWN_KINDS.has("AUTHORIZE_EVALUATED"));
-  assert.ok(KNOWN_KINDS.has("POLICY_DENIED"));
-  assert.equal(KNOWN_KINDS.size, 10);
+  // tag 24 POLICY_DENIED is retired (Authorize D3): the refusal is a chained AUDIT_ENTRY.
+  assert.equal(KNOWN_KINDS.has("POLICY_DENIED"), false);
+  assert.equal(KNOWN_KINDS.size, 9);
 });
 
 test("verifyStreamedRecordDigest: genuine → true, rewrite → false", () => {
