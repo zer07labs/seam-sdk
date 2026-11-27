@@ -21,6 +21,7 @@ use std::process::Command;
 
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
+use seam_verify::commitment::tct_jti;
 use sha2::{Digest, Sha256};
 
 const VERIFIED: i32 = 0;
@@ -142,11 +143,22 @@ fn seeded_cert(issuer_seed: [u8; 32], at_ms: u64) -> (SigningKey, serde_json::Va
 /// Re-mint `token` under the seeded seal key of `issuer_seed`: same header and claims, `iss`/`sub`/`aud`/
 /// `cnf` the seal key's, the certificate member added; `iat` replaced when `iat` is `Some`.
 fn remint(token: &str, issuer_seed: [u8; 32], iat: Option<u64>) -> String {
+    remint_with(token, issuer_seed, |claims| {
+        if let Some(iat) = iat {
+            claims["iat"] = iat.into();
+        }
+    })
+}
+
+/// [`remint`] with an arbitrary edit to the claims before the seeded seal key signs them.
+fn remint_with(
+    token: &str,
+    issuer_seed: [u8; 32],
+    edit: impl FnOnce(&mut serde_json::Value),
+) -> String {
     let parts: Vec<&str> = token.split('.').collect();
     let mut claims: serde_json::Value = serde_json::from_slice(&unb64(parts[1])).unwrap();
-    if let Some(iat) = iat {
-        claims["iat"] = iat.into();
-    }
+    edit(&mut claims);
     let at_ms = claims["iat"].as_u64().unwrap() * 1000;
     let (seal, member) = seeded_cert(issuer_seed, at_ms);
     let seal_aid = aid_of(&seal);
@@ -240,9 +252,54 @@ fn the_re_minted_bundle_states_the_seal_key_and_the_chained_seal_time() {
     let (code, out) = verify(&fixture("full"), ISSUER);
     assert_eq!(code, VERIFIED, "{out}");
     assert!(
-        out.contains("certified seal key, issued at the chained seal time"),
+        out.contains(
+            "certified seal key, binds its seam-commitment-digest:v5 and names the chained record"
+        ),
         "{out}"
     );
+}
+
+/// Evidence grade, P4: a genuine-shaped seal whose `jti` names another record (same `iat`, same
+/// Commitment, signed by the certified seal key) is refused at step 4: the jti binds the TCT to the
+/// chained record's `decision_id` and exact `sealed_at`.
+#[test]
+fn a_seal_replayed_onto_another_record_is_refused() {
+    let d = copy("full", "jti");
+    let token = token_of(&d);
+    let mut sealed_at = None;
+    for l in std::fs::read_to_string(d.join("events.jsonl"))
+        .unwrap()
+        .lines()
+    {
+        let e: serde_json::Value = serde_json::from_str(l).unwrap();
+        if e["kind"] == "DECISION_SEALED"
+            && e["payload"]["decision_id"] == "dec:design-partner:d1-0000000000000000000"
+        {
+            sealed_at = e["payload"]["sealed_at"].as_i64();
+        }
+    }
+    let sealed_at = sealed_at.expect("the fixture chains d1's DECISION_SEALED");
+    // The fixture's own jti is the chained record's, so the fixture verifies (control).
+    let claims: serde_json::Value =
+        serde_json::from_slice(&unb64(token.split('.').nth(1).unwrap())).unwrap();
+    assert_eq!(
+        claims["jti"],
+        tct_jti("dec:design-partner:d1-0000000000000000000", sealed_at).unwrap()
+    );
+    // The same seal minted for d2 (another record of the same stream) and carried into d1's bundle.
+    let other = tct_jti("dec:design-partner:d2-0000000000000000000", sealed_at).unwrap();
+    swap_token(
+        &d,
+        &remint_with(&token, [7; 32], |c| c["jti"] = other.into()),
+    );
+    let (code, out) = verify(&d, ISSUER);
+    assert_eq!(code, FAILED, "{out}");
+    assert!(out.contains("step 4"), "{out}");
+    assert!(
+        out.contains("seals a different record") && out.contains("jti"),
+        "{out}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
 }
 
 /// Evidence grade: a token whose `iat` is inside its certificate window but is not

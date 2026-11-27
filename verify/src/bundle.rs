@@ -918,6 +918,7 @@ pub fn verify_bundle(dir: &Path, pinned: &str, now_secs: u64) -> Result<BundleRe
                 &c.signed_artifact,
                 &digest,
                 now_secs,
+                &payload.decision_id,
                 payload.sealed_at,
             )
             .map_err(|e| {
@@ -925,14 +926,14 @@ pub fn verify_bundle(dir: &Path, pinned: &str, now_secs: u64) -> Result<BundleRe
                     4,
                     format!(
                         "commitment.json: the TCT does not verify against the pinned issuer for this \
-                         Commitment at the chained seal time: {e}"
+                         Commitment as the chained record's seal: {e}"
                     ),
                 )
             })?;
             tct_verified = Some(true);
             checks.push(
-                "the Commitment's TCT verifies against the pinned issuer's certified seal key, issued \
-                 at the chained seal time, and binds its seam-commitment-digest:v5"
+                "the Commitment's TCT verifies against the pinned issuer's certified seal key, binds its \
+                 seam-commitment-digest:v5 and names the chained record (its decision_id and seal time)"
                     .into(),
             );
         }
