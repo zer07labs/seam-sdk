@@ -334,6 +334,27 @@ public final class SeamCrypto {
    * across the boundary. Pinned by {@code derived_uuid} in {@code conformance/vectors.json}.
    */
   public static String derivedUuid(String tag, byte[] input) {
+    return derivedUuidOf(tag, input);
+  }
+
+  /** Domain tag of the commitment TCT {@code jti} derivation (AITP registry {@code seam-tct-jti-v1}). */
+  public static final String TCT_JTI_TAG = "seam-tct-jti-v1";
+
+  /**
+   * The TCT {@code jti} the seal path mints (seam-runtime {@code deterministic_jti}): {@code
+   * derivedUuid("seam-tct-jti-v1", be32(len decisionId) ‖ decisionId ‖ be64(sealedAtMs))}. {@code
+   * decisionId} is the sealed record's id ({@code DecisionRecord.decision_id}, UTF-8), never {@code
+   * Commitment.id}; {@code sealedAtMs} its {@code sealed_at} in ms. Pinned by {@code
+   * conformance/tct_sealed_at_vector.json} ({@code jti_kat}).
+   */
+  public static String tctJti(String decisionId, long sealedAtMs) {
+    byte[] id = decisionId.getBytes(StandardCharsets.UTF_8);
+    java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(4 + id.length + 8);
+    b.putInt(id.length).put(id).putLong(sealedAtMs);
+    return derivedUuidOf(TCT_JTI_TAG, b.array());
+  }
+
+  private static String derivedUuidOf(String tag, byte[] input) {
     ByteArrayOutputStream pre = new ByteArrayOutputStream();
     pre.writeBytes(tag.getBytes(StandardCharsets.UTF_8));
     pre.write(0);
@@ -1206,29 +1227,35 @@ public final class SeamCrypto {
   }
 
   /**
-   * {@link #verifyTct(String, String, Commitment, long)} <b>bound to the record's chained seal
-   * time</b> — the evidence-grade check (seam-commitment-digest.v6 §Seal key step 6,
-   * evidence-bundle.v1 §Verifying step 4): additionally {@code sealedAtMs >= 0} and the TCT's {@code
-   * iat == floor(sealedAtMs / 1000)}.
+   * {@link #verifyTct(String, String, Commitment, long)} <b>bound to the chained record it
+   * seals</b> — the evidence-grade check (seam-commitment-digest.v6 §Seal key steps 6 and 7,
+   * evidence-bundle.v1 §Verifying step 4): additionally {@code sealedAtMs >= 0}, the TCT's {@code
+   * iat == floor(sealedAtMs / 1000)} and its {@code jti == tctJti(decisionId, sealedAtMs)} exactly.
    *
    * <p>{@code iat} is self-asserted, so {@link #verifyTct} alone proves a certified seal key signed
    * the statement, not when: a leaked seal key can backdate a token anywhere in its certificate
    * window. {@code sealedAtMs} must be the {@code sealed_at} of the record's <b>chained</b> {@code
    * DECISION_SEALED} link (record-digest bound), never a value from the token and never a served
    * {@code DecisionRecordView.sealed_at}. A Java {@code long} is the runtime's i64 bound exactly, so
-   * a negative value (an unsigned {@code uint64} beyond it) is refused. Same rule as seam-verify
-   * {@code verify_tct_sealed_at} and the runtime's {@code verify_commitment_sealed_at} (seam-runtime
-   * #2031); pinned by {@code conformance/tct_sealed_at_vector.json}.
+   * a negative value (an unsigned {@code uint64} beyond it) is refused. {@code decisionId} is the
+   * {@code decision_id} of that same chained link, never {@code Commitment.id}: the {@code jti} rule
+   * (seam-runtime 0.127.0 P4) refuses a genuine seal replayed onto another record, or with its seal
+   * time shifted inside its second (same {@code iat}). A null {@code decisionId} is refused. Same
+   * rule as seam-verify {@code verify_tct_sealed_at} and the runtime's {@code
+   * check_commitment_sealed_for}; pinned by {@code conformance/tct_sealed_at_vector.json}.
    */
   public static boolean verifyTctSealedAt(
-      String issuerAid, String tctJws, Commitment c, long nowS, long sealedAtMs) {
-    return verifyTctAt(issuerAid, tctJws, c, nowS, sealedAtMs);
+      String issuerAid, String tctJws, Commitment c, long nowS, String decisionId, long sealedAtMs) {
+    return verifyTctAt(issuerAid, tctJws, c, nowS, new SealedFor(decisionId, sealedAtMs));
   }
 
+  /** The chained record a sealed-at verification binds the token to. */
+  private record SealedFor(String decisionId, long sealedAtMs) {}
+
   /**
-   * {@link #verifyTctSealedAt(String, String, Commitment, long, long)} for an option-selection
-   * decision: {@link #verifyTct(String, String, Commitment, long, SelectionBlock)} with the
-   * evidence-grade {@code iat} binding.
+   * {@link #verifyTctSealedAt(String, String, Commitment, long, String, long)} for an
+   * option-selection decision: {@link #verifyTct(String, String, Commitment, long, SelectionBlock)}
+   * with the evidence-grade {@code iat} and {@code jti} binding.
    */
   public static boolean verifyTctSealedAt(
       String issuerAid,
@@ -1236,12 +1263,14 @@ public final class SeamCrypto {
       Commitment c,
       long nowS,
       SelectionBlock selection,
+      String decisionId,
       long sealedAtMs) {
-    return verifyTctSelection(issuerAid, tctJws, c, nowS, selection, sealedAtMs);
+    return verifyTctSelection(
+        issuerAid, tctJws, c, nowS, selection, new SealedFor(decisionId, sealedAtMs));
   }
 
   private static boolean verifyTctAt(
-      String issuerAid, String tctJws, Commitment c, long nowS, Long sealedAtMs) {
+      String issuerAid, String tctJws, Commitment c, long nowS, SealedFor sealed) {
     try {
       String[] parts = tctJws.split("\\.");
       if (parts.length != 3) return false;
@@ -1290,8 +1319,13 @@ public final class SeamCrypto {
       // (4) iat is a JSON integer inside the certificate window, no grace.
       Long iat = topLevelInteger(payloadJson, "iat");
       if (iat == null || !cert.covers(iat)) return false;
-      // Evidence grade (S-4): iat is the chained seal second.
-      if (sealedAtMs != null && (sealedAtMs < 0 || iat != sealedAtMs / 1000)) return false;
+      // Evidence grade (S-4 + P4): iat is the chained seal second and jti names the chained record.
+      if (sealed != null) {
+        if (sealed.sealedAtMs() < 0 || iat != sealed.sealedAtMs() / 1000) return false;
+        if (sealed.decisionId() == null
+            || !(payload.get("jti") instanceof String jti)
+            || !jti.equals(tctJti(sealed.decisionId(), sealed.sealedAtMs()))) return false;
+      }
       Object exp = payload.get("exp");
       if (!(exp instanceof Number) || nowS >= ((Number) exp).longValue()) return false;
       if (!(payload.get("grants") instanceof List<?> grants)
@@ -1337,8 +1371,8 @@ public final class SeamCrypto {
       Commitment c,
       long nowS,
       SelectionBlock selection,
-      Long sealedAtMs) {
-    if (selection == null) return verifyTctAt(issuerAid, tctJws, c, nowS, sealedAtMs);
+      SealedFor sealed) {
+    if (selection == null) return verifyTctAt(issuerAid, tctJws, c, nowS, sealed);
     try {
       byte[] field9 = selectionDigest(selectionBody(selection));
       if (c.selectionDigest() != null && !Arrays.equals(c.selectionDigest(), field9)) return false;
@@ -1347,7 +1381,7 @@ public final class SeamCrypto {
               c.id(), c.action(), c.authority(), c.supersedes(), c.authMethod(), c.trustBasis(),
               c.committer(), c.explanationDigest(), c.explanation(), field9, c.certificateDigest(),
               c.governingDocSha256(), c.trailers(), c.gateBody(), c.env());
-      if (!verifyTctAt(issuerAid, tctJws, framed, nowS, sealedAtMs)) return false;
+      if (!verifyTctAt(issuerAid, tctJws, framed, nowS, sealed)) return false;
       if (c.explanation() == null) return false;
       return verifySelection(selection, c.explanation(), c.action()).ok();
     } catch (RuntimeException e) {
